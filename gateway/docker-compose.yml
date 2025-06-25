@@ -1,0 +1,65 @@
+services:
+  gateway:
+    image: rust:1.85
+    command: bash -c "cd /usr/src/app/gateway && cargo run 2>&1 | tee /dev/stdout"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ..:/usr/src/app # Mount project root directory
+    working_dir: /usr/src/app
+    depends_on:
+      - jaeger
+      - loki
+      - grafana
+    environment:
+      - RUST_LOG=info
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
+
+  vector:
+    image: timberio/vector:0.47.0-debian
+    volumes:
+      - ./vector.yaml:/etc/vector/vector.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      - "8686:8686" # Vector API
+    command: -c /etc/vector/vector.yaml -q
+    depends_on:
+      - loki
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.54
+    ports:
+      - "16686:16686" # UI
+      - "4317:4317" # OTLP/gRPC
+      - "4318:4318" # OTLP/HTTP
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+
+  loki:
+    image: grafana/loki:3.4.1
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+    user: "0:0" # Run as root to avoid permission issues
+    volumes:
+      - ./loki-config.yaml:/etc/loki/local-config.yaml:ro
+      - loki-storage:/loki
+
+  grafana:
+    image: grafana/grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-storage:/var/lib/grafana # Persistent storage
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro # Provisioning
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    depends_on:
+      - loki
+      - jaeger
+
+volumes:
+  grafana-storage:
+    driver: local
+  loki-storage:
+    driver: local

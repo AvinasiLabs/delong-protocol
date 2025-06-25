@@ -20,5 +20,38 @@ target
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-# Zed
+# IDE
 .zed
+.idea
+
+# NOTES
+.notes
+
+# Gateway monitoring stack
+# Keep configuration files, ignore runtime data
+gateway/grafana-storage/
+gateway/loki-storage/
+gateway/jaeger-storage/
+gateway/vector-data/
+gateway/*.log
+gateway/grafana/provisioning/notifiers/*
+gateway/grafana/provisioning/access-control/*
+
+# Docker volumes (if running locally)
+volumes/
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment files (may contain secrets)
+.env
+.env.local
+.env.*.local

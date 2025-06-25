@@ -1,0 +1,27 @@
+[workspace]
+members = ["common", "secure", "core", "gateway"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+description = "DeLong Protocol - Secure TEE-based computation protocol"
+authors = ["Dylan dylan@avinasi.org"]
+repository = "https://github.com/AvinasiLabs/delong-protocol"
+readme = "README.md"
+license = "AGPL-3.0"
+
+
+[workspace.dependencies]
+axum = { version = "0.8" }
+tokio = { version = "1.45.1", features = ["full"] }
+serde = { version = "*" }
+
+[profile.dev]
+debug = true
+opt-level = 0
+
+[profile.release]
+debug = false
+opt-level = 3
+lto = true

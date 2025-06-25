@@ -1,0 +1,199 @@
+apiVersion: 1
+
+groups:
+  - name: Gateway Alerts
+    folder: Gateway Monitoring
+    interval: 1m
+    rules:
+      - uid: high_error_rate
+        title: High Error Rate
+        condition: C
+        data:
+          - refId: A
+            queryType: range
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: loki
+            model:
+              expr: |
+                sum(rate({service="delong-gateway"} |~ "ERROR|error|failed" [5m])) by (container)
+              refId: A
+          - refId: B
+            queryType: classic_conditions
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: "-100"
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0.1
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: "-100"
+              expression: A
+              reducer: last
+              refId: B
+          - refId: C
+            queryType: threshold
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: "-100"
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0.1
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - B
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: "-100"
+              expression: B
+              refId: C
+        noDataState: NoData
+        execErrState: Alerting
+        for: 5m
+        annotations:
+          description: "Error rate is {{ .Value }} errors/sec for container {{ .Labels.container }}"
+          summary: High error rate detected in Gateway service
+        labels:
+          severity: warning
+          service: delong-gateway
+
+      - uid: critical_errors
+        title: Critical Errors Detected
+        condition: B
+        data:
+          - refId: A
+            queryType: instant
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: loki
+            model:
+              expr: |
+                count_over_time({service="delong-gateway"} |~ "CRITICAL|FATAL|panic" [5m])
+              refId: A
+          - refId: B
+            queryType: threshold
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: "-100"
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: "-100"
+              expression: A
+              refId: B
+        noDataState: NoData
+        execErrState: Alerting
+        for: 1m
+        annotations:
+          description: "{{ .Value }} critical errors detected in the last 5 minutes"
+          summary: Critical errors found in Gateway logs
+        labels:
+          severity: critical
+          service: delong-gateway
+
+      - uid: service_down
+        title: Gateway Service Down
+        condition: B
+        data:
+          - refId: A
+            queryType: instant
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: loki
+            model:
+              expr: |
+                count_over_time({service="delong-gateway"} [1m])
+              refId: A
+          - refId: B
+            queryType: threshold
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: "-100"
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 1
+                    type: lt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: "-100"
+              expression: A
+              refId: B
+        noDataState: Alerting
+        execErrState: Alerting
+        for: 2m
+        annotations:
+          description: No logs received from Gateway service in the last minute
+          summary: Gateway service appears to be down
+        labels:
+          severity: critical
+          service: delong-gateway
+
+contactPoints:
+  - name: default-contact
+    receivers:
+      - uid: default-receiver
+        type: email
+        settings:
+          addresses: "alerts@example.com"
+        disableResolveMessage: false
+
+policies:
+  - receiver: default-contact
+    group_by: ["alertname", "service"]
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 12h

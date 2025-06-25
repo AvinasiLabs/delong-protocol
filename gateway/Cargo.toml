@@ -1,0 +1,26 @@
+[package]
+name = "gateway"
+version = { workspace = true }
+edition = { workspace = true }
+
+[dependencies]
+axum = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+uuid = { version = "1", features = ["v4"] }
+tracing = { version = "0.1.40" }
+tracing-subscriber = { version = "0.3", features = [
+    "env-filter",
+    "tracing-log",
+    "json",
+] }
+tracing-opentelemetry = { version = "0.31.0" }
+opentelemetry = { version = "0.30" }
+opentelemetry-otlp = { version = "0.30", features = [
+    "grpc-tonic",
+    "trace",
+    "logs",
+] }
+opentelemetry_sdk = "0.30.0"
+anyhow = "1.0.98"
+serde_json = "1.0.140"
