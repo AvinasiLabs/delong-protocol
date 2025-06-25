@@ -7,10 +7,10 @@ use axum::{
 use opentelemetry::trace::TracerProvider;
 use opentelemetry_sdk::Resource;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 use tokio::net::TcpListener;
 use tracing::{info, instrument};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
+
 fn init_tracing() -> anyhow::Result<()> {
     let trace_exporter = opentelemetry_otlp::SpanExporter::builder()
         .with_tonic()
@@ -63,10 +63,20 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[derive(Deserialize, Serialize, Debug)]
+struct Health {
+    status: &'static str,
+    api_version: &'static str,
+}
+
 #[instrument]
-async fn health() -> Json<Value> {
-    info!("health check");
-    Json(json!({"status": "healthy"}))
+async fn health() -> Json<Health> {
+    let health_status = Health {
+        status: "healthy",
+        api_version: "v1",
+    };
+    info!("health: {:?}", health_status);
+    Json(health_status)
 }
 
 #[derive(Deserialize, Serialize, Debug)]

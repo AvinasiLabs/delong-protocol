@@ -156,11 +156,11 @@ checksum = "9555578bc9e57714c812a1f84e4fc5b4d21fcb063490c624de019f7464c91268"
 
 [[package]]
 name = "common"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "core"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "displaydoc"
@@ -275,7 +275,7 @@ dependencies = [
 
 [[package]]
 name = "gateway"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -1050,7 +1050,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "secure"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "serde"

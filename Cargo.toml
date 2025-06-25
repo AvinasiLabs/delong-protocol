@@ -3,13 +3,21 @@ members = ["common", "secure", "core", "gateway"]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "DeLong Protocol - Secure TEE-based computation protocol"
 authors = ["Dylan dylan@avinasi.org"]
 repository = "https://github.com/AvinasiLabs/delong-protocol"
 readme = "README.md"
 license = "AGPL-3.0"
+keywords = [
+    "tee",
+    "secure-computation",
+    "protocol",
+    "blockchain",
+    "avinasi-labs",
+]
+categories = ["cryptography", "network-programming"]
 
 
 [workspace.dependencies]
