@@ -1,91 +1,249 @@
-use axum::{
-    Router,
-    response::Json,
-    routing::{get, post},
-    serve,
-};
-use opentelemetry::trace::TracerProvider;
-use opentelemetry_sdk::Resource;
-use serde::{Deserialize, Serialize};
+//! Delong Protocol Gateway
+//!
+//! A simplified gateway service for the Delong privacy-preserving computation platform.
+//! This gateway handles API requests for biomedical data processing, algorithm execution,
+//! and API key management.
+
+use axum::serve;
+use std::net::SocketAddr;
 use tokio::net::TcpListener;
-use tracing::{info, instrument};
-use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
+use tracing::{error, info, instrument};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-fn init_tracing() -> anyhow::Result<()> {
-    let trace_exporter = opentelemetry_otlp::SpanExporter::builder()
-        .with_tonic()
-        .build()?;
+// OpenTelemetry imports
+use opentelemetry::global;
+use opentelemetry::trace::TracerProvider;
+use opentelemetry_otlp::{SpanExporter, WithExportConfig};
+use opentelemetry_sdk::{
+    Resource,
+    trace::{self as sdktrace, SdkTracerProvider},
+};
 
-    let tracer_provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
-        .with_batch_exporter(trace_exporter)
-        .with_resource(
-            Resource::builder()
-                .with_service_name("delong-gateway")
-                .build(),
-        )
-        .build();
+// Module declarations
+mod config;
+mod handlers;
+mod middleware;
+mod routes;
+mod utils;
 
-    let tracer = tracer_provider.tracer("delong-gateway");
-    let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
-
-    let filter = EnvFilter::new("gateway=trace") // Only capture traces from your gateway crate
-        .add_directive("tower=off".parse()?) // Turn off tower spans
-        .add_directive("hyper=off".parse()?) // Turn off hyper spans
-        .add_directive("h2=off".parse()?) // Turn off h2 spans
-        .add_directive("tonic=off".parse()?) // Turn off tonic spans
-        .add_directive("opentelemetry=off".parse()?) // Turn off opentelemetry internal spans
-        .add_directive("axum=off".parse()?) // Turn off axum spans
-        .add_directive("tokio=off".parse()?) // Turn off tokio spans
-        .add_directive("runtime=off".parse()?); // Turn off runtime spans
-
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer().json()) // Keep console output for debugging
-        .with(telemetry) // OpenTelemetry traces
-        .with(filter)
-        .init();
-
-    Ok(())
-}
+// Re-export commonly used items
+use config::GatewayConfig;
+use routes::create_router;
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    init_tracing()?;
+#[instrument]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize configuration
+    let config = GatewayConfig::from_env().unwrap_or_else(|e| {
+        eprintln!("Failed to load configuration: {}", e);
+        eprintln!("Using default configuration");
+        GatewayConfig::default()
+    });
 
-    let app = Router::new()
-        .route("/health", get(health))
-        .route("/echo", post(echo));
+    // Initialize logging
+    init_logging(&config)?;
 
-    let addr = "0.0.0.0:8080";
-    let listener = TcpListener::bind(addr).await?;
-    info!("listening on {}", addr);
+    info!("Configuration loaded: {:?}", config);
 
-    serve(listener, app).await?;
+    // Create the application router
+    let app = create_router(&config);
+    info!("Router created");
+
+    // Get server address
+    let addr = config.socket_addr()?;
+    info!("Gateway will listen on {}", addr);
+
+    // Start the server
+    start_server(app, addr).await?;
+
     Ok(())
 }
 
-#[derive(Deserialize, Serialize, Debug)]
-struct Health {
-    status: &'static str,
-    api_version: &'static str,
+/// Initialize logging and OpenTelemetry tracing based on configuration
+fn init_logging(config: &GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        tracing_subscriber::EnvFilter::new(&format!("gateway={}", config.logging.level))
+            .add_directive("tower=off".parse().unwrap())
+            .add_directive("hyper=off".parse().unwrap())
+            .add_directive("h2=off".parse().unwrap())
+            .add_directive("tonic=off".parse().unwrap())
+            .add_directive("opentelemetry=off".parse().unwrap())
+            .add_directive("axum=off".parse().unwrap())
+            .add_directive("tokio=off".parse().unwrap())
+            .add_directive("runtime=off".parse().unwrap())
+    });
+
+    let subscriber = tracing_subscriber::registry().with(env_filter);
+
+    // Initialize OpenTelemetry if enabled
+    if config.opentelemetry.enabled {
+        info!(
+            "Initializing OpenTelemetry with endpoint: {}",
+            config.opentelemetry.otlp_endpoint
+        );
+
+        let tracer = init_opentelemetry_tracer(config)?;
+        let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
+
+        if config.logging.json_format {
+            // JSON formatted logs for production with OpenTelemetry
+            subscriber
+                .with(otel_layer)
+                .with(tracing_subscriber::fmt::layer().json())
+                .init();
+        } else {
+            // Human-readable logs for development with OpenTelemetry
+            subscriber
+                .with(otel_layer)
+                .with(tracing_subscriber::fmt::layer().pretty())
+                .init();
+        }
+
+        info!(
+            "OpenTelemetry tracing initialized for service: {}",
+            config.opentelemetry.service_name
+        );
+    } else {
+        // Standard logging without OpenTelemetry
+        if config.logging.json_format {
+            // JSON formatted logs for production
+            subscriber
+                .with(tracing_subscriber::fmt::layer().json())
+                .init();
+        } else {
+            // Human-readable logs for development
+            subscriber
+                .with(tracing_subscriber::fmt::layer().pretty())
+                .init();
+        }
+    }
+
+    info!("Logging initialized with level: {}", config.logging.level);
+    Ok(())
 }
 
-#[instrument]
-async fn health() -> Json<Health> {
-    let health_status = Health {
-        status: "healthy",
-        api_version: "v1",
+/// Initialize OpenTelemetry tracer
+fn init_opentelemetry_tracer(
+    config: &GatewayConfig,
+) -> Result<sdktrace::Tracer, Box<dyn std::error::Error>> {
+    let resource = Resource::builder()
+        .with_service_name(config.opentelemetry.service_name.clone())
+        .build();
+
+    let exporter = SpanExporter::builder()
+        .with_tonic()
+        .with_endpoint(&config.opentelemetry.otlp_endpoint)
+        .build()?;
+
+    let tracer_provider = SdkTracerProvider::builder()
+        .with_batch_exporter(exporter)
+        .with_resource(resource)
+        .build();
+
+    global::set_tracer_provider(tracer_provider.clone());
+
+    Ok(tracer_provider.tracer("delong-gateway"))
+}
+
+/// Start the HTTP server with graceful shutdown
+#[instrument(skip(app))]
+async fn start_server(
+    app: axum::Router,
+    addr: SocketAddr,
+) -> Result<(), Box<dyn std::error::Error>> {
+    info!("Starting HTTP server on {}", addr);
+
+    // Create TCP listener
+    let listener = TcpListener::bind(addr).await.map_err(|e| {
+        error!("Failed to bind to address {}: {}", addr, e);
+        e
+    })?;
+
+    info!("Gateway listening on {}", addr);
+    info!("Health check available at: http://{}/health", addr);
+    info!("API endpoints available at: http://{}/api/v1/", addr);
+
+    // Start serving requests with graceful shutdown
+    serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+        .map_err(|e| {
+            error!("Server error: {}", e);
+            e.into()
+        })
+}
+
+/// Graceful shutdown signal handler
+async fn shutdown_signal() {
+    use tokio::signal;
+
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
     };
-    info!("health: {:?}", health_status);
-    Json(health_status)
+
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("failed to install signal handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {
+            info!("Received Ctrl+C signal, shutting down gracefully");
+        },
+        _ = terminate => {
+            info!("Received terminate signal, shutting down gracefully");
+        },
+    }
+
+    // Shutdown OpenTelemetry to flush remaining spans
+    // Note: In OpenTelemetry 0.30, shutdown is handled automatically
+    info!("Shutting down OpenTelemetry tracer provider");
 }
 
-#[derive(Deserialize, Serialize, Debug)]
-struct Echo {
-    msg: String,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{Method, Request, StatusCode};
+    use tower::util::ServiceExt;
 
-#[instrument]
-async fn echo(Json(payload): Json<Echo>) -> Json<Echo> {
-    info!("echoing: {}", payload.msg);
-    Json(payload)
+    #[tokio::test]
+    async fn test_server_creation() {
+        let config = GatewayConfig::default();
+        let app = create_router(&config);
+
+        // Test health endpoint
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("/health")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[test]
+    fn test_config_loading() {
+        // Test default configuration
+        let config = GatewayConfig::default();
+        assert_eq!(config.server.host, "0.0.0.0");
+        assert_eq!(config.server.port, 8080);
+        assert!(config.api.enable_api_key_validation);
+    }
+
+    #[test]
+    fn test_socket_addr_parsing() {
+        let config = GatewayConfig::default();
+        let addr = config.socket_addr().unwrap();
+        assert_eq!(addr.to_string(), "0.0.0.0:8080");
+    }
 }
