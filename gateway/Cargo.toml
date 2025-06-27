@@ -3,6 +3,14 @@ name = "gateway"
 version = { workspace = true }
 edition = { workspace = true }
 
+[lib]
+name = "gateway"
+path = "src/lib.rs"
+
+[[bin]]
+name = "gateway"
+path = "src/main.rs"
+
 [dependencies]
 # HTTP framework and async runtime
 axum = { workspace = true }
@@ -47,3 +55,11 @@ tower-http = { version = "0.5", features = ["cors", "trace"] }
 
 # Static initialization
 lazy_static = "1.4"
+
+[dev-dependencies]
+# Benchmarking
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "gateway_benchmarks"
+harness = false

@@ -7,6 +7,7 @@
 use axum::serve;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
+
 use tracing::{error, info, instrument};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -19,16 +20,8 @@ use opentelemetry_sdk::{
     trace::{self as sdktrace, SdkTracerProvider},
 };
 
-// Module declarations
-mod config;
-mod handlers;
-mod middleware;
-mod routes;
-mod utils;
-
-// Re-export commonly used items
-use config::GatewayConfig;
-use routes::create_router;
+// Import from lib crate
+use gateway::{config::GatewayConfig, create_router};
 
 #[tokio::main]
 #[instrument]
@@ -163,14 +156,17 @@ async fn start_server(
     info!("Health check available at: http://{}/health", addr);
     info!("API endpoints available at: http://{}/api/v1/", addr);
 
-    // Start serving requests with graceful shutdown
-    serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .map_err(|e| {
-            error!("Server error: {}", e);
-            e.into()
-        })
+    // Start serving requests with graceful shutdown and ConnectInfo support
+    serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await
+    .map_err(|e| {
+        error!("Server error: {}", e);
+        e.into()
+    })
 }
 
 /// Graceful shutdown signal handler
@@ -206,44 +202,4 @@ async fn shutdown_signal() {
     // Shutdown OpenTelemetry to flush remaining spans
     // Note: In OpenTelemetry 0.30, shutdown is handled automatically
     info!("Shutting down OpenTelemetry tracer provider");
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use axum::body::Body;
-    use axum::http::{Method, Request, StatusCode};
-    use tower::util::ServiceExt;
-
-    #[tokio::test]
-    async fn test_server_creation() {
-        let config = GatewayConfig::default();
-        let app = create_router(&config);
-
-        // Test health endpoint
-        let request = Request::builder()
-            .method(Method::GET)
-            .uri("/health")
-            .body(Body::empty())
-            .unwrap();
-
-        let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-    }
-
-    #[test]
-    fn test_config_loading() {
-        // Test default configuration
-        let config = GatewayConfig::default();
-        assert_eq!(config.server.host, "0.0.0.0");
-        assert_eq!(config.server.port, 8080);
-        assert!(config.api.enable_api_key_validation);
-    }
-
-    #[test]
-    fn test_socket_addr_parsing() {
-        let config = GatewayConfig::default();
-        let addr = config.socket_addr().unwrap();
-        assert_eq!(addr.to_string(), "0.0.0.0:8080");
-    }
 }

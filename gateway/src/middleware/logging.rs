@@ -4,12 +4,12 @@
 //! including timing information, status codes, and request metadata.
 
 use axum::{
-    extract::Request,
+    extract::{ConnectInfo, Request},
     http::{HeaderMap, Method, StatusCode},
     middleware::Next,
     response::Response,
 };
-use std::time::Instant;
+use std::{net::SocketAddr, time::Instant};
 use tracing::{Level, info, instrument, warn};
 
 use crate::{
@@ -56,6 +56,12 @@ pub async fn logging_middleware(request: Request, next: Next) -> Result<Response
     let start_time = Instant::now();
     let timestamp = current_timestamp_ms();
 
+    // Extract ConnectInfo from request extensions if available
+    let socket_addr = request
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|ci| ci.0);
+
     // Extract request information
     let method = request.method().clone();
     let uri = request.uri().clone();
@@ -63,8 +69,8 @@ pub async fn logging_middleware(request: Request, next: Next) -> Result<Response
     let query = uri.query().unwrap_or("");
     let headers = request.headers().clone();
 
-    // Extract client information
-    let client_ip = MiddlewareUtils::extract_client_ip(&headers);
+    // Extract client information with fallback strategy
+    let client_ip = MiddlewareUtils::extract_client_ip_with_fallback(&headers, socket_addr);
     let user_agent = MiddlewareUtils::extract_user_agent(&headers);
 
     // Get or generate request ID
@@ -73,6 +79,20 @@ pub async fn logging_middleware(request: Request, next: Next) -> Result<Response
         .and_then(|v| v.to_str().ok())
         .unwrap_or("unknown")
         .to_string();
+
+    // Log deployment scenario for debugging
+    if MiddlewareUtils::is_behind_proxy(&headers) {
+        tracing::debug!(
+            request_id = request_id,
+            "Request appears to be from proxy/load balancer"
+        );
+    } else if socket_addr.is_some() {
+        tracing::debug!(
+            request_id = request_id,
+            direct_ip = ?socket_addr,
+            "Request appears to be direct connection"
+        );
+    }
 
     // Set request ID in tracing span
     tracing::Span::current().record("request_id", &request_id);
@@ -276,6 +296,12 @@ pub async fn security_logging_middleware(
     request: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
+    // Extract ConnectInfo from request extensions if available
+    let socket_addr = request
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|ci| ci.0);
+
     let method = request.method().clone();
     let path = request.uri().path();
     let headers = request.headers();
@@ -287,14 +313,20 @@ pub async fn security_logging_middleware(
         .unwrap_or("unknown");
 
     // Check for suspicious patterns
-    check_suspicious_patterns(&method, path, headers, request_id);
+    check_suspicious_patterns(&method, path, headers, request_id, socket_addr);
 
     // Process request normally
     Ok(next.run(request).await)
 }
 
 /// Check for suspicious request patterns
-fn check_suspicious_patterns(method: &Method, path: &str, headers: &HeaderMap, request_id: &str) {
+fn check_suspicious_patterns(
+    method: &Method,
+    path: &str,
+    headers: &HeaderMap,
+    request_id: &str,
+    socket_addr: Option<SocketAddr>,
+) {
     // Check for common attack patterns in path
     let suspicious_patterns = [
         "../",
@@ -321,7 +353,7 @@ fn check_suspicious_patterns(method: &Method, path: &str, headers: &HeaderMap, r
                 method = %method,
                 path = sanitize_path_for_logging(path),
                 pattern = pattern,
-                client_ip = MiddlewareUtils::extract_client_ip(headers),
+                client_ip = MiddlewareUtils::extract_client_ip_with_fallback(headers, socket_addr),
                 user_agent = MiddlewareUtils::extract_user_agent(headers),
                 "Suspicious request pattern detected"
             );
@@ -347,7 +379,7 @@ fn check_suspicious_patterns(method: &Method, path: &str, headers: &HeaderMap, r
                     method = %method,
                     path = sanitize_path_for_logging(path),
                     user_agent = ua_str,
-                    client_ip = MiddlewareUtils::extract_client_ip(headers),
+                    client_ip = MiddlewareUtils::extract_client_ip_with_fallback(headers, socket_addr),
                     "Suspicious user agent detected"
                 );
             }
@@ -390,8 +422,14 @@ mod tests {
 
     #[test]
     fn test_suspicious_pattern_detection() {
+        use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
         let method = Method::GET;
         let headers = HeaderMap::new();
+        let socket_addr = Some(SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            8080,
+        ));
 
         // Test various suspicious patterns
         let suspicious_paths = [
@@ -401,7 +439,7 @@ mod tests {
         ];
 
         for path in &suspicious_paths {
-            check_suspicious_patterns(&method, path, &headers, "test-req");
+            check_suspicious_patterns(&method, path, &headers, "test-req", socket_addr);
             // This mainly tests that the function doesn't panic
             // In practice, we'd capture and verify log messages
         }
