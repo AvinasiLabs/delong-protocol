@@ -49,7 +49,7 @@ pub struct MembershipCheckResponse {
 /// Handler for setting committee member
 ///
 /// POST /api/committee
-/// Forwards the request to the Core service to add or update committee member
+/// Forwards the request to the Secure service (TEE Hardware) to add or update committee member
 pub async fn set_committee_member_handler(
     State(state): State<AppState>,
     Json(payload): Json<SetCommitteeMemberRequest>,
@@ -59,12 +59,12 @@ pub async fn set_committee_member_handler(
         payload.member_wallet, payload.is_approved
     );
 
-    // Forward request to Core service
-    let core_url = format!("{}/api/committee", state.config.services.core_url);
+    // Forward request to Secure service
+    let secure_url = format!("{}/api/committee", state.config.services.secure_url);
 
     match forward_post::<SetCommitteeMemberRequest, CommitteeMemberResponse>(
         state.http_client.as_ref(),
-        &core_url,
+        &secure_url,
         payload,
         None,
     )
@@ -94,15 +94,15 @@ pub async fn get_committee_members_handler(
         params.page, params.limit
     );
 
-    // Forward request to Core service
-    let core_url = format!(
+    // Forward request to Secure service
+    let secure_url = format!(
         "{}/api/committee?page={}&limit={}",
-        state.config.services.core_url, params.page, params.limit
+        state.config.services.secure_url, params.page, params.limit
     );
 
     match forward_get::<PaginatedResponse<CommitteeMemberData>>(
         state.http_client.as_ref(),
-        &core_url,
+        &secure_url,
         None,
     )
     .await
@@ -133,10 +133,10 @@ pub async fn get_committee_member_handler(
 ) -> Result<Json<ApiResponse<CommitteeMemberData>>, StatusCode> {
     info!("Getting committee member details: id={}", id);
 
-    // Forward request to Core service
-    let core_url = format!("{}/api/committee/{}", state.config.services.core_url, id);
+    // Forward request to Secure service
+    let secure_url = format!("{}/api/committee/{}", state.config.services.secure_url, id);
 
-    match forward_get::<CommitteeMemberData>(state.http_client.as_ref(), &core_url, None).await {
+    match forward_get::<CommitteeMemberData>(state.http_client.as_ref(), &secure_url, None).await {
         Ok(response) => {
             info!(
                 "Retrieved committee member: id={}, wallet={}, approved={}",
@@ -161,13 +161,14 @@ pub async fn check_committee_membership_handler(
 ) -> Result<Json<ApiResponse<MembershipCheckResponse>>, StatusCode> {
     info!("Checking committee membership: wallet={}", wallet);
 
-    // Forward request to Core service
-    let core_url = format!(
+    // Forward request to Secure service
+    let secure_url = format!(
         "{}/api/committee/check/{}",
-        state.config.services.core_url, wallet
+        state.config.services.secure_url, wallet
     );
 
-    match forward_get::<MembershipCheckResponse>(state.http_client.as_ref(), &core_url, None).await
+    match forward_get::<MembershipCheckResponse>(state.http_client.as_ref(), &secure_url, None)
+        .await
     {
         Ok(response) => {
             info!(

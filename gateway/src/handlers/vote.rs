@@ -54,13 +54,13 @@ pub async fn get_votes_handler(
         params.page, params.limit
     );
 
-    // Forward request to Core service
-    let core_url = format!(
+    // Forward request to Secure service
+    let secure_url = format!(
         "{}/api/votes?page={}&limit={}",
-        state.config.services.core_url, params.page, params.limit
+        state.config.services.secure_url, params.page, params.limit
     );
 
-    match forward_get::<PaginatedResponse<VoteData>>(state.http_client.as_ref(), &core_url, None)
+    match forward_get::<PaginatedResponse<VoteData>>(state.http_client.as_ref(), &secure_url, None)
         .await
     {
         Ok(response) => {
@@ -89,12 +89,12 @@ pub async fn set_vote_duration_handler(
 ) -> Result<Json<ApiResponse<VoteDurationResponse>>, StatusCode> {
     info!("Setting vote duration: {} seconds", payload.duration);
 
-    // Forward request to Core service
-    let core_url = format!("{}/api/votes/duration", state.config.services.core_url);
+    // Forward request to Secure service
+    let secure_url = format!("{}/api/votes/duration", state.config.services.secure_url);
 
     match forward_post::<SetVoteDurationRequest, VoteDurationResponse>(
         state.http_client.as_ref(),
-        &core_url,
+        &secure_url,
         payload,
         None,
     )

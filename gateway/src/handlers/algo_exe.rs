@@ -57,7 +57,7 @@ pub struct AlgoExeSubmissionResponse {
 /// Handler for submitting algorithm execution
 ///
 /// POST /api/algo-exes
-/// Forwards the request to the Core service for algorithm execution submission
+/// Forwards the request to the Secure service (TEE Hardware) for algorithm execution submission
 pub async fn submit_algo_exe_handler(
     State(state): State<AppState>,
     Json(payload): Json<AlgoExeSubmissionRequest>,
@@ -67,12 +67,12 @@ pub async fn submit_algo_exe_handler(
         payload.github_repo, payload.commit_hash, payload.scientist_wallet
     );
 
-    // Forward request to Core service
-    let core_url = format!("{}/api/algo-exes", state.config.services.core_url);
+    // Forward request to Secure service
+    let secure_url = format!("{}/api/algo-exes", state.config.services.secure_url);
 
     match forward_post::<AlgoExeSubmissionRequest, AlgoExeSubmissionResponse>(
         state.http_client.as_ref(),
-        &core_url,
+        &secure_url,
         payload,
         None,
     )
@@ -105,15 +105,15 @@ pub async fn get_algo_exes_handler(
         params.page, params.limit
     );
 
-    // Forward request to Core service
-    let core_url = format!(
+    // Forward request to Secure service
+    let secure_url = format!(
         "{}/api/algo-exes?page={}&limit={}",
-        state.config.services.core_url, params.page, params.limit
+        state.config.services.secure_url, params.page, params.limit
     );
 
     match crate::utils::http_client::forward_get::<PaginatedResponse<AlgoExeData>>(
         state.http_client.as_ref(),
-        &core_url,
+        &secure_url,
         None,
     )
     .await
@@ -144,12 +144,12 @@ pub async fn get_algo_exe_handler(
 ) -> Result<Json<ApiResponse<AlgoExeData>>, StatusCode> {
     info!("Getting algorithm execution details: id={}", id);
 
-    // Forward request to Core service
-    let core_url = format!("{}/api/algo-exes/{}", state.config.services.core_url, id);
+    // Forward request to Secure service
+    let secure_url = format!("{}/api/algo-exes/{}", state.config.services.secure_url, id);
 
     match crate::utils::http_client::forward_get::<AlgoExeData>(
         state.http_client.as_ref(),
-        &core_url,
+        &secure_url,
         None,
     )
     .await

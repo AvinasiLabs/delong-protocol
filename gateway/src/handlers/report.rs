@@ -29,7 +29,7 @@ pub struct UploadReportResponse {
 /// Handler for uploading test report
 ///
 /// POST /api/reports
-/// Forwards the request to the Core service for test report processing
+/// Forwards the request to the Secure service (TEE Hardware) for test report processing
 pub async fn upload_report_handler(
     State(state): State<AppState>,
     Json(payload): Json<UploadReportRequest>,
@@ -39,12 +39,12 @@ pub async fn upload_report_handler(
         payload.report_type, payload.algorithm_id, payload.dataset_id
     );
 
-    // Forward request to Core service
-    let core_url = format!("{}/api/reports", state.config.services.core_url);
+    // Forward request to Secure service
+    let secure_url = format!("{}/api/reports", state.config.services.secure_url);
 
     match forward_post::<UploadReportRequest, UploadReportResponse>(
         state.http_client.as_ref(),
-        &core_url,
+        &secure_url,
         payload,
         None,
     )

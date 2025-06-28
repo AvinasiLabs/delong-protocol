@@ -39,15 +39,15 @@ pub async fn get_contracts_handler(
         params.page, params.limit
     );
 
-    // Forward request to Core service
-    let core_url = format!(
+    // Forward request to Secure service
+    let secure_url = format!(
         "{}/api/contracts?page={}&limit={}",
-        state.config.services.core_url, params.page, params.limit
+        state.config.services.secure_url, params.page, params.limit
     );
 
     match forward_get::<PaginatedResponse<ContractData>>(
         state.http_client.as_ref(),
-        &core_url,
+        &secure_url,
         None,
     )
     .await
