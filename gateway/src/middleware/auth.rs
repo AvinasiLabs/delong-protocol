@@ -11,14 +11,23 @@ use tracing::{debug, error, info, instrument, warn};
 
 use crate::utils::{extract_api_key, is_valid_api_key_format};
 
-/// Authentication result
+/// Authentication context supporting both JWT and API key authentication
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub struct AuthContext {
-    pub user_id: String,
-    pub api_key_id: String,
-    pub permissions: Vec<Permission>,
-    pub rate_limit_tier: RateLimitTier,
+pub enum AuthContext {
+    /// JWT authenticated user
+    JwtUser {
+        user_id: String,
+        role: String,
+        permissions: Vec<Permission>,
+        rate_limit_tier: RateLimitTier,
+    },
+    /// API Key authenticated client
+    ApiKeyClient {
+        user_id: String,
+        api_key_id: String,
+        permissions: Vec<Permission>,
+        rate_limit_tier: RateLimitTier,
+    },
 }
 
 /// User permissions
@@ -75,7 +84,8 @@ const PUBLIC_PATHS: &[&str] = &[
     "/health",
     "/health/live",
     "/health/ready",
-    // "/metrics",
+    // Sample data access is public (no authentication required)
+    "/api/sample/",
     // Add other public paths as needed
 ];
 
@@ -91,45 +101,63 @@ pub async fn auth_middleware(mut request: Request, next: Next) -> Result<Respons
         return Ok(next.run(request).await);
     }
 
-    // Extract API key from headers
-    let api_key = match extract_api_key(request.headers()) {
-        Some(key) => key,
-        None => {
-            warn!(path = path, method = method, "No API key provided");
-            return Err(StatusCode::UNAUTHORIZED);
+    // Try JWT authentication first, then fallback to API key
+    let auth_context = if let Some(jwt_token) = extract_jwt_token(request.headers()) {
+        // JWT authentication
+        match authenticate_jwt_token(&jwt_token).await {
+            Ok(context) => context,
+            Err(auth_error) => {
+                warn!(
+                    path = %path,
+                    method = %method,
+                    error = %auth_error,
+                    "JWT authentication failed"
+                );
+                return Err(auth_error.status_code());
+            }
         }
-    };
-
-    // Validate API key format
-    if !is_valid_api_key_format(&api_key) {
-        warn!(
-            path = %path,
-            method = %method,
-            "Invalid API key format provided"
-        );
-        return Err(StatusCode::UNAUTHORIZED);
-    }
-
-    // Authenticate the API key
-    let auth_context = match authenticate_api_key(&api_key).await {
-        Ok(context) => context,
-        Err(auth_error) => {
+    } else if let Some(api_key) = extract_api_key(request.headers()) {
+        // API key authentication
+        if !is_valid_api_key_format(&api_key) {
             warn!(
                 path = %path,
                 method = %method,
-                error = %auth_error,
-                "API key authentication failed"
+                "Invalid API key format provided"
             );
-            return Err(auth_error.status_code());
+            return Err(StatusCode::UNAUTHORIZED);
         }
+
+        match authenticate_api_key(&api_key).await {
+            Ok(context) => context,
+            Err(auth_error) => {
+                warn!(
+                    path = %path,
+                    method = %method,
+                    error = %auth_error,
+                    "API key authentication failed"
+                );
+                return Err(auth_error.status_code());
+            }
+        }
+    } else {
+        warn!(
+            path = path,
+            method = method,
+            "No authentication credentials provided"
+        );
+        return Err(StatusCode::UNAUTHORIZED);
     };
 
     // Check permissions for the requested path/method
     if !has_permission(&auth_context, &path, &method) {
+        let user_id = match &auth_context {
+            AuthContext::JwtUser { user_id, .. } => user_id,
+            AuthContext::ApiKeyClient { user_id, .. } => user_id,
+        };
         warn!(
             path = %path,
             method = %method,
-            user_id = auth_context.user_id,
+            user_id = user_id,
             "Insufficient permissions for requested resource"
         );
         return Err(StatusCode::FORBIDDEN);
@@ -138,22 +166,91 @@ pub async fn auth_middleware(mut request: Request, next: Next) -> Result<Respons
     // Add authentication context to request extensions
     request.extensions_mut().insert(auth_context.clone());
 
-    info!(
-        path = %path,
-        method = %method,
-        user_id = auth_context.user_id,
-        api_key_id = auth_context.api_key_id,
-        "Authentication successful"
-    );
+    match &auth_context {
+        AuthContext::JwtUser { user_id, role, .. } => {
+            info!(
+                path = %path,
+                method = %method,
+                user_id = user_id,
+                auth_type = "jwt",
+                role = role,
+                "JWT authentication successful"
+            );
+        }
+        AuthContext::ApiKeyClient {
+            user_id,
+            api_key_id,
+            ..
+        } => {
+            info!(
+                path = %path,
+                method = %method,
+                user_id = user_id,
+                api_key_id = api_key_id,
+                auth_type = "api_key",
+                "API key authentication successful"
+            );
+        }
+    }
 
     Ok(next.run(request).await)
 }
 
 /// Check if a path is public (doesn't require authentication)
 fn is_public_path(path: &str) -> bool {
-    PUBLIC_PATHS
-        .iter()
-        .any(|&public_path| path == public_path || path.starts_with(&format!("{}/", public_path)))
+    PUBLIC_PATHS.iter().any(|&public_path| {
+        path == public_path
+            || path.starts_with(&format!("{}/", public_path))
+            || (public_path.ends_with('/') && path.starts_with(public_path))
+    })
+}
+
+/// Extract JWT token from Authorization header
+fn extract_jwt_token(headers: &axum::http::HeaderMap) -> Option<String> {
+    headers
+        .get("authorization")
+        .and_then(|header| header.to_str().ok())
+        .and_then(|header| {
+            if header.starts_with("Bearer ") {
+                Some(header[7..].to_string())
+            } else {
+                None
+            }
+        })
+}
+
+/// Authenticate JWT token and return authentication context
+async fn authenticate_jwt_token(jwt_token: &str) -> Result<AuthContext, AuthError> {
+    // TODO: In a real implementation, this would:
+    // 1. Validate JWT signature with secret/public key
+    // 2. Check token expiration
+    // 3. Extract user claims from token
+    // 4. Query user permissions from database
+    // 5. Return authentication context
+
+    // Mock implementation for now
+    if jwt_token == "mock-jwt-token-user" {
+        Ok(AuthContext::JwtUser {
+            user_id: "user_123".to_string(),
+            role: "user".to_string(),
+            permissions: vec![
+                Permission::DataRead,
+                Permission::DataWrite,
+                Permission::AlgorithmSubmit,
+                Permission::AlgorithmRead,
+            ],
+            rate_limit_tier: RateLimitTier::Basic,
+        })
+    } else if jwt_token == "mock-jwt-token-admin" {
+        Ok(AuthContext::JwtUser {
+            user_id: "admin_456".to_string(),
+            role: "admin".to_string(),
+            permissions: vec![Permission::AdminAccess],
+            rate_limit_tier: RateLimitTier::Enterprise,
+        })
+    } else {
+        Err(AuthError::InvalidToken)
+    }
 }
 
 /// Authenticate an API key and return authentication context
@@ -179,7 +276,7 @@ async fn authenticate_api_key(api_key: &str) -> Result<AuthContext, AuthError> {
             }
         }
 
-        Ok(AuthContext {
+        Ok(AuthContext::ApiKeyClient {
             user_id: key_info.user_id.clone(),
             api_key_id: key_info.id.clone(),
             permissions: key_info.permissions.clone(),
@@ -192,35 +289,44 @@ async fn authenticate_api_key(api_key: &str) -> Result<AuthContext, AuthError> {
 
 /// Check if the user has permission to access the requested resource
 fn has_permission(auth_context: &AuthContext, path: &str, method: &str) -> bool {
+    let (permissions, is_admin) = match auth_context {
+        AuthContext::JwtUser {
+            permissions, role, ..
+        } => (
+            permissions,
+            role == "admin" || permissions.contains(&Permission::AdminAccess),
+        ),
+        AuthContext::ApiKeyClient { permissions, .. } => {
+            (permissions, permissions.contains(&Permission::AdminAccess))
+        }
+    };
+
     // Admin users have access to everything
-    if auth_context.permissions.contains(&Permission::AdminAccess) {
+    if is_admin {
         return true;
     }
 
     // Check specific path permissions
     match (path, method) {
-        // Data endpoints
-        (path, "GET") if path.starts_with("/api/v1/data") => {
-            auth_context.permissions.contains(&Permission::DataRead)
+        // Static dataset endpoints
+        (path, "GET") if path.starts_with("/api/static-datasets") => {
+            permissions.contains(&Permission::DataRead)
         }
-        (path, "POST") if path.starts_with("/api/v1/data") => {
-            auth_context.permissions.contains(&Permission::DataWrite)
-        }
-        (path, "DELETE") if path.starts_with("/api/v1/data") => {
-            auth_context.permissions.contains(&Permission::DataDelete)
+        (path, "POST") if path.starts_with("/api/static-datasets") => {
+            permissions.contains(&Permission::DataWrite)
         }
 
-        // Algorithm endpoints
-        (path, "POST") if path.starts_with("/api/v1/algorithms") => auth_context
-            .permissions
-            .contains(&Permission::AlgorithmSubmit),
-        (path, "GET") if path.starts_with("/api/v1/algorithms") => auth_context
-            .permissions
-            .contains(&Permission::AlgorithmRead),
+        // Dynamic dataset endpoints (admin only for creation)
+        (path, "POST") if path.starts_with("/api/datasets") => {
+            is_admin || permissions.contains(&Permission::AdminAccess)
+        }
+        (path, "GET") if path.starts_with("/api/datasets") => {
+            permissions.contains(&Permission::DataRead)
+        }
 
-        // API key management endpoints
-        (path, _) if path.starts_with("/api/v1/auth") => {
-            auth_context.permissions.contains(&Permission::ApiKeyManage)
+        // API key management endpoints (admin only)
+        (path, _) if path.starts_with("/api/auth") => {
+            is_admin || permissions.contains(&Permission::ApiKeyManage)
         }
 
         // Default: deny access
@@ -271,6 +377,10 @@ pub enum AuthError {
     KeyExpired,
     #[error("API key has been revoked")]
     KeyRevoked,
+    #[error("Invalid JWT token")]
+    InvalidToken,
+    #[error("JWT token has expired")]
+    TokenExpired,
     #[error("Database error: {0}")]
     DatabaseError(String),
     #[error("Service unavailable")]
@@ -281,9 +391,11 @@ impl AuthError {
     /// Get the appropriate HTTP status code for this error
     pub fn status_code(&self) -> StatusCode {
         match self {
-            AuthError::InvalidKey | AuthError::KeyExpired | AuthError::KeyRevoked => {
-                StatusCode::UNAUTHORIZED
-            }
+            AuthError::InvalidKey
+            | AuthError::KeyExpired
+            | AuthError::KeyRevoked
+            | AuthError::InvalidToken
+            | AuthError::TokenExpired => StatusCode::UNAUTHORIZED,
             AuthError::DatabaseError(_) | AuthError::ServiceUnavailable => {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
@@ -299,47 +411,47 @@ mod tests {
     fn test_is_public_path() {
         assert!(is_public_path("/health"));
         assert!(is_public_path("/health/live"));
-        // assert!(is_public_path("/metrics"));
-        assert!(!is_public_path("/api/v1/data"));
-        assert!(!is_public_path("/api/v1/algorithms"));
+        assert!(is_public_path("/api/sample/QmTest123"));
+        assert!(!is_public_path("/api/static-datasets"));
+        assert!(!is_public_path("/api/datasets"));
     }
 
     #[test]
     fn test_has_permission() {
-        let auth_context = AuthContext {
+        let auth_context = AuthContext::ApiKeyClient {
             user_id: "user_123".to_string(),
             api_key_id: "key_001".to_string(),
-            permissions: vec![Permission::DataRead, Permission::AlgorithmSubmit],
+            permissions: vec![Permission::DataRead, Permission::DataWrite],
             rate_limit_tier: RateLimitTier::Basic,
         };
 
-        assert!(has_permission(&auth_context, "/api/v1/data/123", "GET"));
+        assert!(has_permission(&auth_context, "/api/static-datasets", "GET"));
         assert!(has_permission(
             &auth_context,
-            "/api/v1/algorithms/submit",
+            "/api/static-datasets",
             "POST"
         ));
-        assert!(!has_permission(&auth_context, "/api/v1/data/123", "DELETE"));
-        assert!(!has_permission(&auth_context, "/api/v1/auth/keys", "POST"));
+        assert!(!has_permission(&auth_context, "/api/datasets", "POST")); // Admin only
+        assert!(!has_permission(&auth_context, "/api/auth/keys", "POST"));
     }
 
     #[test]
     fn test_admin_permission() {
-        let admin_context = AuthContext {
+        let admin_context = AuthContext::JwtUser {
             user_id: "admin_456".to_string(),
-            api_key_id: "key_002".to_string(),
+            role: "admin".to_string(),
             permissions: vec![Permission::AdminAccess],
             rate_limit_tier: RateLimitTier::Enterprise,
         };
 
         // Admin should have access to everything
-        assert!(has_permission(&admin_context, "/api/v1/data/123", "DELETE"));
-        assert!(has_permission(&admin_context, "/api/v1/auth/keys", "POST"));
         assert!(has_permission(
             &admin_context,
-            "/api/v1/algorithms/submit",
+            "/api/static-datasets",
             "POST"
         ));
+        assert!(has_permission(&admin_context, "/api/datasets", "POST"));
+        assert!(has_permission(&admin_context, "/api/auth/keys", "POST"));
     }
 
     #[tokio::test]
@@ -348,8 +460,17 @@ mod tests {
         assert!(result.is_ok());
 
         let auth_context = result.unwrap();
-        assert_eq!(auth_context.user_id, "user_123");
-        assert!(auth_context.permissions.contains(&Permission::DataRead));
+        match auth_context {
+            AuthContext::ApiKeyClient {
+                user_id,
+                permissions,
+                ..
+            } => {
+                assert_eq!(user_id, "user_123");
+                assert!(permissions.contains(&Permission::DataRead));
+            }
+            _ => panic!("Expected ApiKeyClient context"),
+        }
     }
 
     #[tokio::test]
@@ -357,5 +478,48 @@ mod tests {
         let result = authenticate_api_key("invalid-key").await;
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), AuthError::InvalidKey));
+    }
+
+    #[tokio::test]
+    async fn test_authenticate_valid_jwt() {
+        let result = authenticate_jwt_token("mock-jwt-token-user").await;
+        assert!(result.is_ok());
+
+        let auth_context = result.unwrap();
+        match auth_context {
+            AuthContext::JwtUser { user_id, role, .. } => {
+                assert_eq!(user_id, "user_123");
+                assert_eq!(role, "user");
+            }
+            _ => panic!("Expected JwtUser context"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_authenticate_invalid_jwt() {
+        let result = authenticate_jwt_token("invalid-jwt-token").await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), AuthError::InvalidToken));
+    }
+
+    #[test]
+    fn test_extract_jwt_token() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            "authorization",
+            "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9"
+                .parse()
+                .unwrap(),
+        );
+
+        let token = extract_jwt_token(&headers);
+        assert!(token.is_some());
+        assert_eq!(token.unwrap(), "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9");
+
+        // Test without Bearer prefix
+        let mut headers2 = axum::http::HeaderMap::new();
+        headers2.insert("authorization", "Basic dXNlcjpwYXNz".parse().unwrap());
+        let token2 = extract_jwt_token(&headers2);
+        assert!(token2.is_none());
     }
 }

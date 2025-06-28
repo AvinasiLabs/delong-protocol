@@ -13,8 +13,9 @@ path = "src/main.rs"
 
 [dependencies]
 # HTTP framework and async runtime
-axum = { workspace = true }
+axum = { workspace = true, features = ["multipart", "ws"] }
 tokio = { workspace = true, features = ["full"] }
+async-trait = "0.1"
 
 # Serialization
 serde = { workspace = true, features = ["derive"] }
@@ -50,11 +51,21 @@ uuid = { version = "1.0", features = ["v4", "serde"] }
 thiserror = "1.0"
 
 # HTTP middleware and utilities
-tower = { version = "0.4", features = ["util"] }
-tower-http = { version = "0.5", features = ["cors", "trace"] }
+tower = { version = "0.5.2", features = ["util"] }
+tower-http = { version = "0.6.6", features = ["cors", "trace"] }
 
-# Static initialization
-lazy_static = "1.4"
+# HTTP client for forwarding requests to backend services
+reqwest = { version = "0.12.20", features = ["json", "multipart", "stream"] }
+
+# URL encoding/decoding for query parameters
+serde_urlencoded = "0.7"
+urlencoding = "2.1"
+
+# WebSocket utilities
+futures-util = "0.3"
+
+# Random number generation
+rand = "0.8"
 
 [dev-dependencies]
 # Benchmarking

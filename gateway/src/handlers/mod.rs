@@ -1,17 +1,25 @@
 //! Request handlers for the Delong gateway
 //!
 //! This module contains all the HTTP request handlers organized by functionality:
-//! - algorithm: Algorithm submission and execution handlers
+//! - algo_exe: Algorithm execution lifecycle management handlers
 //! - auth: API key management and authentication handlers
-//! - data: Dataset upload and management handlers
+//! - committee: Committee member management handlers
+//! - contract: Smart contract metadata handlers
+//! - dataset: Dataset upload and management handlers
 //! - health: Health check handlers
-//! - metrics: Metrics and monitoring handlers
+//! - report: Test report management handlers
+//! - vote: Voting system handlers
+//! - websocket: Real-time WebSocket notification handlers
 
-pub mod algorithm;
+pub mod algo_exe;
 pub mod auth;
-pub mod data;
+pub mod committee;
+pub mod contract;
+pub mod dataset;
 pub mod health;
-// pub mod metrics;
+pub mod report;
+pub mod vote;
+pub mod websocket;
 
 // Common response types used across handlers
 use serde::{Deserialize, Serialize};
@@ -106,7 +114,7 @@ impl Default for PaginationParams {
 }
 
 /// Paginated response wrapper
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaginatedResponse<T> {
     pub items: Vec<T>,
     pub total: u64,

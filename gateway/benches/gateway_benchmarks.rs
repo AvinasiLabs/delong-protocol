@@ -3,15 +3,45 @@
 //! These benchmarks measure the performance of various gateway endpoints
 //! and middleware components to ensure optimal performance.
 
+use async_trait::async_trait;
 use axum::{
     body::Body,
     http::{Method, Request, StatusCode},
 };
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use gateway::{config::GatewayConfig, create_router};
+use gateway::{
+    config::GatewayConfig,
+    create_router,
+    utils::http_client::{BackendClient, HttpClientError},
+};
 use serde_json::json;
+use std::collections::HashMap;
 use tokio::runtime::Runtime;
 use tower::ServiceExt;
+
+/// Fast mock HTTP client for benchmarks
+/// This avoids network overhead and provides consistent performance measurements
+pub struct BenchmarkMockClient;
+
+#[async_trait]
+impl BackendClient for BenchmarkMockClient {
+    async fn forward_request_json(
+        &self,
+        _url: &str,
+        _method: reqwest::Method,
+        _payload: Option<serde_json::Value>,
+        _headers: Option<HashMap<String, String>>,
+    ) -> Result<serde_json::Value, HttpClientError> {
+        // Return a consistent mock response for benchmarks
+        Ok(json!({
+            "items": [],
+            "total": 0,
+            "page": 1,
+            "limit": 20,
+            "total_pages": 0
+        }))
+    }
+}
 
 /// Helper function to create test configuration
 fn create_bench_config() -> GatewayConfig {
@@ -36,7 +66,7 @@ fn bench_router_creation(c: &mut Criterion) {
 
     c.bench_function("router_creation", |b| {
         b.iter(|| {
-            let router = create_router(black_box(&config));
+            let router = create_router(black_box(&config), black_box(BenchmarkMockClient));
             black_box(router)
         });
     });
@@ -46,7 +76,8 @@ fn bench_router_creation(c: &mut Criterion) {
 fn bench_health_endpoints(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let config = create_bench_config();
-    let app = create_router(&config);
+    let client = BenchmarkMockClient;
+    let app = create_router(&config, client);
 
     c.bench_function("health_endpoint", |b| {
         b.iter(|| {
@@ -63,71 +94,54 @@ fn bench_health_endpoints(c: &mut Criterion) {
             })
         });
     });
-
-    c.bench_function("liveness_endpoint", |b| {
-        b.iter(|| {
-            rt.block_on(async {
-                let request = Request::builder()
-                    .uri("/health/live")
-                    .body(Body::empty())
-                    .unwrap();
-
-                let response = app.clone().oneshot(black_box(request)).await.unwrap();
-
-                black_box(response)
-            })
-        });
-    });
-
-    c.bench_function("readiness_endpoint", |b| {
-        b.iter(|| {
-            rt.block_on(async {
-                let request = Request::builder()
-                    .uri("/health/ready")
-                    .body(Body::empty())
-                    .unwrap();
-
-                let response = app.clone().oneshot(black_box(request)).await.unwrap();
-
-                black_box(response)
-            })
-        });
-    });
 }
 
 /// Benchmark dataset API endpoints
 fn bench_dataset_endpoints(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let config = create_bench_config();
-    let app = create_router(&config);
+    let client = BenchmarkMockClient;
+    let app = create_router(&config, client);
 
-    c.bench_function("get_dataset_list", |b| {
+    c.bench_function("get_static_dataset_list", |b| {
         b.iter(|| {
             rt.block_on(async {
                 let request = Request::builder()
-                    .uri("/api/v1/datasets")
+                    .uri("/api/static-datasets")
                     .body(Body::empty())
                     .unwrap();
 
                 let response = app.clone().oneshot(black_box(request)).await.unwrap();
-
                 black_box(response)
             })
         });
     });
 
-    c.bench_function("upload_dataset", |b| {
+    c.bench_function("get_dynamic_dataset_list", |b| {
+        b.iter(|| {
+            rt.block_on(async {
+                let request = Request::builder()
+                    .uri("/api/datasets")
+                    .body(Body::empty())
+                    .unwrap();
+
+                let response = app.clone().oneshot(black_box(request)).await.unwrap();
+                black_box(response)
+            })
+        });
+    });
+
+    c.bench_function("create_dynamic_dataset", |b| {
         b.iter(|| {
             rt.block_on(async {
                 let payload = json!({
                     "name": "benchmark_dataset",
                     "description": "A benchmark test dataset",
-                    "data": "sample_benchmark_data"
+                    "category": "test"
                 });
 
-                let request = create_json_request(Method::POST, "/api/v1/datasets", payload);
+                let request = create_json_request(Method::POST, "/api/datasets", payload);
                 let response = app.clone().oneshot(black_box(request)).await.unwrap();
-
                 black_box(response)
             })
         });
@@ -137,12 +151,11 @@ fn bench_dataset_endpoints(c: &mut Criterion) {
         b.iter(|| {
             rt.block_on(async {
                 let request = Request::builder()
-                    .uri("/api/v1/datasets/bench-dataset-id")
+                    .uri("/api/datasets/1")
                     .body(Body::empty())
                     .unwrap();
 
                 let response = app.clone().oneshot(black_box(request)).await.unwrap();
-
                 black_box(response)
             })
         });
@@ -153,85 +166,150 @@ fn bench_dataset_endpoints(c: &mut Criterion) {
             rt.block_on(async {
                 let request = Request::builder()
                     .method(Method::DELETE)
-                    .uri("/api/v1/datasets/bench-dataset-id")
+                    .uri("/api/datasets/1")
                     .body(Body::empty())
                     .unwrap();
 
                 let response = app.clone().oneshot(black_box(request)).await.unwrap();
-
                 black_box(response)
             })
         });
     });
 }
 
-/// Benchmark algorithm API endpoints
-fn bench_algorithm_endpoints(c: &mut Criterion) {
+/// Benchmark algorithm execution API endpoints
+fn bench_algo_exe_endpoints(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let config = create_bench_config();
-    let app = create_router(&config);
+    let client = BenchmarkMockClient;
+    let app = create_router(&config, client);
 
-    c.bench_function("submit_algorithm", |b| {
+    c.bench_function("submit_algo_exe", |b| {
         b.iter(|| {
             rt.block_on(async {
                 let payload = json!({
-                    "algorithm_type": "privacy_preserving_ml",
-                    "dataset_id": "bench-dataset-id",
-                    "parameters": {
-                        "epsilon": 1.0,
-                        "delta": 0.001
-                    }
+                    "github_repo": "example/test-repo",
+                    "commit_hash": "abc123def456",
+                    "scientist_wallet": "0x1234567890abcdef"
                 });
 
-                let request =
-                    create_json_request(Method::POST, "/api/v1/algorithms/submit", payload);
+                let request = create_json_request(Method::POST, "/api/algo-exes", payload);
                 let response = app.clone().oneshot(black_box(request)).await.unwrap();
-
                 black_box(response)
             })
         });
     });
 
-    c.bench_function("get_algorithm_status", |b| {
+    c.bench_function("get_algo_exe_list", |b| {
         b.iter(|| {
             rt.block_on(async {
                 let request = Request::builder()
-                    .uri("/api/v1/algorithms/bench-algo-id/status")
+                    .uri("/api/algo-exes")
                     .body(Body::empty())
                     .unwrap();
 
                 let response = app.clone().oneshot(black_box(request)).await.unwrap();
-
                 black_box(response)
             })
         });
     });
 
-    c.bench_function("get_algorithm_result", |b| {
+    c.bench_function("get_algo_exe_details", |b| {
         b.iter(|| {
             rt.block_on(async {
                 let request = Request::builder()
-                    .uri("/api/v1/algorithms/bench-algo-id/result")
+                    .uri("/api/algo-exes/1")
                     .body(Body::empty())
                     .unwrap();
 
                 let response = app.clone().oneshot(black_box(request)).await.unwrap();
+                black_box(response)
+            })
+        });
+    });
+}
 
+/// Benchmark committee API endpoints
+fn bench_committee_endpoints(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
+    let config = create_bench_config();
+    let client = BenchmarkMockClient;
+    let app = create_router(&config, client);
+
+    c.bench_function("get_committee_members", |b| {
+        b.iter(|| {
+            rt.block_on(async {
+                let request = Request::builder()
+                    .uri("/api/committee")
+                    .body(Body::empty())
+                    .unwrap();
+
+                let response = app.clone().oneshot(black_box(request)).await.unwrap();
                 black_box(response)
             })
         });
     });
 
-    c.bench_function("get_algorithm_details", |b| {
+    c.bench_function("set_committee_member", |b| {
+        b.iter(|| {
+            rt.block_on(async {
+                let payload = json!({
+                    "member_wallet": "0x1234567890abcdef",
+                    "is_approved": true
+                });
+
+                let request = create_json_request(Method::POST, "/api/committee", payload);
+                let response = app.clone().oneshot(black_box(request)).await.unwrap();
+                black_box(response)
+            })
+        });
+    });
+
+    c.bench_function("check_committee_membership", |b| {
         b.iter(|| {
             rt.block_on(async {
                 let request = Request::builder()
-                    .uri("/api/v1/algorithms/bench-algo-id")
+                    .uri("/api/committee/check/0x1234567890abcdef")
                     .body(Body::empty())
                     .unwrap();
 
                 let response = app.clone().oneshot(black_box(request)).await.unwrap();
+                black_box(response)
+            })
+        });
+    });
+}
 
+/// Benchmark voting API endpoints
+fn bench_vote_endpoints(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
+    let config = create_bench_config();
+    let client = BenchmarkMockClient;
+    let app = create_router(&config, client);
+
+    c.bench_function("get_votes", |b| {
+        b.iter(|| {
+            rt.block_on(async {
+                let request = Request::builder()
+                    .uri("/api/votes")
+                    .body(Body::empty())
+                    .unwrap();
+
+                let response = app.clone().oneshot(black_box(request)).await.unwrap();
+                black_box(response)
+            })
+        });
+    });
+
+    c.bench_function("set_vote_duration", |b| {
+        b.iter(|| {
+            rt.block_on(async {
+                let payload = json!({
+                    "duration": 3600
+                });
+
+                let request = create_json_request(Method::POST, "/api/votes/duration", payload);
+                let response = app.clone().oneshot(black_box(request)).await.unwrap();
                 black_box(response)
             })
         });
@@ -242,7 +320,8 @@ fn bench_algorithm_endpoints(c: &mut Criterion) {
 fn bench_auth_endpoints(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let config = create_bench_config();
-    let app = create_router(&config);
+    let client = BenchmarkMockClient;
+    let app = create_router(&config, client);
 
     c.bench_function("create_api_key", |b| {
         b.iter(|| {
@@ -253,9 +332,8 @@ fn bench_auth_endpoints(c: &mut Criterion) {
                     "permissions": ["read", "write"]
                 });
 
-                let request = create_json_request(Method::POST, "/api/v1/auth/keys", payload);
+                let request = create_json_request(Method::POST, "/api/auth/keys", payload);
                 let response = app.clone().oneshot(black_box(request)).await.unwrap();
-
                 black_box(response)
             })
         });
@@ -265,12 +343,11 @@ fn bench_auth_endpoints(c: &mut Criterion) {
         b.iter(|| {
             rt.block_on(async {
                 let request = Request::builder()
-                    .uri("/api/v1/auth/keys")
+                    .uri("/api/auth/keys")
                     .body(Body::empty())
                     .unwrap();
 
                 let response = app.clone().oneshot(black_box(request)).await.unwrap();
-
                 black_box(response)
             })
         });
@@ -283,10 +360,8 @@ fn bench_auth_endpoints(c: &mut Criterion) {
                     "api_key": "bench-api-key-value"
                 });
 
-                let request =
-                    create_json_request(Method::POST, "/api/v1/auth/keys/validate", payload);
+                let request = create_json_request(Method::POST, "/api/auth/keys/validate", payload);
                 let response = app.clone().oneshot(black_box(request)).await.unwrap();
-
                 black_box(response)
             })
         });
@@ -297,12 +372,36 @@ fn bench_auth_endpoints(c: &mut Criterion) {
             rt.block_on(async {
                 let request = Request::builder()
                     .method(Method::DELETE)
-                    .uri("/api/v1/auth/keys/bench-key-id")
+                    .uri("/api/auth/keys/bench-key-id")
                     .body(Body::empty())
                     .unwrap();
 
                 let response = app.clone().oneshot(black_box(request)).await.unwrap();
+                black_box(response)
+            })
+        });
+    });
+}
 
+/// Benchmark report upload endpoints
+fn bench_report_endpoints(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
+    let config = create_bench_config();
+    let client = BenchmarkMockClient;
+    let app = create_router(&config, client);
+
+    c.bench_function("upload_report", |b| {
+        b.iter(|| {
+            rt.block_on(async {
+                let payload = json!({
+                    "report_type": "test_result",
+                    "content": "Test report content",
+                    "algorithm_id": "test-algo-123",
+                    "dataset_id": "test-dataset-456"
+                });
+
+                let request = create_json_request(Method::POST, "/api/reports", payload);
+                let response = app.clone().oneshot(black_box(request)).await.unwrap();
                 black_box(response)
             })
         });
@@ -313,9 +412,10 @@ fn bench_auth_endpoints(c: &mut Criterion) {
 fn bench_middleware_performance(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let config = create_bench_config();
+    let client = BenchmarkMockClient;
 
     // Create app with all middleware
-    let app_with_middleware = create_router(&config);
+    let app_with_middleware = create_router(&config, client);
 
     c.bench_function("request_with_all_middleware", |b| {
         b.iter(|| {
@@ -324,6 +424,7 @@ fn bench_middleware_performance(c: &mut Criterion) {
                     .uri("/health")
                     .header("X-Forwarded-For", "192.168.1.100")
                     .header("User-Agent", "BenchmarkClient/1.0")
+                    .header("X-Request-ID", "bench-request-123")
                     .body(Body::empty())
                     .unwrap();
 
@@ -343,7 +444,8 @@ fn bench_middleware_performance(c: &mut Criterion) {
 fn bench_json_processing(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let config = create_bench_config();
-    let app = create_router(&config);
+    let client = BenchmarkMockClient;
+    let app = create_router(&config, client);
 
     // Small JSON payload
     c.bench_function("small_json_payload", |b| {
@@ -351,12 +453,11 @@ fn bench_json_processing(c: &mut Criterion) {
             rt.block_on(async {
                 let payload = json!({
                     "name": "test",
-                    "value": 42
+                    "description": "Small test dataset"
                 });
 
-                let request = create_json_request(Method::POST, "/api/v1/datasets", payload);
+                let request = create_json_request(Method::POST, "/api/datasets", payload);
                 let response = app.clone().oneshot(black_box(request)).await.unwrap();
-
                 black_box(response)
             })
         });
@@ -374,17 +475,12 @@ fn bench_json_processing(c: &mut Criterion) {
                 let payload = json!({
                     "name": "large_dataset",
                     "description": "A large benchmark dataset",
-                    "data": large_data,
-                    "metadata": {
-                        "size": large_data.len(),
-                        "created_at": "2024-01-01T00:00:00Z",
-                        "tags": ["benchmark", "performance", "test"]
-                    }
+                    "metadata": large_data,
+                    "category": "benchmark"
                 });
 
-                let request = create_json_request(Method::POST, "/api/v1/datasets", payload);
+                let request = create_json_request(Method::POST, "/api/datasets", payload);
                 let response = app.clone().oneshot(black_box(request)).await.unwrap();
-
                 black_box(response)
             });
         })
@@ -395,18 +491,18 @@ fn bench_json_processing(c: &mut Criterion) {
 fn bench_error_handling(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let config = create_bench_config();
-    let app = create_router(&config);
+    let client = BenchmarkMockClient;
+    let app = create_router(&config, client);
 
     c.bench_function("not_found_error", |b| {
         b.iter(|| {
             rt.block_on(async {
                 let request = Request::builder()
-                    .uri("/api/v1/nonexistent")
+                    .uri("/api/nonexistent")
                     .body(Body::empty())
                     .unwrap();
 
                 let response = app.clone().oneshot(black_box(request)).await.unwrap();
-
                 black_box(response)
             })
         });
@@ -422,7 +518,6 @@ fn bench_error_handling(c: &mut Criterion) {
                     .unwrap();
 
                 let response = app.clone().oneshot(black_box(request)).await.unwrap();
-
                 black_box(response)
             })
         });
@@ -433,13 +528,34 @@ fn bench_error_handling(c: &mut Criterion) {
             rt.block_on(async {
                 let request = Request::builder()
                     .method(Method::POST)
-                    .uri("/api/v1/datasets")
+                    .uri("/api/datasets")
                     .header("content-type", "application/json")
                     .body(Body::from("invalid json {"))
                     .unwrap();
 
                 let response = app.clone().oneshot(black_box(request)).await.unwrap();
+                black_box(response)
+            })
+        });
+    });
+}
 
+/// Benchmark sample data access (public endpoint)
+fn bench_public_endpoints(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
+    let config = create_bench_config();
+    let client = BenchmarkMockClient;
+    let app = create_router(&config, client);
+
+    c.bench_function("sample_data_access", |b| {
+        b.iter(|| {
+            rt.block_on(async {
+                let request = Request::builder()
+                    .uri("/api/sample/QmTestCID123")
+                    .body(Body::empty())
+                    .unwrap();
+
+                let response = app.clone().oneshot(black_box(request)).await.unwrap();
                 black_box(response)
             })
         });
@@ -451,11 +567,15 @@ criterion_group!(
     bench_router_creation,
     bench_health_endpoints,
     bench_dataset_endpoints,
-    bench_algorithm_endpoints,
+    bench_algo_exe_endpoints,
+    bench_committee_endpoints,
+    bench_vote_endpoints,
     bench_auth_endpoints,
+    bench_report_endpoints,
     bench_middleware_performance,
     bench_json_processing,
-    bench_error_handling
+    bench_error_handling,
+    bench_public_endpoints
 );
 
 criterion_main!(benches);

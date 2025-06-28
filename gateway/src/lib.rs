@@ -13,10 +13,11 @@ pub mod utils;
 pub use config::GatewayConfig;
 pub use middleware::MiddlewareUtils;
 pub use routes::create_router;
+pub use utils::http_client::{BackendClient, HttpBackendClient};
 
 // Re-export testing utilities
 // Note: Specific imports instead of glob to avoid naming conflicts
 #[cfg(test)]
-pub use handlers::{algorithm, auth as handlers_auth, data, health};
+pub use handlers::{auth as handlers_auth, dataset, health};
 #[cfg(test)]
 pub use middleware::{auth as middleware_auth, logging, request_id};

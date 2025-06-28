@@ -21,14 +21,3 @@ pub async fn health_handler() -> Result<Json<HealthResponse>, StatusCode> {
 
     Ok(Json(response))
 }
-
-/// Liveness probe handler
-pub async fn liveness_handler() -> StatusCode {
-    StatusCode::OK
-}
-
-/// Readiness probe handler
-pub async fn readiness_handler() -> StatusCode {
-    // Simple readiness check - can be extended if needed
-    StatusCode::OK
-}

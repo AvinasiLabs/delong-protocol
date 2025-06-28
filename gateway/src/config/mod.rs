@@ -8,6 +8,8 @@ pub struct GatewayConfig {
     pub server: ServerConfig,
     /// API configuration
     pub api: ApiConfig,
+    /// Backend services configuration
+    pub services: ServicesConfig,
     /// Logging configuration
     pub logging: LoggingConfig,
     /// OpenTelemetry configuration
@@ -28,12 +30,19 @@ pub struct ServerConfig {
 /// API configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiConfig {
-    /// Core service base URL
-    pub core_service_url: String,
     /// Maximum request body size in bytes
     pub max_body_size: usize,
     /// Enable API key validation
     pub enable_api_key_validation: bool,
+}
+
+/// Backend services configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServicesConfig {
+    /// Core service base URL
+    pub core_url: String,
+    /// Secure service base URL (for static datasets and TEE operations)
+    pub secure_url: String,
 }
 
 /// Logging configuration
@@ -63,6 +72,7 @@ impl Default for GatewayConfig {
         Self {
             server: ServerConfig::default(),
             api: ApiConfig::default(),
+            services: ServicesConfig::default(),
             logging: LoggingConfig::default(),
             opentelemetry: OpenTelemetryConfig::default(),
         }
@@ -82,9 +92,17 @@ impl Default for ServerConfig {
 impl Default for ApiConfig {
     fn default() -> Self {
         Self {
-            core_service_url: "http://localhost:8081".to_string(),
             max_body_size: 1024 * 1024 * 10, // 10MB
             enable_api_key_validation: true,
+        }
+    }
+}
+
+impl Default for ServicesConfig {
+    fn default() -> Self {
+        Self {
+            core_url: "http://localhost:8081".to_string(),
+            secure_url: "http://localhost:8082".to_string(),
         }
     }
 }
@@ -125,10 +143,15 @@ impl GatewayConfig {
             config.server.timeout_seconds = timeout.parse()?;
         }
 
-        // API configuration
+        // Services configuration
         if let Ok(core_url) = std::env::var("CORE_SERVICE_URL") {
-            config.api.core_service_url = core_url;
+            config.services.core_url = core_url;
         }
+        if let Ok(secure_url) = std::env::var("SECURE_SERVICE_URL") {
+            config.services.secure_url = secure_url;
+        }
+
+        // API configuration
         if let Ok(max_size) = std::env::var("MAX_BODY_SIZE") {
             config.api.max_body_size = max_size.parse()?;
         }
@@ -177,7 +200,8 @@ mod tests {
         let config = GatewayConfig::default();
         assert_eq!(config.server.host, "0.0.0.0");
         assert_eq!(config.server.port, 8080);
-        assert_eq!(config.api.core_service_url, "http://localhost:8081");
+        assert_eq!(config.services.core_url, "http://localhost:8081");
+        assert_eq!(config.services.secure_url, "http://localhost:8082");
         assert!(config.api.enable_api_key_validation);
     }
 

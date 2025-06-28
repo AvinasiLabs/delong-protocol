@@ -5,6 +5,8 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+pub mod http_client;
+
 /// Common error response structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ErrorResponse {
@@ -58,11 +60,7 @@ pub fn extract_api_key(headers: &HeaderMap) -> Option<String> {
     // Try different header formats
     if let Some(auth_header) = headers.get("authorization") {
         if let Ok(auth_str) = auth_header.to_str() {
-            // Bearer token format
-            if auth_str.starts_with("Bearer ") {
-                return Some(auth_str[7..].to_string());
-            }
-            // API key format
+            // API key format (Bearer is handled separately for JWT)
             if auth_str.starts_with("ApiKey ") {
                 return Some(auth_str[7..].to_string());
             }
@@ -138,11 +136,11 @@ mod tests {
     use axum::http::{HeaderMap, HeaderValue};
 
     #[test]
-    fn test_extract_api_key_bearer() {
+    fn test_extract_api_key_api_key_format() {
         let mut headers = HeaderMap::new();
         headers.insert(
             "authorization",
-            HeaderValue::from_static("Bearer test-api-key-123"),
+            HeaderValue::from_static("ApiKey test-api-key-123"),
         );
 
         let api_key = extract_api_key(&headers);
@@ -156,6 +154,18 @@ mod tests {
 
         let api_key = extract_api_key(&headers);
         assert_eq!(api_key, Some("test-api-key-123".to_string()));
+    }
+
+    #[test]
+    fn test_extract_api_key_ignores_bearer() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "authorization",
+            HeaderValue::from_static("Bearer jwt-token-123"),
+        );
+
+        let api_key = extract_api_key(&headers);
+        assert_eq!(api_key, None); // Should not extract JWT tokens as API keys
     }
 
     #[test]

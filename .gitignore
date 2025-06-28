@@ -25,7 +25,7 @@ target
 .idea
 
 # NOTES
-.notes
+notes
 
 # Gateway monitoring stack
 # Keep configuration files, ignore runtime data

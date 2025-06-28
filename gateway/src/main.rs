@@ -21,7 +21,7 @@ use opentelemetry_sdk::{
 };
 
 // Import from lib crate
-use gateway::{config::GatewayConfig, create_router};
+use gateway::{config::GatewayConfig, create_router, utils::http_client::HttpBackendClient};
 
 #[tokio::main]
 #[instrument]
@@ -38,8 +38,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Configuration loaded: {:?}", config);
 
+    // Create HTTP client for backend communication
+    let backend_client = HttpBackendClient::new(config.server.timeout_seconds);
+    info!(
+        "HTTP client initialized with timeout: {}s",
+        backend_client.timeout_seconds()
+    );
+
     // Create the application router
-    let app = create_router(&config);
+    let app = create_router(&config, backend_client);
     info!("Router created");
 
     // Get server address

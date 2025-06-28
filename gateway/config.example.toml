@@ -1,0 +1,107 @@
+# DeLong Protocol Gateway Configuration Example
+# Copy this file to config.toml and modify as needed
+
+[server]
+# Server listening configuration
+host = "0.0.0.0"     # Bind address (0.0.0.0 for all interfaces)
+port = 8080          # HTTP port
+timeout_seconds = 30 # Request timeout in seconds
+
+[api]
+# API configuration
+max_body_size = 10485760         # Maximum request body size (10MB)
+enable_api_key_validation = true # Enable API key authentication
+
+[services]
+# Backend services configuration
+core_url = "http://localhost:8081"   # Core service URL
+secure_url = "http://localhost:8082" # Secure service URL
+
+[logging]
+# Logging configuration
+level = "info"      # Log level: trace, debug, info, warn, error
+json_format = false # Use JSON format for logs (recommended for production)
+
+[opentelemetry]
+# OpenTelemetry observability configuration
+enabled = false                         # Enable distributed tracing
+otlp_endpoint = "http://localhost:4317" # OTLP collector endpoint
+service_name = "delong-gateway"         # Service name for tracing
+service_version = "0.2.0"               # Service version
+
+# Environment Variables Alternative
+# The gateway can also be configured using environment variables:
+#
+# Server:
+# GATEWAY_HOST=0.0.0.0
+# GATEWAY_PORT=8080
+# GATEWAY_TIMEOUT=30
+#
+# Services:
+# CORE_SERVICE_URL=http://localhost:8081
+# SECURE_SERVICE_URL=http://localhost:8082
+#
+# API:
+# MAX_BODY_SIZE=10485760
+# ENABLE_API_KEY_VALIDATION=true
+#
+# Logging:
+# LOG_LEVEL=info
+# LOG_JSON_FORMAT=false
+#
+# OpenTelemetry:
+# OTEL_ENABLED=false
+# OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+# OTEL_SERVICE_NAME=delong-gateway
+# OTEL_SERVICE_VERSION=0.2.0
+
+# Production Configuration Recommendations:
+#
+# 1. Security:
+#    - Use HTTPS in production (configure reverse proxy)
+#    - Enable API key validation
+#    - Set appropriate CORS policies
+#
+# 2. Performance:
+#    - Adjust timeout_seconds based on backend response times
+#    - Set max_body_size according to expected payload sizes
+#    - Use connection pooling for backend services
+#
+# 3. Observability:
+#    - Enable JSON logging format for production
+#    - Configure OpenTelemetry for distributed tracing
+#    - Set up proper log aggregation
+#
+# 4. High Availability:
+#    - Use load balancer health checks on /health endpoint
+#    - Configure backend service failover
+#    - Set up monitoring and alerting
+
+# Docker Compose Example:
+# services:
+#   gateway:
+#     image: delong-gateway:latest
+#     ports:
+#       - "8080:8080"
+#     environment:
+#       - GATEWAY_HOST=0.0.0.0
+#       - GATEWAY_PORT=8080
+#       - CORE_SERVICE_URL=http://core:8081
+#       - SECURE_SERVICE_URL=http://secure:8082
+#       - LOG_LEVEL=info
+#       - LOG_JSON_FORMAT=true
+#       - OTEL_ENABLED=true
+#       - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
+#     depends_on:
+#       - core
+#       - secure
+#
+#   core:
+#     image: delong-core:latest
+#     ports:
+#       - "8081:8081"
+#
+#   secure:
+#     image: delong-secure:latest
+#     ports:
+#       - "8082:8082"
