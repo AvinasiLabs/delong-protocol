@@ -6,6 +6,7 @@
 
 use axum::serve;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tokio::net::TcpListener;
 
 use tracing::{error, info, instrument};
@@ -21,11 +22,23 @@ use opentelemetry_sdk::{
 };
 
 // Import from lib crate
-use gateway::{config::GatewayConfig, create_router, utils::http_client::HttpBackendClient};
+use gateway::{
+    cache::RedisCache, config::GatewayConfig, create_router, utils::http_client::HttpBackendClient,
+};
 
 #[tokio::main]
 #[instrument]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Load environment variables from .env.gateway file (if it exists)
+    match dotenvy::from_filename(".env.gateway") {
+        Ok(path) => println!("\n📄 Loaded .env.gateway file from: {}\n", path.display()),
+        Err(_) => {
+            println!(
+                "\n📄 No .env.gateway file found, using system environment variables and defaults\n"
+            )
+        }
+    }
+
     // Initialize configuration
     let config = GatewayConfig::from_env().unwrap_or_else(|e| {
         eprintln!("Failed to load configuration: {}", e);
@@ -38,6 +51,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Configuration loaded: {:?}", config);
 
+    // Initialize Redis cache
+    let redis_cache = Arc::new(RedisCache::new(config.redis.clone()).await);
+    if redis_cache.is_available() {
+        info!("Redis cache initialized successfully");
+
+        // Perform health check
+        if redis_cache.health_check().await {
+            info!("Redis health check passed");
+        } else {
+            error!("Redis health check failed, continuing without cache");
+        }
+    } else {
+        info!("Redis cache not available, continuing without cache");
+    }
+
     // Create HTTP client for backend communication
     let backend_client = HttpBackendClient::new(config.server.timeout_seconds);
     info!(
@@ -45,9 +73,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         backend_client.timeout_seconds()
     );
 
-    // Create the application router
-    let app = create_router(&config, backend_client);
-    info!("Router created");
+    // Create the application router with Redis cache
+    let app = create_router(&config, backend_client, redis_cache);
+    info!("Router created with Redis cache support");
 
     // Get server address
     let addr = config.socket_addr()?;

@@ -8,96 +8,18 @@ use axum::{
     http::StatusCode,
     response::Json,
 };
-use serde::{Deserialize, Serialize};
 use tracing::{info, instrument, warn};
 
 use crate::{
-    handlers::{ApiResponse, PaginatedResponse, PaginationParams},
-    middleware::auth::{Permission, RateLimitTier},
-    utils::{generate_request_id, is_valid_api_key_format},
+    handlers::{ApiResponse, PaginatedResponse},
+    utils::generate_request_id,
 };
 
-/// API key information returned to users
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ApiKeyInfo {
-    pub id: String,
-    pub name: String,
-    pub description: Option<String>,
-    pub permissions: Vec<Permission>,
-    pub rate_limit_tier: RateLimitTier,
-    pub is_active: bool,
-    pub created_at: String,
-    pub last_used_at: Option<String>,
-    pub expires_at: Option<String>,
-    /// Only returned during creation
-    pub api_key: Option<String>,
-}
-
-/// Request body for creating a new API key
-#[derive(Debug, Deserialize)]
-pub struct CreateApiKeyRequest {
-    pub name: String,
-    pub description: Option<String>,
-    pub permissions: Vec<Permission>,
-    pub rate_limit_tier: Option<RateLimitTier>,
-    /// Expiration time in days (optional, default 30 days)
-    pub expires_in_days: Option<u32>,
-    /// Whether the key should be active immediately
-    pub is_active: Option<bool>,
-}
-
-/// Response for successful API key creation
-#[derive(Debug, Serialize)]
-pub struct CreateApiKeyResponse {
-    pub api_key_info: ApiKeyInfo,
-    pub warning: Option<String>,
-}
-
-/// Request body for API key validation
-#[derive(Debug, Deserialize)]
-pub struct ValidateApiKeyRequest {
-    pub api_key: String,
-    /// Optional context for validation logging
-    pub context: Option<String>,
-}
-
-/// Response for API key validation
-#[derive(Debug, Serialize)]
-pub struct ValidateApiKeyResponse {
-    pub is_valid: bool,
-    pub user_id: Option<String>,
-    pub permissions: Option<Vec<Permission>>,
-    pub rate_limit_tier: Option<RateLimitTier>,
-    pub expires_at: Option<String>,
-    pub validation_message: String,
-}
-
-/// Request body for revoking an API key
-#[derive(Debug, Deserialize)]
-pub struct RevokeApiKeyRequest {
-    pub reason: Option<String>,
-    /// Whether to immediately revoke or schedule for later
-    pub immediate: Option<bool>,
-}
-
-/// Response for API key revocation
-#[derive(Debug, Serialize)]
-pub struct RevokeApiKeyResponse {
-    pub revoked: bool,
-    pub revoked_at: String,
-    pub message: String,
-}
-
-/// Query parameters for listing API keys
-#[derive(Debug, Deserialize)]
-pub struct ApiKeyListQuery {
-    #[serde(flatten)]
-    pub pagination: PaginationParams,
-    pub is_active: Option<bool>,
-    pub rate_limit_tier: Option<RateLimitTier>,
-    pub created_after: Option<String>,
-    pub created_before: Option<String>,
-}
+use common::{
+    ApiKeyInfo, ApiKeyListQuery, CreateApiKeyRequest, CreateApiKeyResponse, Permission,
+    RateLimitTier, RevokeApiKeyRequest, RevokeApiKeyResponse, ValidateApiKeyRequest,
+    ValidateApiKeyResponse, is_valid_api_key_format,
+};
 
 /// Create a new API key
 #[instrument(skip(payload), fields(request_id))]
@@ -337,8 +259,8 @@ pub async fn list_api_keys_handler(
 
     info!(
         request_id = request_id,
-        page = query.pagination.page,
-        limit = query.pagination.limit,
+        page = query.page,
+        limit = query.limit,
         "API key list request received"
     );
 
@@ -355,16 +277,11 @@ pub async fn list_api_keys_handler(
     let total = filtered_keys.len() as u64;
 
     // Apply pagination
-    let start = ((query.pagination.page - 1) * query.pagination.limit) as usize;
-    let end = std::cmp::min(start + query.pagination.limit as usize, filtered_keys.len());
+    let start = ((query.page - 1) * query.limit) as usize;
+    let end = std::cmp::min(start + query.limit as usize, filtered_keys.len());
     let page_keys = filtered_keys[start..end].to_vec();
 
-    let response_data = PaginatedResponse::new(
-        page_keys,
-        total,
-        query.pagination.page,
-        query.pagination.limit,
-    );
+    let response_data = PaginatedResponse::new(page_keys, query.page, query.limit, total);
 
     info!(
         request_id = request_id,
@@ -521,7 +438,8 @@ mod tests {
     fn test_filter_api_keys_by_active() {
         let keys = create_mock_api_keys();
         let query = ApiKeyListQuery {
-            pagination: PaginationParams::default(),
+            page: 1,
+            limit: 20,
             is_active: Some(true),
             rate_limit_tier: None,
             created_after: None,
@@ -537,7 +455,8 @@ mod tests {
     fn test_filter_api_keys_by_tier() {
         let keys = create_mock_api_keys();
         let query = ApiKeyListQuery {
-            pagination: PaginationParams::default(),
+            page: 1,
+            limit: 20,
             is_active: None,
             rate_limit_tier: Some(RateLimitTier::Premium),
             created_after: None,

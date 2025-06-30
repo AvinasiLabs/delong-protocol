@@ -19,8 +19,13 @@ secure_url = "http://localhost:8082" # Secure service URL
 
 [logging]
 # Logging configuration
-level = "info"      # Log level: trace, debug, info, warn, error
-json_format = false # Use JSON format for logs (recommended for production)
+level = "info"            # Log level: trace, debug, info, warn, error
+json_format = false       # Use JSON format for logs (recommended for production)
+log_health_checks = false # Whether to log health check requests (reduces noise)
+log_headers = false       # Log request headers (be careful with sensitive data)
+log_request_body = false  # Log request body for debugging (only small requests)
+max_body_log_size = 1024  # Maximum request body size to log (in bytes)
+log_response_body = false # Log response body for debugging
 
 [opentelemetry]
 # OpenTelemetry observability configuration
@@ -28,6 +33,15 @@ enabled = false                         # Enable distributed tracing
 otlp_endpoint = "http://localhost:4317" # OTLP collector endpoint
 service_name = "delong-gateway"         # Service name for tracing
 service_version = "0.2.0"               # Service version
+
+[redis]
+# Redis configuration for authentication caching
+url = "redis://localhost:6379" # Redis connection URL
+enabled = true                 # Enable Redis caching
+pool_size = 10                 # Connection pool size
+connection_timeout = 5         # Connection timeout in seconds
+jwt_cache_ttl = 300            # JWT token cache TTL in seconds (5 minutes)
+api_key_cache_ttl = 600        # API key cache TTL in seconds (10 minutes)
 
 # Environment Variables Alternative
 # The gateway can also be configured using environment variables:
@@ -48,12 +62,25 @@ service_version = "0.2.0"               # Service version
 # Logging:
 # LOG_LEVEL=info
 # LOG_JSON_FORMAT=false
+# LOG_HEALTH_CHECKS=false
+# LOG_REQUEST_HEADERS=false
+# LOG_REQUEST_BODY=false
+# LOG_MAX_BODY_SIZE=1024
+# LOG_RESPONSE_BODY=false
 #
 # OpenTelemetry:
 # OTEL_ENABLED=false
 # OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
 # OTEL_SERVICE_NAME=delong-gateway
 # OTEL_SERVICE_VERSION=0.2.0
+#
+# Redis:
+# REDIS_URL=redis://localhost:6379
+# REDIS_ENABLED=true
+# REDIS_POOL_SIZE=10
+# REDIS_CONNECTION_TIMEOUT=5
+# REDIS_JWT_CACHE_TTL=300
+# REDIS_API_KEY_CACHE_TTL=600
 
 # Production Configuration Recommendations:
 #
@@ -66,11 +93,15 @@ service_version = "0.2.0"               # Service version
 #    - Adjust timeout_seconds based on backend response times
 #    - Set max_body_size according to expected payload sizes
 #    - Use connection pooling for backend services
+#    - Enable Redis caching for improved authentication performance
+#    - Tune Redis cache TTL values based on security requirements
 #
 # 3. Observability:
 #    - Enable JSON logging format for production
 #    - Configure OpenTelemetry for distributed tracing
 #    - Set up proper log aggregation
+#    - Enable detailed logging for debugging (log_headers, log_request_body)
+#    - Disable health check logging to reduce noise
 #
 # 4. High Availability:
 #    - Use load balancer health checks on /health endpoint
@@ -90,11 +121,24 @@ service_version = "0.2.0"               # Service version
 #       - SECURE_SERVICE_URL=http://secure:8082
 #       - LOG_LEVEL=info
 #       - LOG_JSON_FORMAT=true
+#       - LOG_HEALTH_CHECKS=false
+#       - LOG_REQUEST_HEADERS=false
+#       - REDIS_URL=redis://redis:6379
+#       - REDIS_ENABLED=true
 #       - OTEL_ENABLED=true
 #       - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
 #     depends_on:
 #       - core
 #       - secure
+#       - redis
+#
+#   redis:
+#     image: redis:7-alpine
+#     ports:
+#       - "6379:6379"
+#     command: redis-server --appendonly yes
+#     volumes:
+#       - redis_data:/data
 #
 #   core:
 #     image: delong-core:latest
@@ -105,3 +149,6 @@ service_version = "0.2.0"               # Service version
 #     image: delong-secure:latest
 #     ports:
 #       - "8082:8082"
+#
+# volumes:
+#   redis_data:

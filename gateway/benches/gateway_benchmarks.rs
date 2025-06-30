@@ -11,7 +11,7 @@ use axum::{
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use gateway::{
     config::GatewayConfig,
-    create_router,
+    create_test_router,
     utils::http_client::{BackendClient, HttpClientError},
 };
 use serde_json::json;
@@ -66,7 +66,7 @@ fn bench_router_creation(c: &mut Criterion) {
 
     c.bench_function("router_creation", |b| {
         b.iter(|| {
-            let router = create_router(black_box(&config), black_box(BenchmarkMockClient));
+            let router = create_test_router(black_box(&config), black_box(BenchmarkMockClient));
             black_box(router)
         });
     });
@@ -77,7 +77,7 @@ fn bench_health_endpoints(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let config = create_bench_config();
     let client = BenchmarkMockClient;
-    let app = create_router(&config, client);
+    let app = create_test_router(&config, client);
 
     c.bench_function("health_endpoint", |b| {
         b.iter(|| {
@@ -101,7 +101,7 @@ fn bench_dataset_endpoints(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let config = create_bench_config();
     let client = BenchmarkMockClient;
-    let app = create_router(&config, client);
+    let app = create_test_router(&config, client);
 
     c.bench_function("get_static_dataset_list", |b| {
         b.iter(|| {
@@ -182,7 +182,7 @@ fn bench_algo_exe_endpoints(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let config = create_bench_config();
     let client = BenchmarkMockClient;
-    let app = create_router(&config, client);
+    let app = create_test_router(&config, client);
 
     c.bench_function("submit_algo_exe", |b| {
         b.iter(|| {
@@ -234,7 +234,7 @@ fn bench_committee_endpoints(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let config = create_bench_config();
     let client = BenchmarkMockClient;
-    let app = create_router(&config, client);
+    let app = create_test_router(&config, client);
 
     c.bench_function("get_committee_members", |b| {
         b.iter(|| {
@@ -285,7 +285,7 @@ fn bench_vote_endpoints(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let config = create_bench_config();
     let client = BenchmarkMockClient;
-    let app = create_router(&config, client);
+    let app = create_test_router(&config, client);
 
     c.bench_function("get_votes", |b| {
         b.iter(|| {
@@ -321,7 +321,7 @@ fn bench_auth_endpoints(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let config = create_bench_config();
     let client = BenchmarkMockClient;
-    let app = create_router(&config, client);
+    let app = create_test_router(&config, client);
 
     c.bench_function("create_api_key", |b| {
         b.iter(|| {
@@ -388,7 +388,7 @@ fn bench_report_endpoints(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let config = create_bench_config();
     let client = BenchmarkMockClient;
-    let app = create_router(&config, client);
+    let app = create_test_router(&config, client);
 
     c.bench_function("upload_report", |b| {
         b.iter(|| {
@@ -415,7 +415,7 @@ fn bench_middleware_performance(c: &mut Criterion) {
     let client = BenchmarkMockClient;
 
     // Create app with all middleware
-    let app_with_middleware = create_router(&config, client);
+    let app_with_middleware = create_test_router(&config, client);
 
     c.bench_function("request_with_all_middleware", |b| {
         b.iter(|| {
@@ -445,7 +445,7 @@ fn bench_json_processing(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let config = create_bench_config();
     let client = BenchmarkMockClient;
-    let app = create_router(&config, client);
+    let app = create_test_router(&config, client);
 
     // Small JSON payload
     c.bench_function("small_json_payload", |b| {
@@ -492,7 +492,7 @@ fn bench_error_handling(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let config = create_bench_config();
     let client = BenchmarkMockClient;
-    let app = create_router(&config, client);
+    let app = create_test_router(&config, client);
 
     c.bench_function("not_found_error", |b| {
         b.iter(|| {
@@ -545,7 +545,7 @@ fn bench_public_endpoints(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let config = create_bench_config();
     let client = BenchmarkMockClient;
-    let app = create_router(&config, client);
+    let app = create_test_router(&config, client);
 
     c.bench_function("sample_data_access", |b| {
         b.iter(|| {

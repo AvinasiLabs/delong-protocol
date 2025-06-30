@@ -7,7 +7,10 @@ use axum::{
     body::Body,
     http::{HeaderMap, HeaderValue, Method, Request, StatusCode},
 };
-use gateway::{config::GatewayConfig, create_router, utils::http_client::HttpBackendClient};
+use gateway::{
+    config::GatewayConfig, create_auth_test_router, create_test_router,
+    utils::http_client::HttpBackendClient,
+};
 use serde_json::{Value, json};
 use tower::util::ServiceExt;
 
@@ -65,7 +68,7 @@ mod health_tests {
     #[tokio::test]
     async fn test_health_endpoint() {
         let (config, client) = create_test_config();
-        let app = create_router(&config, client);
+        let app = create_test_router(&config, client);
 
         let request = Request::builder()
             .uri("/health")
@@ -80,7 +83,7 @@ mod health_tests {
     #[tokio::test]
     async fn test_health_endpoints_public_access() {
         let (config, client) = create_auth_test_config(); // Auth enabled
-        let app = create_router(&config, client);
+        let app = create_test_router(&config, client);
 
         // Test main health endpoint - should be accessible even with auth enabled
         let request = Request::builder()
@@ -96,7 +99,7 @@ mod health_tests {
     #[tokio::test]
     async fn test_nonexistent_endpoint() {
         let (config, client) = create_test_config();
-        let app = create_router(&config, client);
+        let app = create_test_router(&config, client);
 
         let request = Request::builder()
             .uri("/nonexistent")
@@ -116,7 +119,7 @@ mod api_structure_tests {
     #[tokio::test]
     async fn test_sample_data_public_access() {
         let (config, client) = create_test_config();
-        let app = create_router(&config, client);
+        let app = create_test_router(&config, client);
 
         let request = Request::builder()
             .uri("/api/sample/QmTestCID123")
@@ -135,7 +138,7 @@ mod api_structure_tests {
         let mut config = GatewayConfig::default();
         config.api.enable_api_key_validation = true;
         let client = HttpBackendClient::new(30);
-        let app = create_router(&config, client);
+        let app = create_test_router(&config, client);
 
         // Test GET /api/static-datasets (list)
         let request = Request::builder()
@@ -174,7 +177,7 @@ mod api_structure_tests {
         let mut config = GatewayConfig::default();
         config.api.enable_api_key_validation = true;
         let client = HttpBackendClient::new(30);
-        let app = create_router(&config, client);
+        let app = create_test_router(&config, client);
 
         // Test GET /api/datasets (list)
         let request = Request::builder()
@@ -210,7 +213,7 @@ mod api_structure_tests {
         let mut config = GatewayConfig::default();
         config.api.enable_api_key_validation = true;
         let client = HttpBackendClient::new(30);
-        let app = create_router(&config, client);
+        let app = create_test_router(&config, client);
 
         // Test GET /api/auth/keys (list)
         let request = Request::builder()
@@ -278,7 +281,7 @@ mod api_structure_tests {
         let mut config = GatewayConfig::default();
         config.api.enable_api_key_validation = false;
         let client = HttpBackendClient::new(30);
-        let app = create_router(&config, client);
+        let app = create_test_router(&config, client);
 
         // Test GET /api/static-datasets (should not return 401)
         let request = Request::builder()
@@ -304,7 +307,7 @@ mod api_structure_tests {
     #[tokio::test]
     async fn test_nonexistent_endpoints_return_404() {
         let (config, client) = create_test_config();
-        let app = create_router(&config, client);
+        let app = create_test_router(&config, client);
 
         // Test non-existent algorithm endpoint (removed from new API)
         let request = Request::builder()
@@ -322,13 +325,13 @@ mod api_structure_tests {
         let mut config = GatewayConfig::default();
         config.api.enable_api_key_validation = true;
         let client = HttpBackendClient::new(30);
-        let app = create_router(&config, client);
+        let app = create_auth_test_router(&config, client);
 
         // Test with valid mock API key from middleware
         let request = Request::builder()
             .uri("/api/static-datasets")
             .method(Method::GET)
-            .header("authorization", "ApiKey test-api-key-123456")
+            .header("authorization", "ApiKey test-api-key-basic")
             .body(Body::empty())
             .unwrap();
 
@@ -342,7 +345,7 @@ mod api_structure_tests {
         let mut config = GatewayConfig::default();
         config.api.enable_api_key_validation = true;
         let client = HttpBackendClient::new(30);
-        let app = create_router(&config, client);
+        let app = create_auth_test_router(&config, client);
 
         // Test with valid mock JWT token from middleware
         let request = Request::builder()
@@ -365,7 +368,7 @@ mod dataset_tests {
     #[tokio::test]
     async fn test_get_dataset_list_without_auth() {
         let (config, client) = create_test_config();
-        let app = create_router(&config, client);
+        let app = create_test_router(&config, client);
 
         let request = Request::builder()
             .uri("/api/datasets")
@@ -382,7 +385,7 @@ mod dataset_tests {
     #[tokio::test]
     async fn test_upload_dataset_post() {
         let (config, client) = create_test_config();
-        let app = create_router(&config, client);
+        let app = create_test_router(&config, client);
 
         let payload = json!({
             "name": "test_dataset",
@@ -403,7 +406,7 @@ mod dataset_tests {
     #[tokio::test]
     async fn test_get_specific_dataset() {
         let (config, client) = create_test_config();
-        let app = create_router(&config, client);
+        let app = create_test_router(&config, client);
 
         let request = Request::builder()
             .uri("/api/algo-exes/algorithm-id-123")
@@ -420,7 +423,7 @@ mod dataset_tests {
     #[tokio::test]
     async fn test_delete_dataset() {
         let (config, client) = create_test_config();
-        let app = create_router(&config, client);
+        let app = create_test_router(&config, client);
 
         let request = Request::builder()
             .uri("/api/datasets/test-dataset-id")
@@ -442,7 +445,7 @@ mod algorithm_tests {
     #[tokio::test]
     async fn test_submit_algorithm() {
         let (config, client) = create_test_config();
-        let app = create_router(&config, client);
+        let app = create_test_router(&config, client);
 
         let payload = json!({
             "algorithm_type": "privacy_preserving_ml",
@@ -466,7 +469,7 @@ mod algorithm_tests {
     #[tokio::test]
     async fn test_get_algorithm_status() {
         let (config, client) = create_test_config();
-        let app = create_router(&config, client);
+        let app = create_test_router(&config, client);
 
         let request = Request::builder()
             .uri("/api/algo-exes/test-algo-id")
@@ -483,7 +486,7 @@ mod algorithm_tests {
     #[tokio::test]
     async fn test_get_algorithm_result() {
         let (config, client) = create_test_config();
-        let app = create_router(&config, client);
+        let app = create_test_router(&config, client);
 
         let request = Request::builder()
             .uri("/api/algo-exes/test-algo-id")
@@ -500,7 +503,7 @@ mod algorithm_tests {
     #[tokio::test]
     async fn test_get_algorithm_details() {
         let (config, client) = create_test_config();
-        let app = create_router(&config, client);
+        let app = create_test_router(&config, client);
 
         let request = Request::builder()
             .uri("/api/algo-exes/test-algo-id")
@@ -522,7 +525,7 @@ mod auth_tests {
     #[tokio::test]
     async fn test_create_api_key() {
         let (config, client) = create_test_config();
-        let app = create_router(&config, client);
+        let app = create_test_router(&config, client);
 
         let payload = json!({
             "name": "test_key",
@@ -540,7 +543,7 @@ mod auth_tests {
     #[tokio::test]
     async fn test_list_api_keys() {
         let (config, client) = create_test_config();
-        let app = create_router(&config, client);
+        let app = create_test_router(&config, client);
 
         let request = Request::builder()
             .uri("/api/auth/keys")
@@ -557,7 +560,7 @@ mod auth_tests {
     #[tokio::test]
     async fn test_validate_api_key() {
         let (config, client) = create_test_config();
-        let app = create_router(&config, client);
+        let app = create_test_router(&config, client);
 
         let payload = json!({
             "api_key": "test-api-key-value"
@@ -576,7 +579,7 @@ mod auth_tests {
     #[tokio::test]
     async fn test_revoke_api_key() {
         let (config, client) = create_test_config();
-        let app = create_router(&config, client);
+        let app = create_test_router(&config, client);
 
         let request = Request::builder()
             .uri("/api/auth/keys/test-key-id")
@@ -601,7 +604,7 @@ mod authentication_tests {
     #[tokio::test]
     async fn test_protected_endpoint_without_auth() {
         let (config, client) = create_auth_test_config(); // Auth enabled
-        let app = create_router(&config, client);
+        let app = create_test_router(&config, client);
 
         let request = Request::builder()
             .uri("/api/datasets")
@@ -622,7 +625,7 @@ mod authentication_tests {
     #[tokio::test]
     async fn test_protected_endpoint_with_invalid_key() {
         let (config, client) = create_auth_test_config(); // Auth enabled
-        let app = create_router(&config, client);
+        let app = create_test_router(&config, client);
 
         let mut headers = HeaderMap::new();
         headers.insert("x-api-key", HeaderValue::from_static("invalid-key"));
@@ -642,7 +645,7 @@ mod authentication_tests {
     #[tokio::test]
     async fn test_health_endpoint_without_auth() {
         let (config, client) = create_auth_test_config(); // Auth enabled
-        let app = create_router(&config, client);
+        let app = create_test_router(&config, client);
 
         let request = Request::builder()
             .uri("/health")
@@ -664,7 +667,7 @@ mod middleware_tests {
     #[tokio::test]
     async fn test_request_id_middleware() {
         let (config, client) = create_test_config();
-        let app = create_router(&config, client);
+        let app = create_test_router(&config, client);
 
         let request = Request::builder()
             .uri("/health")
@@ -682,7 +685,7 @@ mod middleware_tests {
     #[tokio::test]
     async fn test_cors_headers() {
         let (config, client) = create_test_config();
-        let app = create_router(&config, client);
+        let app = create_test_router(&config, client);
 
         let request = Request::builder()
             .uri("/health")
@@ -700,7 +703,7 @@ mod middleware_tests {
     #[tokio::test]
     async fn test_logging_middleware() {
         let (config, client) = create_test_config();
-        let app = create_router(&config, client);
+        let app = create_test_router(&config, client);
 
         let request = Request::builder()
             .uri("/health")
@@ -722,7 +725,7 @@ mod error_handling_tests {
     #[tokio::test]
     async fn test_invalid_json_payload() {
         let (config, client) = create_test_config();
-        let app = create_router(&config, client);
+        let app = create_test_router(&config, client);
 
         let request = Request::builder()
             .method(Method::POST)
@@ -744,7 +747,7 @@ mod error_handling_tests {
     #[tokio::test]
     async fn test_unsupported_content_type() {
         let (config, client) = create_test_config();
-        let app = create_router(&config, client);
+        let app = create_test_router(&config, client);
 
         let request = Request::builder()
             .method(Method::POST)
@@ -766,7 +769,7 @@ mod error_handling_tests {
     #[tokio::test]
     async fn test_method_not_allowed() {
         let (config, client) = create_test_config();
-        let app = create_router(&config, client);
+        let app = create_test_router(&config, client);
 
         let request = Request::builder()
             .uri("/api/datasets")
@@ -789,7 +792,7 @@ mod config_tests {
     async fn test_router_with_different_configs() {
         // Test with auth disabled
         let (config_no_auth, client_no_auth) = create_test_config();
-        let app_no_auth = create_router(&config_no_auth, client_no_auth);
+        let app_no_auth = create_test_router(&config_no_auth, client_no_auth);
 
         let request = Request::builder()
             .uri("/api/datasets")
@@ -805,7 +808,7 @@ mod config_tests {
 
         // Test with auth enabled
         let (config_with_auth, client_with_auth) = create_auth_test_config();
-        let app_with_auth = create_router(&config_with_auth, client_with_auth);
+        let app_with_auth = create_test_router(&config_with_auth, client_with_auth);
 
         let request = Request::builder()
             .uri("/api/datasets")

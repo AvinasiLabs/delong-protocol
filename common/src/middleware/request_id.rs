@@ -14,8 +14,7 @@ use std::hash::{Hash, Hasher};
 use std::time::SystemTime;
 use tracing::{Span, instrument};
 
-/// Header name for request ID
-pub const REQUEST_ID_HEADER: &str = "x-request-id";
+use super::REQUEST_ID_HEADER;
 
 /// Request ID middleware that generates or extracts request IDs
 #[instrument(skip(request, next), fields(request_id))]

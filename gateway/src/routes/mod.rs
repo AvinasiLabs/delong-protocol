@@ -6,6 +6,7 @@ use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 
 use crate::{
+    cache::RedisCache,
     config::GatewayConfig,
     handlers::{
         algo_exe::{get_algo_exe_handler, get_algo_exes_handler, submit_algo_exe_handler},
@@ -38,23 +39,30 @@ use crate::{
         websocket::websocket_handler,
     },
     middleware::{
-        auth::auth_middleware, logging::logging_middleware, request_id::request_id_middleware,
+        auth::{auth_middleware, create_auth_middleware_with_cache},
+        logging_middleware, request_id_middleware,
     },
     utils::http_client::BackendClient,
 };
 
-/// Application state containing configuration and HTTP client
+/// Application state containing configuration, HTTP client, and Redis cache
 #[derive(Clone)]
 pub struct AppState {
     pub config: GatewayConfig,
     pub http_client: Arc<dyn BackendClient>,
+    pub redis_cache: Arc<RedisCache>,
 }
 
 /// Create the main application router
-pub fn create_router(config: &GatewayConfig, http_client: impl BackendClient + 'static) -> Router {
+pub fn create_router(
+    config: &GatewayConfig,
+    http_client: impl BackendClient + 'static,
+    redis_cache: Arc<RedisCache>,
+) -> Router {
     let app_state = AppState {
         config: config.clone(),
         http_client: Arc::new(http_client),
+        redis_cache,
     };
 
     let api_routes = create_api_routes(&app_state);
@@ -72,21 +80,69 @@ pub fn create_router(config: &GatewayConfig, http_client: impl BackendClient + '
         .with_state(app_state)
 }
 
+/// Create router for testing with disabled Redis cache
+pub fn create_test_router(
+    config: &GatewayConfig,
+    http_client: impl BackendClient + 'static,
+) -> Router {
+    let mut test_config = config.clone();
+    test_config.redis.enabled = false;
+
+    let redis_cache = std::sync::Arc::new(crate::cache::RedisCache::new_disabled(
+        test_config.redis.clone(),
+    ));
+
+    create_router(&test_config, http_client, redis_cache)
+}
+
+/// Create router for testing with authentication enabled but disabled Redis cache
+pub fn create_auth_test_router(
+    config: &GatewayConfig,
+    http_client: impl BackendClient + 'static,
+) -> Router {
+    let mut test_config = config.clone();
+    test_config.redis.enabled = false;
+    test_config.api.enable_api_key_validation = true; // Ensure auth is enabled for testing
+
+    let redis_cache = std::sync::Arc::new(crate::cache::RedisCache::new_disabled(
+        test_config.redis.clone(),
+    ));
+
+    create_router(&test_config, http_client, redis_cache)
+}
+
 /// Create API routes with authentication
 fn create_api_routes(state: &AppState) -> Router<AppState> {
     // Apply authentication middleware if enabled
     if state.config.api.enable_api_key_validation {
         // Apply auth middleware to all routes except sample data access
-        let protected_routes = Router::new()
-            .nest("/static-datasets", create_static_dataset_routes(state))
-            .nest("/datasets", create_dynamic_dataset_routes(state))
-            .nest("/algo-exes", create_algo_exe_routes(state))
-            .nest("/committee", create_committee_routes(state))
-            .nest("/votes", create_vote_routes(state))
-            .nest("/contracts", create_contract_routes(state))
-            .nest("/reports", create_report_routes(state))
-            .nest("/auth", create_auth_routes(state))
-            .layer(middleware::from_fn(auth_middleware));
+        let protected_routes = if state.redis_cache.is_available() {
+            // Use cached authentication middleware when Redis is available
+            Router::new()
+                .nest("/static-datasets", create_static_dataset_routes(state))
+                .nest("/datasets", create_dynamic_dataset_routes(state))
+                .nest("/algo-exes", create_algo_exe_routes(state))
+                .nest("/committee", create_committee_routes(state))
+                .nest("/votes", create_vote_routes(state))
+                .nest("/contracts", create_contract_routes(state))
+                .nest("/reports", create_report_routes(state))
+                .nest("/auth", create_auth_routes(state))
+                .layer(middleware::from_fn(create_auth_middleware_with_cache(
+                    state.redis_cache.clone(),
+                )))
+        } else {
+            // Use standard authentication middleware when Redis is not available
+            Router::new()
+                .nest("/static-datasets", create_static_dataset_routes(state))
+                .nest("/datasets", create_dynamic_dataset_routes(state))
+                .nest("/algo-exes", create_algo_exe_routes(state))
+                .nest("/committee", create_committee_routes(state))
+                .nest("/votes", create_vote_routes(state))
+                .nest("/contracts", create_contract_routes(state))
+                .nest("/reports", create_report_routes(state))
+                .nest("/auth", create_auth_routes(state))
+                .layer(middleware::from_fn(auth_middleware))
+        };
 
         Router::new()
             .merge(protected_routes)
@@ -214,7 +270,7 @@ mod tests {
     async fn test_health_endpoint() {
         let config = GatewayConfig::default();
         let client = HttpBackendClient::new(30);
-        let app = create_router(&config, client);
+        let app = create_test_router(&config, client);
 
         let request = Request::builder()
             .uri("/health")
@@ -230,7 +286,7 @@ mod tests {
     async fn test_sample_data_public_access() {
         let config = GatewayConfig::default();
         let client = HttpBackendClient::new(30);
-        let app = create_router(&config, client);
+        let app = create_test_router(&config, client);
 
         let request = Request::builder()
             .uri("/api/sample/QmSampleTestCID")
@@ -250,7 +306,7 @@ mod tests {
         let mut config = GatewayConfig::default();
         config.api.enable_api_key_validation = true;
         let client = HttpBackendClient::new(30);
-        let app = create_router(&config, client);
+        let app = create_test_router(&config, client);
 
         let request = Request::builder()
             .uri("/api/static-datasets")
@@ -268,7 +324,7 @@ mod tests {
         let mut config = GatewayConfig::default();
         config.api.enable_api_key_validation = false;
         let client = HttpBackendClient::new(30);
-        let app = create_router(&config, client);
+        let app = create_test_router(&config, client);
 
         let request = Request::builder()
             .uri("/api/static-datasets")

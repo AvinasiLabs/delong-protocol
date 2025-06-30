@@ -8,7 +8,6 @@ use axum::{
     http::StatusCode,
     response::Json,
 };
-use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
 use crate::{
@@ -17,14 +16,7 @@ use crate::{
     utils::http_client::forward_get,
 };
 
-/// Contract metadata data model
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContractData {
-    pub id: u64,
-    pub name: String,
-    pub address: String,
-    pub created_at: String,
-}
+use common::ContractData;
 
 /// Handler for getting contract list
 ///
@@ -72,6 +64,7 @@ pub async fn get_contracts_handler(
 mod tests {
     use super::*;
     use crate::config::{GatewayConfig, ServicesConfig};
+    use crate::handlers::ResponseCode;
     #[allow(dead_code)]
     fn create_test_config() -> GatewayConfig {
         let mut config = GatewayConfig::default();
@@ -132,9 +125,9 @@ mod tests {
             },
         ];
 
-        let paginated = PaginatedResponse::new(contracts, 10, 1, 20);
+        let paginated = PaginatedResponse::new(contracts, 1, 20, 10);
         assert_eq!(paginated.items.len(), 2);
-        assert_eq!(paginated.total, 10);
+        assert_eq!(paginated.total_items, 10);
         assert_eq!(paginated.total_pages, 1);
     }
 
@@ -147,10 +140,10 @@ mod tests {
             created_at: "2023-01-01T00:00:00Z".to_string(),
         }];
 
-        let paginated = PaginatedResponse::new(contracts, 1, 1, 20);
+        let paginated = PaginatedResponse::new(contracts, 1, 20, 1);
         let api_response = ApiResponse::success(paginated);
 
-        assert!(api_response.success);
+        assert_eq!(api_response.code, ResponseCode::Success);
         assert!(api_response.data.is_some());
         let data = api_response.data.unwrap();
         assert_eq!(data.items.len(), 1);

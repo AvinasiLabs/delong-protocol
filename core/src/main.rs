@@ -18,6 +18,9 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, SystemTime},
 };
+
+// Import common types for unified API responses
+use common::{ApiResponse, ResponseCode};
 use tokio::net::TcpListener;
 use tracing::{error, info, instrument, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -117,14 +120,6 @@ pub struct HealthResponse {
     pub status: String,
     pub service: String,
     pub version: String,
-    pub timestamp: String,
-}
-
-/// Error response
-#[derive(Debug, Serialize)]
-pub struct ErrorResponse {
-    pub error: String,
-    pub message: String,
     pub timestamp: String,
 }
 
@@ -346,12 +341,8 @@ fn format_system_time(time: SystemTime) -> String {
 }
 
 /// Create error response
-fn error_response(error: &str, message: &str) -> Json<ErrorResponse> {
-    Json(ErrorResponse {
-        error: error.to_string(),
-        message: message.to_string(),
-        timestamp: chrono::Utc::now().to_rfc3339(),
-    })
+fn error_response(code: ResponseCode, message: &str) -> Json<ApiResponse<()>> {
+    Json(ApiResponse::error(code, message))
 }
 
 /// Health check endpoint
@@ -370,7 +361,7 @@ async fn health_handler() -> Json<HealthResponse> {
 async fn create_api_key_handler(
     axum::extract::State(service): axum::extract::State<Arc<ApiKeyService>>,
     Json(request): Json<CreateApiKeyRequest>,
-) -> Result<Json<CreateApiKeyResponse>, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<Json<CreateApiKeyResponse>, (StatusCode, Json<ApiResponse<()>>)> {
     info!(
         user_id = request.user_id,
         key_name = request.name,
@@ -386,7 +377,7 @@ async fn create_api_key_handler(
             error!(error = error, "Failed to create API key");
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                error_response("CREATION_FAILED", &error),
+                error_response(ResponseCode::InternalServerError, &error),
             ))
         }
     }
@@ -397,14 +388,14 @@ async fn create_api_key_handler(
 async fn validate_api_key_handler(
     axum::extract::State(service): axum::extract::State<Arc<ApiKeyService>>,
     Json(request): Json<ValidateApiKeyRequest>,
-) -> Result<Json<ValidateApiKeyResponse>, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<Json<ValidateApiKeyResponse>, (StatusCode, Json<ApiResponse<()>>)> {
     match service.validate_api_key(request).await {
         Ok(response) => Ok(Json(response)),
         Err(error) => {
             error!(error = error, "Failed to validate API key");
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                error_response("VALIDATION_FAILED", &error),
+                error_response(ResponseCode::InternalServerError, &error),
             ))
         }
     }
@@ -415,7 +406,7 @@ async fn validate_api_key_handler(
 async fn revoke_api_key_handler(
     axum::extract::State(service): axum::extract::State<Arc<ApiKeyService>>,
     Path(key_id): Path<String>,
-) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<StatusCode, (StatusCode, Json<ApiResponse<()>>)> {
     info!(key_id = key_id, "Revoking API key");
 
     match service.revoke_api_key(&key_id).await {
@@ -424,17 +415,17 @@ async fn revoke_api_key_handler(
             Ok(StatusCode::NO_CONTENT)
         }
         Ok(false) => {
-            warn!(key_id = key_id, "API key not found");
+            warn!(key_id = key_id, "API key not found for revocation");
             Err((
                 StatusCode::NOT_FOUND,
-                error_response("KEY_NOT_FOUND", "API key not found"),
+                error_response(ResponseCode::NotFound, "API key not found"),
             ))
         }
         Err(error) => {
-            error!(error = error, key_id = key_id, "Failed to revoke API key");
+            error!(error = error, "Failed to list API keys");
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                error_response("REVOCATION_FAILED", &error),
+                error_response(ResponseCode::InternalServerError, &error),
             ))
         }
     }
@@ -450,7 +441,7 @@ struct ListKeysQuery {
 async fn list_api_keys_handler(
     axum::extract::State(service): axum::extract::State<Arc<ApiKeyService>>,
     Query(query): Query<ListKeysQuery>,
-) -> Result<Json<Vec<StoredApiKey>>, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<Json<Vec<StoredApiKey>>, (StatusCode, Json<ApiResponse<()>>)> {
     info!(user_id = query.user_id, "Listing API keys for user");
 
     match service.list_user_api_keys(&query.user_id).await {
@@ -470,7 +461,7 @@ async fn list_api_keys_handler(
             );
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                error_response("LIST_FAILED", &error),
+                error_response(ResponseCode::InternalServerError, &error),
             ))
         }
     }

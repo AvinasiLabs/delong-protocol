@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 
+// Import LoggingConfig from common crate
+pub use common::LoggingConfig;
+
 /// Gateway configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GatewayConfig {
@@ -14,6 +17,8 @@ pub struct GatewayConfig {
     pub logging: LoggingConfig,
     /// OpenTelemetry configuration
     pub opentelemetry: OpenTelemetryConfig,
+    /// Redis configuration for caching
+    pub redis: RedisConfig,
 }
 
 /// Server configuration
@@ -45,15 +50,6 @@ pub struct ServicesConfig {
     pub secure_url: String,
 }
 
-/// Logging configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LoggingConfig {
-    /// Log level
-    pub level: String,
-    /// Enable JSON formatted logs
-    pub json_format: bool,
-}
-
 /// OpenTelemetry configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenTelemetryConfig {
@@ -67,6 +63,23 @@ pub struct OpenTelemetryConfig {
     pub service_version: String,
 }
 
+/// Redis configuration for caching
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RedisConfig {
+    /// Redis connection URL
+    pub url: String,
+    /// Enable Redis caching
+    pub enabled: bool,
+    /// Connection pool size
+    pub pool_size: u32,
+    /// Connection timeout in seconds
+    pub connection_timeout: u64,
+    /// Cache TTL for JWT tokens in seconds
+    pub jwt_cache_ttl: u64,
+    /// Cache TTL for API keys in seconds
+    pub api_key_cache_ttl: u64,
+}
+
 impl Default for GatewayConfig {
     fn default() -> Self {
         Self {
@@ -75,6 +88,7 @@ impl Default for GatewayConfig {
             services: ServicesConfig::default(),
             logging: LoggingConfig::default(),
             opentelemetry: OpenTelemetryConfig::default(),
+            redis: RedisConfig::default(),
         }
     }
 }
@@ -107,15 +121,6 @@ impl Default for ServicesConfig {
     }
 }
 
-impl Default for LoggingConfig {
-    fn default() -> Self {
-        Self {
-            level: "info".to_string(),
-            json_format: false,
-        }
-    }
-}
-
 impl Default for OpenTelemetryConfig {
     fn default() -> Self {
         Self {
@@ -123,6 +128,19 @@ impl Default for OpenTelemetryConfig {
             otlp_endpoint: "http://localhost:4317".to_string(),
             service_name: "delong-gateway".to_string(),
             service_version: env!("CARGO_PKG_VERSION").to_string(),
+        }
+    }
+}
+
+impl Default for RedisConfig {
+    fn default() -> Self {
+        Self {
+            url: "redis://localhost:6379".to_string(),
+            enabled: true,
+            pool_size: 10,
+            connection_timeout: 5,
+            jwt_cache_ttl: 300,     // 5 minutes
+            api_key_cache_ttl: 600, // 10 minutes
         }
     }
 }
@@ -166,6 +184,21 @@ impl GatewayConfig {
         if let Ok(json_format) = std::env::var("LOG_JSON_FORMAT") {
             config.logging.json_format = json_format.to_lowercase() == "true";
         }
+        if let Ok(log_health_checks) = std::env::var("LOG_HEALTH_CHECKS") {
+            config.logging.log_health_checks = log_health_checks.to_lowercase() == "true";
+        }
+        if let Ok(log_headers) = std::env::var("LOG_REQUEST_HEADERS") {
+            config.logging.log_headers = log_headers.to_lowercase() == "true";
+        }
+        if let Ok(log_request_body) = std::env::var("LOG_REQUEST_BODY") {
+            config.logging.log_request_body = log_request_body.to_lowercase() == "true";
+        }
+        if let Ok(max_body_log_size) = std::env::var("LOG_MAX_BODY_SIZE") {
+            config.logging.max_body_log_size = max_body_log_size.parse()?;
+        }
+        if let Ok(log_response_body) = std::env::var("LOG_RESPONSE_BODY") {
+            config.logging.log_response_body = log_response_body.to_lowercase() == "true";
+        }
 
         // OpenTelemetry configuration
         if let Ok(enabled) = std::env::var("OTEL_ENABLED") {
@@ -180,6 +213,26 @@ impl GatewayConfig {
         }
         if let Ok(service_version) = std::env::var("OTEL_SERVICE_VERSION") {
             config.opentelemetry.service_version = service_version;
+        }
+
+        // Redis configuration
+        if let Ok(redis_url) = std::env::var("REDIS_URL") {
+            config.redis.url = redis_url;
+        }
+        if let Ok(enabled) = std::env::var("REDIS_ENABLED") {
+            config.redis.enabled = enabled.to_lowercase() == "true";
+        }
+        if let Ok(pool_size) = std::env::var("REDIS_POOL_SIZE") {
+            config.redis.pool_size = pool_size.parse()?;
+        }
+        if let Ok(timeout) = std::env::var("REDIS_CONNECTION_TIMEOUT") {
+            config.redis.connection_timeout = timeout.parse()?;
+        }
+        if let Ok(ttl) = std::env::var("REDIS_JWT_CACHE_TTL") {
+            config.redis.jwt_cache_ttl = ttl.parse()?;
+        }
+        if let Ok(ttl) = std::env::var("REDIS_API_KEY_CACHE_TTL") {
+            config.redis.api_key_cache_ttl = ttl.parse()?;
         }
 
         Ok(config)

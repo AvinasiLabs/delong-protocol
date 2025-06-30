@@ -8,51 +8,13 @@ use axum::{
     http::StatusCode,
     response::Json,
 };
-use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
-use crate::{
-    handlers::{ApiResponse, PaginatedResponse, PaginationParams},
-    routes::AppState,
-    utils::http_client::forward_post,
+use crate::{handlers::ApiResponse, routes::AppState, utils::http_client::forward_post};
+use common::{
+    AlgoExeData, AlgoExeSubmissionRequest, AlgoExeSubmissionResponse, PaginatedResponse,
+    PaginationParams,
 };
-
-/// Request payload for submitting algorithm execution
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AlgoExeSubmissionRequest {
-    pub github_repo: String,
-    pub commit_hash: String,
-    pub scientist_wallet: String,
-    pub dataset: String,
-}
-
-/// Algorithm execution data model
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AlgoExeData {
-    pub id: u64,
-    pub algo_id: String,
-    pub used_dataset: String,
-    pub scientist_wallet: String,
-    pub review_status: String,
-    pub vote_start_time: Option<String>,
-    pub vote_end_time: Option<String>,
-    pub status: String,
-    pub start_time: Option<String>,
-    pub end_time: Option<String>,
-    pub result: Option<String>,
-    pub error_msg: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
-    pub algo_name: Option<String>,
-    pub algo_link: Option<String>,
-    pub cid: Option<String>,
-}
-
-/// Response for algorithm execution submission
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AlgoExeSubmissionResponse {
-    pub id: u64,
-}
 
 /// Handler for submitting algorithm execution
 ///
@@ -172,6 +134,7 @@ pub async fn get_algo_exe_handler(
 mod tests {
     use super::*;
     use crate::config::{GatewayConfig, ServicesConfig};
+    use crate::handlers::ResponseCode;
 
     #[allow(dead_code)]
     fn create_test_config() -> GatewayConfig {
@@ -184,65 +147,11 @@ mod tests {
     }
 
     #[test]
-    fn test_algo_exe_submission_request_serialization() {
-        let request = AlgoExeSubmissionRequest {
-            github_repo: "https://github.com/user/repo".to_string(),
-            commit_hash: "abc123def456".to_string(),
-            scientist_wallet: "0x1234567890abcdef".to_string(),
-            dataset: "dataset_001".to_string(),
-        };
-
-        let json = serde_json::to_string(&request).unwrap();
-        assert!(json.contains("github_repo"));
-        assert!(json.contains("commit_hash"));
-        assert!(json.contains("scientist_wallet"));
-        assert!(json.contains("dataset"));
-    }
-
-    #[test]
-    fn test_algo_exe_data_deserialization() {
-        let json = r#"
-        {
-            "id": 1,
-            "algo_id": "algo_123",
-            "used_dataset": "dataset_001",
-            "scientist_wallet": "0x1234567890abcdef",
-            "review_status": "pending",
-            "vote_start_time": null,
-            "vote_end_time": null,
-            "status": "running",
-            "start_time": "2023-01-01T00:00:00Z",
-            "end_time": null,
-            "result": null,
-            "error_msg": null,
-            "created_at": "2023-01-01T00:00:00Z",
-            "updated_at": "2023-01-01T00:00:00Z",
-            "algo_name": "Test Algorithm",
-            "algo_link": "https://github.com/user/repo",
-            "cid": "QmTest123"
-        }
-        "#;
-
-        let data: AlgoExeData = serde_json::from_str(json).unwrap();
-        assert_eq!(data.id, 1);
-        assert_eq!(data.algo_id, "algo_123");
-        assert_eq!(data.status, "running");
-        assert_eq!(data.algo_name, Some("Test Algorithm".to_string()));
-    }
-
-    #[test]
-    fn test_pagination_params_default() {
-        let params = PaginationParams::default();
-        assert_eq!(params.page, 1);
-        assert_eq!(params.limit, 20);
-    }
-
-    #[test]
     fn test_api_response_success() {
         let response = AlgoExeSubmissionResponse { id: 123 };
         let api_response = ApiResponse::success(response);
 
-        assert!(api_response.success);
+        assert_eq!(api_response.code, ResponseCode::Success);
         assert!(api_response.data.is_some());
         assert_eq!(api_response.data.unwrap().id, 123);
     }

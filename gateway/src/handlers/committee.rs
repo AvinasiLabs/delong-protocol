@@ -8,7 +8,6 @@ use axum::{
     http::StatusCode,
     response::Json,
 };
-use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
 use crate::{
@@ -17,34 +16,10 @@ use crate::{
     utils::http_client::{forward_get, forward_post},
 };
 
-/// Request payload for setting committee member
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SetCommitteeMemberRequest {
-    pub member_wallet: String,
-    pub is_approved: bool,
-}
-
-/// Committee member data model
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CommitteeMemberData {
-    pub id: u64,
-    pub member_wallet: String,
-    pub is_approved: bool,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-/// Response for committee member operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CommitteeMemberResponse {
-    pub id: u64,
-}
-
-/// Response for committee membership check
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MembershipCheckResponse {
-    pub is_member: bool,
-}
+use common::{
+    CommitteeMemberData, CommitteeMemberResponse, MembershipCheckResponse,
+    SetCommitteeMemberRequest,
+};
 
 /// Handler for setting committee member
 ///
@@ -188,6 +163,7 @@ pub async fn check_committee_membership_handler(
 mod tests {
     use super::*;
     use crate::config::{GatewayConfig, ServicesConfig};
+    use crate::handlers::ResponseCode;
 
     #[allow(dead_code)]
     fn create_test_config() -> GatewayConfig {
@@ -243,7 +219,7 @@ mod tests {
         let response = CommitteeMemberResponse { id: 42 };
         let api_response = ApiResponse::success(response);
 
-        assert!(api_response.success);
+        assert_eq!(api_response.code, ResponseCode::Success);
         assert!(api_response.data.is_some());
         assert_eq!(api_response.data.unwrap().id, 42);
     }
@@ -267,9 +243,9 @@ mod tests {
             },
         ];
 
-        let paginated = PaginatedResponse::new(members, 100, 1, 20);
+        let paginated = PaginatedResponse::new(members, 1, 20, 100);
         assert_eq!(paginated.items.len(), 2);
-        assert_eq!(paginated.total, 100);
+        assert_eq!(paginated.total_items, 100);
         assert_eq!(paginated.total_pages, 5);
     }
 }

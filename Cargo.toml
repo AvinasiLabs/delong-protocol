@@ -24,6 +24,15 @@ categories = ["cryptography", "network-programming"]
 axum = { version = "0.8.4" }
 tokio = { version = "1.45.1", features = ["full"] }
 serde = { version = "*" }
+serde_json = { version = "*" }
+tracing = { version = "0.1.40" }
+anyhow = { version = "*" }
+thiserror = { version = "*" }
+tower = { version = "0.5.2" }
+tower-http = { version = "0.6.6" }
+chrono = { version = "0.4" }
+uuid = { version = "*" }
+async-trait = { version = "*" }
 
 [profile.dev]
 debug = true

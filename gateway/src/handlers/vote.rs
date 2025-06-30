@@ -8,7 +8,6 @@ use axum::{
     http::StatusCode,
     response::Json,
 };
-use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
 use crate::{
@@ -17,29 +16,7 @@ use crate::{
     utils::http_client::{forward_get, forward_post},
 };
 
-/// Request payload for setting vote duration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SetVoteDurationRequest {
-    pub duration: u64, // Duration in seconds
-}
-
-/// Vote data model
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VoteData {
-    pub id: u64,
-    pub algo_cid: String,
-    pub voter: String,
-    pub approve: bool,
-    pub voted_at: String,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-/// Response for vote duration setting
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VoteDurationResponse {
-    pub duration: u64,
-}
+use common::{SetVoteDurationRequest, VoteData, VoteDurationResponse};
 
 /// Handler for getting vote list
 ///
@@ -118,6 +95,7 @@ pub async fn set_vote_duration_handler(
 mod tests {
     use super::*;
     use crate::config::{GatewayConfig, ServicesConfig};
+    use crate::handlers::ResponseCode;
 
     #[allow(dead_code)]
     fn create_test_config() -> GatewayConfig {
@@ -174,7 +152,7 @@ mod tests {
         let response = VoteDurationResponse { duration: 1800 };
         let api_response = ApiResponse::success(response);
 
-        assert!(api_response.success);
+        assert_eq!(api_response.code, ResponseCode::Success);
         assert!(api_response.data.is_some());
         assert_eq!(api_response.data.unwrap().duration, 1800);
     }
@@ -202,9 +180,9 @@ mod tests {
             },
         ];
 
-        let paginated = PaginatedResponse::new(votes, 50, 1, 20);
+        let paginated = PaginatedResponse::new(votes, 1, 20, 50);
         assert_eq!(paginated.items.len(), 2);
-        assert_eq!(paginated.total, 50);
+        assert_eq!(paginated.total_items, 50);
         assert_eq!(paginated.total_pages, 3);
     }
 

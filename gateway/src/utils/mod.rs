@@ -1,59 +1,16 @@
-use axum::{
-    http::{HeaderMap, StatusCode},
-    response::{IntoResponse, Json},
-};
-use serde::{Deserialize, Serialize};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use axum::http::HeaderMap;
 
 pub mod http_client;
 
-/// Common error response structure
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ErrorResponse {
-    pub error: String,
-    pub message: String,
-    pub timestamp: String,
-    pub request_id: Option<String>,
-}
+// Re-export utilities from common crate
+pub use common::utils::{
+    clean_for_logging, current_timestamp_ms, current_timestamp_secs, env_var_as_bool,
+    env_var_as_u64, env_var_or_default, format_bytes, format_duration, generate_unique_id,
+    hash_string, is_safe_for_logging, sanitize_path_for_logging, truncate_string,
+};
 
-#[allow(dead_code)]
-impl ErrorResponse {
-    /// Create a new error response
-    pub fn new(error: &str, message: &str) -> Self {
-        Self {
-            error: error.to_string(),
-            message: message.to_string(),
-            timestamp: chrono::Utc::now().to_rfc3339(),
-            request_id: None,
-        }
-    }
-
-    /// Create error response with request ID
-    pub fn with_request_id(error: &str, message: &str, request_id: String) -> Self {
-        Self {
-            error: error.to_string(),
-            message: message.to_string(),
-            timestamp: chrono::Utc::now().to_rfc3339(),
-            request_id: Some(request_id),
-        }
-    }
-}
-
-impl IntoResponse for ErrorResponse {
-    fn into_response(self) -> axum::response::Response {
-        let status = match self.error.as_str() {
-            "UNAUTHORIZED" => StatusCode::UNAUTHORIZED,
-            "FORBIDDEN" => StatusCode::FORBIDDEN,
-            "NOT_FOUND" => StatusCode::NOT_FOUND,
-            "BAD_REQUEST" => StatusCode::BAD_REQUEST,
-            "TIMEOUT" => StatusCode::REQUEST_TIMEOUT,
-            "TOO_MANY_REQUESTS" => StatusCode::TOO_MANY_REQUESTS,
-            _ => StatusCode::INTERNAL_SERVER_ERROR,
-        };
-
-        (status, Json(self)).into_response()
-    }
-}
+// Re-export auth utilities from common crate
+pub use common::is_valid_api_key_format;
 
 /// Extract API key from request headers
 pub fn extract_api_key(headers: &HeaderMap) -> Option<String> {
@@ -77,63 +34,16 @@ pub fn extract_api_key(headers: &HeaderMap) -> Option<String> {
     None
 }
 
-/// Generate a unique request ID
+/// Generate a unique request ID with "req_" prefix
 pub fn generate_request_id() -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-
-    let mut hasher = DefaultHasher::new();
-    SystemTime::now().hash(&mut hasher);
-    std::thread::current().id().hash(&mut hasher);
-
-    format!("req_{:x}", hasher.finish())
-}
-
-/// Get current timestamp in milliseconds
-pub fn current_timestamp_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or(Duration::from_secs(0))
-        .as_millis() as u64
-}
-
-/// Format duration for human reading
-pub fn format_duration(duration: Duration) -> String {
-    let ms = duration.as_millis();
-    if ms < 1000 {
-        format!("{}ms", ms)
-    } else if ms < 60_000 {
-        format!("{:.2}s", ms as f64 / 1000.0)
-    } else {
-        format!("{:.2}m", ms as f64 / 60_000.0)
-    }
-}
-
-/// Validate API key format
-pub fn is_valid_api_key_format(api_key: &str) -> bool {
-    // Basic validation: should be alphanumeric, minimum 16 characters
-    api_key.len() >= 16
-        && api_key.len() <= 64
-        && api_key
-            .chars()
-            .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
-}
-
-/// Sanitize path for logging (remove sensitive parameters)
-pub fn sanitize_path_for_logging(path: &str) -> String {
-    // Remove query parameters that might contain sensitive data
-    if let Some(question_mark_pos) = path.find('?') {
-        let base_path = &path[..question_mark_pos];
-        format!("{}?<params>", base_path)
-    } else {
-        path.to_string()
-    }
+    format!("req_{}", generate_unique_id())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use axum::http::{HeaderMap, HeaderValue};
+    use std::time::Duration;
 
     #[test]
     fn test_extract_api_key_api_key_format() {

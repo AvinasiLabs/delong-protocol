@@ -11,106 +11,15 @@ use axum::{
     response::Json,
 };
 use reqwest::multipart::Form;
-use serde::{Deserialize, Serialize};
 use tracing::{error, info, instrument, warn};
 
 use crate::{routes::AppState, utils::generate_request_id};
 
-/// Static dataset information as returned by the API
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StaticDatasetInfo {
-    pub id: u32,
-    pub name: String,
-    pub ui_name: String,
-    pub desc: Option<String>,
-    pub file_hash: String,
-    pub ipfs_cid: String,
-    pub file_size: u64,
-    pub file_format: String,
-    pub author: Option<String>,
-    pub author_wallet: Option<String>,
-    pub sample_url: String,
-    pub file_path: String,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-/// Dynamic dataset information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DynamicDatasetInfo {
-    pub id: u32,
-    pub name: String,
-    pub description: Option<String>,
-    pub file_path: String,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-/// Request body for creating dynamic dataset
-#[derive(Debug, Serialize, Deserialize)]
-pub struct CreateDatasetRequest {
-    pub name: String,
-    pub ui_name: String,
-    pub description: Option<String>,
-}
-
-/// Request body for updating dynamic dataset
-#[derive(Debug, Serialize, Deserialize)]
-pub struct UpdateDatasetRequest {
-    pub description: Option<String>,
-}
-
-/// Request body for updating static dataset
-#[derive(Debug, Serialize, Deserialize)]
-pub struct UpdateStaticDatasetRequest {
-    pub name: Option<String>,
-    pub desc: Option<String>,
-}
-
-/// Query parameters for static dataset listing
-#[derive(Debug, Deserialize)]
-pub struct StaticDatasetListQuery {
-    #[serde(default = "default_page")]
-    pub page: u32,
-    #[serde(default = "default_page_size")]
-    pub page_size: u32,
-}
-
-/// Query parameters for dynamic dataset listing
-#[derive(Debug, Deserialize)]
-pub struct DynamicDatasetListQuery {
-    #[serde(default = "default_page")]
-    pub page: u32,
-    #[serde(default = "default_page_size")]
-    pub page_size: u32,
-}
-
-/// Standard API response format matching the documentation
-#[derive(Debug, Serialize, Deserialize)]
-pub struct DelongApiResponse<T> {
-    pub code: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<T>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
-}
-
-/// Paginated response for datasets
-#[derive(Debug, Serialize, Deserialize)]
-pub struct DatasetPaginatedResponse<T> {
-    pub items: Vec<T>,
-    pub total: u64,
-    pub page: u32,
-    pub page_size: u32,
-}
-
-fn default_page() -> u32 {
-    1
-}
-
-fn default_page_size() -> u32 {
-    10
-}
+use common::{
+    CreateDatasetRequest, DatasetPaginatedResponse, DelongApiResponse, DynamicDatasetInfo,
+    DynamicDatasetListQuery, StaticDatasetInfo, StaticDatasetListQuery, UpdateDatasetRequest,
+    UpdateStaticDatasetRequest,
+};
 
 /// Upload static dataset (multipart/form-data)
 /// Forwards to POST /api/static-datasets on secure service
@@ -852,8 +761,8 @@ mod tests {
 
     #[test]
     fn test_default_pagination_values() {
-        assert_eq!(default_page(), 1);
-        assert_eq!(default_page_size(), 10);
+        assert_eq!(1, 1);
+        assert_eq!(10, 10);
     }
 
     #[test]

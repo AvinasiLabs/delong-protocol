@@ -1,4 +1,4 @@
 [package]
 name = "secure"
 version = { workspace = true }
-edition = {workspace = true}
+edition = { workspace = true }

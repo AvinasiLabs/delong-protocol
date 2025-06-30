@@ -10,13 +10,13 @@ tokio = { workspace = true, features = ["full"] }
 
 # Serialization
 serde = { workspace = true, features = ["derive"] }
-serde_json = "1.0"
+serde_json = { workspace = true }
 
 # UUID generation
 uuid = { version = "1.0", features = ["v4", "serde"] }
 
 # Time and date handling
-chrono = { version = "0.4", features = ["serde"] }
+chrono = { workspace = true, features = ["serde"] }
 
 # Tracing and observability
 tracing = "0.1"
@@ -24,3 +24,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 # Error handling
 anyhow = "1.0"
+
+# Common utilities and middleware
+common = { path = "../common" }

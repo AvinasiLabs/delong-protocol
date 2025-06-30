@@ -4,27 +4,12 @@
 //! including uploading test reports to the system.
 
 use axum::{extract::State, http::StatusCode, response::Json};
-use serde::{Deserialize, Serialize};
+
 use tracing::{error, info};
 
 use crate::{handlers::ApiResponse, routes::AppState, utils::http_client::forward_post};
 
-/// Request payload for uploading test report
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UploadReportRequest {
-    pub report_data: String,
-    pub report_type: String,
-    pub algorithm_id: Option<String>,
-    pub dataset_id: Option<String>,
-}
-
-/// Response for test report upload
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UploadReportResponse {
-    pub report_id: String,
-    pub upload_time: String,
-    pub status: String,
-}
+use common::{UploadReportRequest, UploadReportResponse};
 
 /// Handler for uploading test report
 ///
@@ -68,6 +53,7 @@ pub async fn upload_report_handler(
 mod tests {
     use super::*;
     use crate::config::{GatewayConfig, ServicesConfig};
+    use crate::handlers::ResponseCode;
 
     #[allow(dead_code)]
     fn create_test_config() -> GatewayConfig {
@@ -86,6 +72,9 @@ mod tests {
             report_type: "algorithm_test".to_string(),
             algorithm_id: Some("algo_123".to_string()),
             dataset_id: Some("dataset_456".to_string()),
+            title: Some("Test Report".to_string()),
+            description: Some("Test description".to_string()),
+            tags: Some(vec!["test".to_string(), "algorithm".to_string()]),
         };
 
         let json = serde_json::to_string(&request).unwrap();
@@ -102,6 +91,9 @@ mod tests {
             report_type: "general_test".to_string(),
             algorithm_id: None,
             dataset_id: None,
+            title: None,
+            description: None,
+            tags: None,
         };
 
         let json = serde_json::to_string(&request).unwrap();
@@ -135,7 +127,7 @@ mod tests {
         };
         let api_response = ApiResponse::success(response);
 
-        assert!(api_response.success);
+        assert_eq!(api_response.code, ResponseCode::Success);
         assert!(api_response.data.is_some());
         let data = api_response.data.unwrap();
         assert_eq!(data.report_id, "test_report_123");

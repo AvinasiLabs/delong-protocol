@@ -11,80 +11,22 @@ use axum::{
     response::Response,
 };
 use futures_util::{sink::SinkExt, stream::StreamExt};
-use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
 };
 use tokio::sync::broadcast;
 use tracing::{error, info, warn};
-use uuid::Uuid;
 
 use crate::{config::GatewayConfig, routes::AppState};
 
+use common::{NotificationMessage, TransactionStatus, generate_client_id};
+
+#[cfg(test)]
+use common::BlockchainTransactionNotification;
+
 /// WebSocket connection manager
 pub type ConnectionManager = Arc<Mutex<HashMap<String, broadcast::Sender<NotificationMessage>>>>;
-
-/// Blockchain transaction notification data
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BlockchainTransactionNotification {
-    pub id: u64,
-    pub tx_hash: String,
-    pub entity_id: String,
-    pub entity_type: String,
-    pub status: String,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-/// WebSocket notification message types
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", content = "data")]
-pub enum NotificationMessage {
-    /// Blockchain transaction status update
-    BlockchainTransaction(BlockchainTransactionNotification),
-
-    /// Algorithm execution status update
-    AlgorithmExecution {
-        id: u64,
-        status: String,
-        result: Option<String>,
-        error_msg: Option<String>,
-    },
-
-    /// Committee voting update
-    VotingUpdate {
-        algo_cid: String,
-        vote_count: u32,
-        approval_count: u32,
-        status: String,
-    },
-
-    /// System health notification
-    SystemHealth {
-        service: String,
-        status: String,
-        message: String,
-    },
-
-    /// Connection acknowledgment
-    ConnectionAck {
-        client_id: String,
-        timestamp: String,
-    },
-
-    /// Ping/Pong for keep-alive
-    Ping,
-    Pong,
-}
-
-/// WebSocket client connection info
-#[derive(Debug, Clone)]
-pub struct WebSocketClient {
-    pub id: String,
-    pub connected_at: chrono::DateTime<chrono::Utc>,
-    pub last_ping: Option<chrono::DateTime<chrono::Utc>>,
-}
 
 /// Handler for WebSocket connection upgrade
 ///
@@ -98,7 +40,7 @@ pub async fn websocket_handler(ws: WebSocketUpgrade, State(state): State<AppStat
 
 /// Handle individual WebSocket connection
 async fn handle_websocket_connection(socket: WebSocket, _config: GatewayConfig) {
-    let client_id = Uuid::new_v4().to_string();
+    let client_id = generate_client_id();
     info!(
         "New WebSocket connection established: client_id={}",
         client_id
@@ -113,6 +55,7 @@ async fn handle_websocket_connection(socket: WebSocket, _config: GatewayConfig) 
     let ack_message = NotificationMessage::ConnectionAck {
         client_id: client_id.clone(),
         timestamp: chrono::Utc::now().to_rfc3339(),
+        server_version: Some(env!("CARGO_PKG_VERSION").to_string()),
     };
 
     if let Ok(ack_json) = serde_json::to_string(&ack_message) {
@@ -263,15 +206,22 @@ pub fn create_blockchain_notification(
     entity_type: &str,
     status: &str,
 ) -> NotificationMessage {
-    NotificationMessage::BlockchainTransaction(BlockchainTransactionNotification {
-        id: rand::random::<u64>(),
-        tx_hash: tx_hash.to_string(),
-        entity_id: entity_id.to_string(),
-        entity_type: entity_type.to_string(),
-        status: status.to_string(),
-        created_at: chrono::Utc::now().to_rfc3339(),
-        updated_at: chrono::Utc::now().to_rfc3339(),
-    })
+    let transaction_status = match status {
+        "pending" => TransactionStatus::Pending,
+        "mining" => TransactionStatus::Mining,
+        "confirmed" => TransactionStatus::Confirmed,
+        "failed" => TransactionStatus::Failed,
+        "reverted" => TransactionStatus::Reverted,
+        _ => TransactionStatus::Pending,
+    };
+
+    NotificationMessage::blockchain_transaction(
+        rand::random::<u64>(),
+        tx_hash.to_string(),
+        entity_id.to_string(),
+        entity_type.to_string(),
+        transaction_status,
+    )
 }
 
 #[cfg(test)]
@@ -286,7 +236,10 @@ mod tests {
                 tx_hash: "0xabcdef123456".to_string(),
                 entity_id: "entity_001".to_string(),
                 entity_type: "algorithm".to_string(),
-                status: "confirmed".to_string(),
+                status: TransactionStatus::Confirmed,
+                confirmations: Some(12),
+                block_number: Some(1000000),
+                gas_used: Some(21000),
                 created_at: "2023-01-01T00:00:00Z".to_string(),
                 updated_at: "2023-01-01T00:05:00Z".to_string(),
             });
@@ -319,7 +272,7 @@ mod tests {
             NotificationMessage::BlockchainTransaction(data) => {
                 assert_eq!(data.id, 456);
                 assert_eq!(data.tx_hash, "0x987654321");
-                assert_eq!(data.status, "pending");
+                assert_eq!(data.status, TransactionStatus::Pending);
             }
             _ => panic!("Wrong notification type"),
         }
@@ -332,6 +285,7 @@ mod tests {
             status: "completed".to_string(),
             result: Some("success".to_string()),
             error_msg: None,
+            progress: Some(100),
         };
 
         let json = serde_json::to_string(&notification).unwrap();
@@ -346,7 +300,9 @@ mod tests {
             algo_cid: "QmTest123".to_string(),
             vote_count: 5,
             approval_count: 3,
+            rejection_count: 2,
             status: "active".to_string(),
+            ends_at: Some("2023-01-02T00:00:00Z".to_string()),
         };
 
         let json = serde_json::to_string(&notification).unwrap();
@@ -364,6 +320,7 @@ mod tests {
         let notification = NotificationMessage::ConnectionAck {
             client_id: client_id.to_string(),
             timestamp: timestamp.to_string(),
+            server_version: Some("0.2.0".to_string()),
         };
 
         let json = serde_json::to_string(&notification).unwrap();
@@ -394,7 +351,7 @@ mod tests {
                 assert_eq!(data.tx_hash, "0xtest123");
                 assert_eq!(data.entity_id, "entity_456");
                 assert_eq!(data.entity_type, "algorithm");
-                assert_eq!(data.status, "confirmed");
+                assert_eq!(data.status, TransactionStatus::Confirmed);
             }
             _ => panic!("Wrong notification type"),
         }

@@ -1,4 +1,50 @@
 [package]
 name = "common"
 version = { workspace = true }
-edition = {workspace = true}
+edition = { workspace = true }
+description = "Common utilities and middleware for DeLong Protocol services"
+
+[lib]
+name = "common"
+path = "src/lib.rs"
+
+[dependencies]
+# HTTP framework types
+axum = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true, features = ["full"] }
+
+# Serialization
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+
+# Tracing and logging
+tracing = { workspace = true }
+
+# Time handling
+chrono = { workspace = true, features = ["serde"] }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# UUID generation
+uuid = { workspace = true, features = ["v4", "serde"] }
+
+# Async traits
+async-trait = { workspace = true }
+
+[dev-dependencies]
+# Testing utilities
+tokio-test = "0.4"
+# Benchmarking
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "api_response_benchmarks"
+harness = false
+
+[[bench]]
+name = "models_benchmarks"
+harness = false

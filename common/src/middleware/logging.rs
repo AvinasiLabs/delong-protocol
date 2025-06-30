@@ -12,16 +12,46 @@ use axum::{
 use std::{net::SocketAddr, time::Instant};
 use tracing::{Level, info, instrument, warn};
 
-use crate::{
-    // handlers::metrics::record_request_metric,
-    middleware::MiddlewareUtils,
-    utils::{current_timestamp_ms, format_duration, sanitize_path_for_logging},
-};
+use crate::middleware::{MiddlewareUtils, REQUEST_ID_HEADER};
+
+/// Get current timestamp in milliseconds
+fn current_timestamp_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or(std::time::Duration::from_secs(0))
+        .as_millis() as u64
+}
+
+/// Format duration for human reading
+fn format_duration(duration: std::time::Duration) -> String {
+    let ms = duration.as_millis();
+    if ms < 1000 {
+        format!("{}ms", ms)
+    } else if ms < 60_000 {
+        format!("{:.2}s", ms as f64 / 1000.0)
+    } else {
+        format!("{:.2}m", ms as f64 / 60_000.0)
+    }
+}
+
+/// Sanitize path for logging (remove sensitive parameters)
+fn sanitize_path_for_logging(path: &str) -> String {
+    // Remove query parameters that might contain sensitive data
+    if let Some(question_mark_pos) = path.find('?') {
+        let base_path = &path[..question_mark_pos];
+        format!("{}?<params>", base_path)
+    } else {
+        path.to_string()
+    }
+}
 
 /// Logging configuration
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LoggingConfig {
+    /// Log level (trace, debug, info, warn, error)
+    pub level: String,
+    /// Enable JSON formatted logs
+    pub json_format: bool,
     /// Whether to log health check requests
     pub log_health_checks: bool,
     /// Whether to log request headers (be careful with sensitive data)
@@ -37,6 +67,8 @@ pub struct LoggingConfig {
 impl Default for LoggingConfig {
     fn default() -> Self {
         Self {
+            level: "info".to_string(),
+            json_format: false,
             log_health_checks: false,
             log_headers: false,
             log_request_body: false,
@@ -75,7 +107,7 @@ pub async fn logging_middleware(request: Request, next: Next) -> Result<Response
 
     // Get or generate request ID
     let request_id = headers
-        .get("x-request-id")
+        .get(REQUEST_ID_HEADER)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("unknown")
         .to_string();
