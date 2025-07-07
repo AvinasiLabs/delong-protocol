@@ -1,0 +1,41 @@
+# Multi-stage build for DeLong Protocol Gateway Service
+FROM rust:1.85-bullseye AS builder
+
+WORKDIR /app
+
+# Copy workspace files
+COPY Cargo.toml Cargo.lock ./
+COPY common/ common/
+COPY gateway/ gateway/
+
+# Build dependencies first (for better caching)
+RUN cargo build --release --package gateway
+
+FROM debian:bullseye-slim
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    curl \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy the binary from builder
+COPY --from=builder /app/target/release/gateway .
+
+# Create non-root user
+RUN groupadd -r delong && useradd -r -g delong delong
+RUN chown -R delong:delong /app
+
+USER delong
+
+# Expose port
+EXPOSE 8080
+
+# Add health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+CMD ["./gateway"] 

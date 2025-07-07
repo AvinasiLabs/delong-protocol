@@ -1,0 +1,184 @@
+use common::{ApiError, ApiResult};
+use sqlx::PgPool;
+use serde::{Deserialize, Serialize};
+use chrono::{DateTime, Utc};
+
+/// Blockchain transaction database model
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct BlockchainTransaction {
+    pub id: i64,
+    pub tx_hash: String,
+    pub entity_id: i64,
+    pub entity_type: String,
+    pub status: String,
+    pub block_number: Option<i64>,
+    pub block_timestamp: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Request for creating a new blockchain transaction
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateBlockchainTransactionRequest {
+    pub tx_hash: String,
+    pub entity_id: i64,
+    pub entity_type: String,
+    pub status: Option<String>,
+    pub block_number: Option<i64>,
+    pub block_timestamp: Option<DateTime<Utc>>,
+}
+
+/// Blockchain transaction service for database operations
+pub struct BlockchainService;
+
+impl BlockchainService {
+    /// Create a new blockchain transaction record
+    pub async fn create_transaction(
+        pool: &PgPool,
+        req: CreateBlockchainTransactionRequest,
+    ) -> ApiResult<BlockchainTransaction> {
+        let transaction = sqlx::query_as!(
+            BlockchainTransaction,
+            r#"
+            INSERT INTO blockchain_transactions (
+                tx_hash, entity_id, entity_type, status, block_number, block_timestamp
+            ) VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING *
+            "#,
+            req.tx_hash,
+            req.entity_id,
+            req.entity_type,
+            req.status.unwrap_or_else(|| "PENDING".to_string()),
+            req.block_number,
+            req.block_timestamp
+        )
+        .fetch_one(pool)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to create blockchain transaction");
+            ApiError::InternalError("Failed to create blockchain transaction".to_string())
+        })?;
+
+        Ok(transaction)
+    }
+
+    /// Get blockchain transaction by hash
+    pub async fn get_transaction_by_hash(
+        pool: &PgPool,
+        tx_hash: &str,
+    ) -> ApiResult<BlockchainTransaction> {
+        let transaction = sqlx::query_as!(
+            BlockchainTransaction,
+            "SELECT * FROM blockchain_transactions WHERE tx_hash = $1",
+            tx_hash
+        )
+        .fetch_one(pool)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, tx_hash = %tx_hash, "Failed to get blockchain transaction");
+            ApiError::NotFound("Blockchain transaction not found".to_string())
+        })?;
+
+        Ok(transaction)
+    }
+
+    /// Update blockchain transaction status
+    pub async fn update_transaction_status(
+        pool: &PgPool,
+        tx_hash: &str,
+        status: &str,
+        block_number: Option<i64>,
+        block_timestamp: Option<DateTime<Utc>>,
+    ) -> ApiResult<BlockchainTransaction> {
+        let transaction = sqlx::query_as!(
+            BlockchainTransaction,
+            r#"
+            UPDATE blockchain_transactions
+            SET status = $1,
+                block_number = COALESCE($2, block_number),
+                block_timestamp = COALESCE($3, block_timestamp),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE tx_hash = $4
+            RETURNING *
+            "#,
+            status,
+            block_number,
+            block_timestamp,
+            tx_hash
+        )
+        .fetch_one(pool)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, tx_hash = %tx_hash, "Failed to update blockchain transaction");
+            ApiError::InternalError("Failed to update blockchain transaction".to_string())
+        })?;
+
+        Ok(transaction)
+    }
+
+    /// Get pending blockchain transactions
+    pub async fn get_pending_transactions(
+        pool: &PgPool,
+    ) -> ApiResult<Vec<BlockchainTransaction>> {
+        let transactions = sqlx::query_as!(
+            BlockchainTransaction,
+            "SELECT * FROM blockchain_transactions WHERE status = 'PENDING'"
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to get pending blockchain transactions");
+            ApiError::InternalError("Failed to get pending transactions".to_string())
+        })?;
+
+        Ok(transactions)
+    }
+
+    /// Get transactions by entity
+    pub async fn get_transactions_by_entity(
+        pool: &PgPool,
+        entity_id: i64,
+        entity_type: &str,
+    ) -> ApiResult<Vec<BlockchainTransaction>> {
+        let transactions = sqlx::query_as!(
+            BlockchainTransaction,
+            "SELECT * FROM blockchain_transactions WHERE entity_id = $1 AND entity_type = $2",
+            entity_id,
+            entity_type
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, entity_id = %entity_id, entity_type = %entity_type, "Failed to get transactions by entity");
+            ApiError::InternalError("Failed to get transactions".to_string())
+        })?;
+
+        Ok(transactions)
+    }
+
+    /// Check if entity is confirmed (has at least one confirmed transaction)
+    pub async fn is_entity_confirmed(
+        pool: &PgPool,
+        entity_id: i64,
+        entity_type: &str,
+    ) -> ApiResult<bool> {
+        let count = sqlx::query_scalar!(
+            r#"
+            SELECT COUNT(*) as count
+            FROM blockchain_transactions
+            WHERE entity_id = $1 AND entity_type = $2 AND status = 'CONFIRMED'
+            "#,
+            entity_id,
+            entity_type
+        )
+        .fetch_one(pool)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, entity_id = %entity_id, entity_type = %entity_type, "Failed to check entity confirmation");
+            ApiError::InternalError("Failed to check entity confirmation".to_string())
+        })?
+        .unwrap_or(0);
+
+        Ok(count > 0)
+    }
+} 

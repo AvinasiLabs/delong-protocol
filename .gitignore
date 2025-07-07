@@ -56,3 +56,7 @@ Thumbs.db
 .env.local
 .env.*.local
 .env.*
+
+# Cursor configuration
+memory-bank/
+.cursorrules

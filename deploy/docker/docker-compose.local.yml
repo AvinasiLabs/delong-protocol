@@ -1,0 +1,232 @@
+services:
+  # PostgreSQL Database (replacing MySQL)
+  delong-postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: delong
+      POSTGRES_USER: delong
+      POSTGRES_PASSWORD: delong_test_2025
+    tmpfs:
+      - /var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U delong -d delong"]
+      timeout: 10s
+      retries: 5
+      interval: 10s
+
+  # Redis Cache
+  delong-redis:
+    image: redis:7-alpine
+    tmpfs:
+      - /data
+    ports:
+      - "6381:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      timeout: 5s
+      retries: 3
+      interval: 10s
+
+  # Local Ethereum Network (Anvil)
+  delong-anvil:
+    image: ghcr.io/foundry-rs/foundry:latest
+    command:
+      ["anvil", "--host", "0.0.0.0", "--port", "8545", "--chain-id", "31337"]
+    tmpfs:
+      - /data/anvil
+    ports:
+      - "8547:8545"
+    healthcheck:
+      test: ["CMD", "cast", "block-number", "--rpc-url", "http://localhost:8545"]
+      timeout: 10s
+      retries: 3
+
+  # IPFS Node
+  delong-ipfs:
+    image: ipfs/kubo:latest
+    tmpfs:
+      - /data/ipfs
+    ports:
+      - "5001:5001"
+      - "8088:8080"
+    healthcheck:
+      test: ["CMD", "ipfs", "id"]
+      timeout: 10s
+      retries: 3
+
+  # Data Pipeline Service (existing)
+  delong-datapipe:
+    image: lilhammer/delong-pipeline:latest
+    expose:
+      - "8018"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8018/api/health"]
+      timeout: 10s
+      retries: 3
+      interval: 30s
+
+  # DStack Simulator (for TEE simulation)
+  dstack-simulator:
+    image: lilhammer/dstack-simulator:latest
+    expose:
+      - "8090"
+    volumes:
+      - simulator_sockets:/app/sockets
+
+  # Gateway Service (Port 8080)
+  delong-gateway:
+    build:
+      context: ../../
+      dockerfile: deploy/docker/Dockerfile
+      args:
+        SERVICE: gateway
+    env_file:
+      - .env
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8080
+      - DATABASE_URL=postgresql://delong:delong_test_2025@delong-postgres:5432/delong
+      - REDIS_URL=redis://delong-redis:6379
+      - CORE_SERVICE_URL=http://delong-core:8081
+      - SECURE_SERVICE_URL=http://delong-secure:8082
+      - RUST_LOG=info
+    ports:
+      - "8080:8080"
+    depends_on:
+      delong-postgres:
+        condition: service_healthy
+      delong-redis:
+        condition: service_healthy
+      delong-core:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      timeout: 10s
+      retries: 3
+      interval: 30s
+    restart: unless-stopped
+
+  # Core Service (Port 8081)
+  delong-core:
+    build:
+      context: ../../
+      dockerfile: deploy/docker/Dockerfile
+      args:
+        SERVICE: core
+    env_file:
+      - .env
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8081
+      - DATABASE_URL=postgresql://delong:delong_test_2025@delong-postgres:5432/delong
+      - REDIS_URL=redis://delong-redis:6379
+      - RUST_LOG=info
+    volumes:
+      - delong_dynamic_datasets:/data/datasets
+    expose:
+      - "8081"
+    depends_on:
+      delong-postgres:
+        condition: service_healthy
+      delong-redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      timeout: 10s
+      retries: 3
+      interval: 30s
+    restart: unless-stopped
+
+  # Secure Service (Port 8082) - TEE Environment
+  delong-secure:
+    build:
+      context: ../../
+      dockerfile: deploy/docker/Dockerfile
+      args:
+        SERVICE: secure
+    env_file:
+      - .env
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8082
+      - DATABASE_URL=postgresql://delong:delong_test_2025@delong-postgres:5432/delong
+      - TEE_CLIENT_TYPE=${TEE_CLIENT_TYPE:-mock}
+      - TEE_MASTER_KEY_PATH=/secure/keys/master.key
+      - IPFS_API_URL=http://delong-ipfs:5001
+      - BLOCKCHAIN_CLIENT_TYPE=${BLOCKCHAIN_CLIENT_TYPE:-mock}
+      - ETH_HTTP_URL=${ETH_HTTP_URL:-http://delong-anvil:8545}
+      - ETH_WS_URL=${ETH_WS_URL:-ws://delong-anvil:8545}
+      - CHAIN_ID=${CHAIN_ID:-31337}
+      - OFFICIAL_ACCOUNT_PRIVATE_KEY=${OFFICIAL_ACCOUNT_PRIVATE_KEY}
+      - RUST_LOG=info
+    volumes:
+      - delong_static_datasets:/data/delong_dataset
+      - simulator_sockets:/app/sockets
+      - /var/run/docker.sock:/var/run/docker.sock
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    expose:
+      - "8082"
+    depends_on:
+      delong-postgres:
+        condition: service_healthy
+      delong-ipfs:
+        condition: service_healthy
+      delong-anvil:
+        condition: service_healthy
+      dstack-simulator:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
+      timeout: 10s
+      retries: 3
+      interval: 30s
+    restart: unless-stopped
+
+  # Test Runner
+  test-runner:
+    build:
+      context: ../../
+      dockerfile: deploy/docker/Dockerfile.test
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://delong:delong_test_2025@delong-postgres:5432/delong
+      - REDIS_URL=redis://delong-redis:6379
+      - TEE_CLIENT_TYPE=mock
+      - IPFS_API_URL=http://delong-ipfs:5001
+      - ETH_HTTP_URL=http://delong-anvil:8545
+      - ETH_WS_URL=ws://delong-anvil:8545
+      - CHAIN_ID=31337
+      - OFFICIAL_ACCOUNT_PRIVATE_KEY=${OFFICIAL_ACCOUNT_PRIVATE_KEY}
+      - TEST_GATEWAY_URL=http://delong-gateway:8080
+      - TEST_CORE_URL=http://delong-core:8081
+      - TEST_SECURE_URL=http://delong-secure:8082
+      - RUST_LOG=debug
+    volumes:
+      - ../../:/app
+      - cargo_cache:/usr/local/cargo/registry
+      - target_cache:/app/target
+    working_dir: /app
+    depends_on:
+      delong-postgres:
+        condition: service_healthy
+      delong-redis:
+        condition: service_healthy
+      delong-gateway:
+        condition: service_healthy
+      delong-core:
+        condition: service_healthy
+      delong-secure:
+        condition: service_healthy
+    profiles:
+      - test
+
+volumes:
+  simulator_sockets:
+  delong_static_datasets:
+  delong_dynamic_datasets:
+  cargo_cache:
+  target_cache: 

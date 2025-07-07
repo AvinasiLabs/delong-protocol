@@ -2,3 +2,38 @@
 name = "secure"
 version = { workspace = true }
 edition = { workspace = true }
+description = "Secure service for privacy-preserving computation in TEE environment"
+
+[dependencies]
+# Workspace dependencies
+axum = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = "0.3"
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true, features = ["cors", "trace"] }
+chrono = { workspace = true, features = ["serde"] }
+uuid = { workspace = true }
+
+# Database
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid", "migrate", "macros"], default-features = false }
+
+# Internal dependencies
+common = { path = "../common" }
+
+# TEE and cryptography specific
+sha2 = "0.10"
+aes-gcm = "0.10"
+hkdf = "0.12"
+rand = "0.8"
+md5 = "0.7"
+
+# IPFS client
+ipfs-api-backend-hyper = "0.6"
+
+# Ethereum integration
+ethers = "2.0"

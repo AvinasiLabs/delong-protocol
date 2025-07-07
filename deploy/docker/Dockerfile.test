@@ -1,0 +1,42 @@
+# Dockerfile for running tests in DeLong Protocol
+FROM rust:1.85-bullseye
+
+# Install additional dependencies for testing
+RUN apt-get update && apt-get install -y \
+    git \
+    curl \
+    wget \
+    ca-certificates \
+    python3 \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies for integration tests
+RUN pip3 install --no-cache-dir \
+    pandas \
+    numpy \
+    requests
+
+WORKDIR /app
+
+# Copy workspace files
+COPY Cargo.toml Cargo.lock ./
+COPY common/ common/
+COPY gateway/ gateway/
+COPY core/ core/
+COPY secure/ secure/
+
+# Install cargo tools for testing
+RUN cargo install cargo-nextest --locked || echo "cargo-nextest not available, using cargo test"
+
+# Create test data directories
+RUN mkdir -p /tmp/test_data /tmp/test_keys
+
+# Set test environment variables
+ENV RUST_LOG=debug
+ENV TEST_ENV=true
+ENV DATABASE_URL=postgresql://test:test@postgres:5432/test
+ENV REDIS_URL=redis://redis:6379
+
+# Default command runs all tests
+CMD ["cargo", "test", "--workspace", "--verbose"] 

@@ -1,0 +1,59 @@
+# Multi-stage build for DeLong Protocol Secure Service (TEE Ready)
+FROM rust:1.85-bullseye AS builder
+
+WORKDIR /app
+
+# Copy workspace files
+COPY Cargo.toml Cargo.lock ./
+COPY common/ common/
+COPY secure/ secure/
+
+# Build dependencies first (for better caching)
+RUN cargo build --release --package secure
+
+FROM debian:bullseye-slim
+
+# Install runtime dependencies for TEE environment
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    curl \
+    wget \
+    python3 \
+    python3-pip \
+    python3-pandas \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies for algorithm execution
+RUN pip3 install --no-cache-dir \
+    pandas \
+    numpy \
+    scikit-learn \
+    matplotlib \
+    seaborn
+
+WORKDIR /app
+
+# Copy the binary from builder
+COPY --from=builder /app/target/release/secure .
+
+# Create directories for TEE operations
+RUN mkdir -p /secure/keys /secure/algorithms /secure/results /tmp/execution_env
+
+# Create non-root user
+RUN groupadd -r delong && useradd -r -g delong delong
+RUN chown -R delong:delong /app /secure /tmp/execution_env
+
+USER delong
+
+# Expose port
+EXPOSE 8082
+
+# Add health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
+    CMD curl -f http://localhost:8082/health || exit 1
+
+# Set environment variables for TEE
+ENV TEE_CLIENT_TYPE=mock
+ENV TEE_MASTER_KEY_PATH=/secure/keys/master.key
+
+CMD ["./secure"] 

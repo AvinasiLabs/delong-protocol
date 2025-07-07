@@ -1,0 +1,165 @@
+services:
+  # Alpine TTY for debugging (kept from original)
+  alpine-ttypd:
+    image: hackinglab/alpine-ttyd-bash:3.2
+    environment:
+      - AUTHOR=delong-team
+      - HL_USER_USERNAME=root
+      - HL_USER_PASSWORD=${DEBUG_PASSWORD:-debug123}
+    ports:
+      - 7681:7681
+    volumes:
+      - /:/host
+    network_mode: host
+    profiles:
+      - debug
+
+  # PostgreSQL Database (persistent storage)
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DATABASE:-delong}
+      POSTGRES_USER: ${POSTGRES_USER:-delong}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    expose:
+      - "5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-delong} -d ${POSTGRES_DATABASE:-delong}"]
+      timeout: 10s
+      retries: 10
+      interval: 10s
+
+  # Redis Cache (persistent storage)
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    expose:
+      - "6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      timeout: 5s
+      retries: 5
+      interval: 10s
+
+  # IPFS Node (persistent storage)
+  ipfs:
+    image: ipfs/kubo:latest
+    volumes:
+      - ipfs_data:/data/ipfs
+    expose:
+      - "5001"
+    healthcheck:
+      test: ["CMD", "ipfs", "id"]
+      timeout: 10s
+      retries: 5
+
+  # Data Pipeline Service
+  delong-datapipe:
+    image: lilhammer/delong-pipeline:latest
+    expose:
+      - "8018"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8018/api/health"]
+      timeout: 10s
+      retries: 5
+      interval: 30s
+
+  # Gateway Service (Port 8080)
+  delong-gateway:
+    image: ${DELONG_GATEWAY_IMAGE:-lilhammer/delong-gateway:latest}
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8080
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=redis://redis:6379
+      - CORE_SERVICE_URL=http://delong-core:8081
+      - SECURE_SERVICE_URL=http://delong-secure:8082
+      - JWT_SECRET=${JWT_SECRET}
+      - RUST_LOG=${RUST_LOG:-info}
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      delong-core:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  # Core Service (Port 8081)
+  delong-core:
+    image: ${DELONG_CORE_IMAGE:-lilhammer/delong-core:latest}
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8081
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=redis://redis:6379
+      - RUST_LOG=${RUST_LOG:-info}
+    volumes:
+      - /data/delong_dynamic_datasets:/data/datasets
+    expose:
+      - "8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  # Secure Service (Port 8082) - TEE Environment
+  delong-secure:
+    image: ${DELONG_SECURE_IMAGE:-lilhammer/delong-secure:latest}
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8082
+      - DATABASE_URL=${DATABASE_URL}
+      - TEE_CLIENT_TYPE=${TEE_CLIENT_TYPE:-phala}
+      - TEE_MASTER_KEY_PATH=/secure/keys/master.key
+      - IPFS_API_URL=http://ipfs:5001
+      - BLOCKCHAIN_CLIENT_TYPE=${BLOCKCHAIN_CLIENT_TYPE:-ethereum}
+      - ETH_HTTP_URL=${ETH_HTTP_URL}
+      - ETH_WS_URL=${ETH_WS_URL}
+      - CHAIN_ID=${CHAIN_ID}
+      - OFFICIAL_ACCOUNT_PRIVATE_KEY=${OFFICIAL_ACCOUNT_PRIVATE_KEY}
+      - BLOCKCHAIN_SYNC_INTERVAL=${BLOCKCHAIN_SYNC_INTERVAL:-30}
+      - RUST_LOG=${RUST_LOG:-info}
+    volumes:
+      - /data/delong_static_datasets:/data/delong_dataset
+      - /var/run/tappd.sock:/var/run/tappd.sock
+      - /var/run/docker.sock:/var/run/docker.sock
+      - secure_keys:/secure/keys
+    expose:
+      - "8082"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ipfs:
+        condition: service_healthy
+      delong-datapipe:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
+      timeout: 10s
+      retries: 5
+      start_period: 45s
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  ipfs_data:
+  secure_keys: 
