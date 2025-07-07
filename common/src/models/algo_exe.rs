@@ -84,6 +84,15 @@ pub struct AlgoExeData {
 pub struct AlgoExeSubmissionResponse {
     /// Unique identifier assigned to the submitted execution
     pub id: u64,
+    
+    /// Blockchain transaction hash
+    pub tx_hash: String,
+    
+    /// Submission status
+    pub status: String,
+    
+    /// Response message
+    pub message: String,
 }
 
 /// Algorithm execution status enumeration
@@ -194,7 +203,12 @@ mod tests {
 
     #[test]
     fn test_algo_exe_submission_response_serialization() {
-        let response = AlgoExeSubmissionResponse { id: 123 };
+        let response = AlgoExeSubmissionResponse { 
+            id: 123,
+            tx_hash: "0xabc123def456".to_string(),
+            status: "submitted".to_string(),
+            message: "Algorithm execution submitted successfully".to_string(),
+        };
 
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("123"));

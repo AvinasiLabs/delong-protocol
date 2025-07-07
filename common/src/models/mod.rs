@@ -45,6 +45,7 @@
 
 pub mod algo_exe;
 pub mod auth;
+pub mod blockchain;
 pub mod committee;
 pub mod contract;
 pub mod dataset;
@@ -67,6 +68,13 @@ pub use auth::{
     CreateApiKeyResponse, JwtClaims, Permission, RateLimitTier, RevokeApiKeyRequest,
     RevokeApiKeyResponse, UserSession, ValidateApiKeyRequest, ValidateApiKeyResponse,
     is_valid_api_key_format,
+};
+
+// Blockchain models
+pub use blockchain::{
+    BlockchainTransaction, CreateTransactionRequest, EntityType, TransactionQuery,
+    TransactionResponse, TransactionStatus as BlockchainTransactionStatus, 
+    UpdateTransactionStatusRequest, is_valid_tx_hash, JOIN_CONFIRMED_TX,
 };
 
 // Committee models
