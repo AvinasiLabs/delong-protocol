@@ -42,7 +42,8 @@ use crate::{
         auth::{auth_middleware, create_auth_middleware_with_cache},
         logging_middleware, request_id_middleware,
     },
-    utils::http_client::BackendClient,
+    openapi::{create_scalar_ui, create_swagger_ui, get_openapi_json, get_openapi_yaml},
+    services::http_client::BackendClient,
 };
 
 /// Application state containing configuration, HTTP client, and Redis cache
@@ -67,16 +68,21 @@ pub fn create_router(
 
     let api_routes = create_api_routes(&app_state);
 
-    Router::new()
+    Router::<AppState>::new()
         // Health check routes (no auth required)
         .route("/health", get(health_handler))
+        // API documentation routes (no auth required)
+        .route("/docs/openapi.json", get(get_openapi_json))
+        .route("/docs/openapi.yaml", get(get_openapi_yaml))
+        .merge(create_swagger_ui())
+        .merge(create_scalar_ui())
         // API routes with authentication
         .nest("/api", api_routes)
         // Global middleware
         .layer(middleware::from_fn(request_id_middleware))
         .layer(middleware::from_fn(logging_middleware))
         .layer(CorsLayer::permissive()) // Configure CORS as needed
-        // Add application state
+        // Set application state
         .with_state(app_state)
 }
 
@@ -261,7 +267,7 @@ fn create_report_routes(_state: &AppState) -> Router<AppState> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{config::GatewayConfig, utils::http_client::HttpBackendClient};
+    use crate::{config::GatewayConfig, services::http_client::HttpBackendClient};
     use axum::body::Body;
     use axum::http::{Method, Request, StatusCode};
     use tower::util::ServiceExt;

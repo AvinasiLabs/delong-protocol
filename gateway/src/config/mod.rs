@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 
-// Import LoggingConfig from common crate
-pub use common::LoggingConfig;
+// Import configuration utilities from common crate
+
+pub use core::config::{EnvLoader, LoggingConfig, RedisConfig};
 
 /// Gateway configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,23 +64,6 @@ pub struct OpenTelemetryConfig {
     pub service_version: String,
 }
 
-/// Redis configuration for caching
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RedisConfig {
-    /// Redis connection URL
-    pub url: String,
-    /// Enable Redis caching
-    pub enabled: bool,
-    /// Connection pool size
-    pub pool_size: u32,
-    /// Connection timeout in seconds
-    pub connection_timeout: u64,
-    /// Cache TTL for JWT tokens in seconds
-    pub jwt_cache_ttl: u64,
-    /// Cache TTL for API keys in seconds
-    pub api_key_cache_ttl: u64,
-}
-
 impl Default for GatewayConfig {
     fn default() -> Self {
         Self {
@@ -97,7 +81,7 @@ impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             host: "0.0.0.0".to_string(),
-            port: 8080,
+            port: 11111,
             timeout_seconds: 30,
         }
     }
@@ -115,8 +99,8 @@ impl Default for ApiConfig {
 impl Default for ServicesConfig {
     fn default() -> Self {
         Self {
-            core_url: "http://localhost:8081".to_string(),
-            secure_url: "http://localhost:8082".to_string(),
+            core_url: "http://localhost:11112".to_string(),
+            secure_url: "http://localhost:11113".to_string(),
         }
     }
 }
@@ -132,108 +116,58 @@ impl Default for OpenTelemetryConfig {
     }
 }
 
-impl Default for RedisConfig {
-    fn default() -> Self {
-        Self {
-            url: "redis://localhost:6379".to_string(),
-            enabled: true,
-            pool_size: 10,
-            connection_timeout: 5,
-            jwt_cache_ttl: 300,     // 5 minutes
-            api_key_cache_ttl: 600, // 10 minutes
-        }
-    }
-}
-
 impl GatewayConfig {
-    /// Load configuration from environment variables
+    /// Load configuration from environment variables using EnvLoader
     pub fn from_env() -> Result<Self, Box<dyn std::error::Error>> {
+        let loader = EnvLoader::new("gateway");
+        loader.load_env_files()?;
+
         let mut config = Self::default();
 
         // Server configuration
-        if let Ok(host) = std::env::var("GATEWAY_HOST") {
-            config.server.host = host;
-        }
-        if let Ok(port) = std::env::var("GATEWAY_PORT") {
-            config.server.port = port.parse()?;
-        }
-        if let Ok(timeout) = std::env::var("GATEWAY_TIMEOUT") {
-            config.server.timeout_seconds = timeout.parse()?;
-        }
+        config.server.host = loader.get_string_or_default("HOST", &config.server.host);
+        config.server.port = loader.get_u16_or_default("PORT", config.server.port);
+        config.server.timeout_seconds =
+            loader.get_u64_or_default("TIMEOUT_SECONDS", config.server.timeout_seconds);
 
         // Services configuration
-        if let Ok(core_url) = std::env::var("CORE_SERVICE_URL") {
-            config.services.core_url = core_url;
-        }
-        if let Ok(secure_url) = std::env::var("SECURE_SERVICE_URL") {
-            config.services.secure_url = secure_url;
-        }
+        config.services.core_url =
+            loader.get_string_or_default("CORE_SERVICE_URL", &config.services.core_url);
+        config.services.secure_url =
+            loader.get_string_or_default("SECURE_SERVICE_URL", &config.services.secure_url);
 
         // API configuration
-        if let Ok(max_size) = std::env::var("MAX_BODY_SIZE") {
-            config.api.max_body_size = max_size.parse()?;
-        }
-        if let Ok(enable_api_key) = std::env::var("ENABLE_API_KEY_VALIDATION") {
-            config.api.enable_api_key_validation = enable_api_key.to_lowercase() == "true";
-        }
+        config.api.max_body_size =
+            loader.get_u32_or_default("MAX_BODY_SIZE", config.api.max_body_size as u32) as usize;
+        config.api.enable_api_key_validation = loader.get_bool_or_default(
+            "ENABLE_API_KEY_VALIDATION",
+            config.api.enable_api_key_validation,
+        );
 
         // Logging configuration
-        if let Ok(level) = std::env::var("LOG_LEVEL") {
-            config.logging.level = level;
-        }
-        if let Ok(json_format) = std::env::var("LOG_JSON_FORMAT") {
-            config.logging.json_format = json_format.to_lowercase() == "true";
-        }
-        if let Ok(log_health_checks) = std::env::var("LOG_HEALTH_CHECKS") {
-            config.logging.log_health_checks = log_health_checks.to_lowercase() == "true";
-        }
-        if let Ok(log_headers) = std::env::var("LOG_REQUEST_HEADERS") {
-            config.logging.log_headers = log_headers.to_lowercase() == "true";
-        }
-        if let Ok(log_request_body) = std::env::var("LOG_REQUEST_BODY") {
-            config.logging.log_request_body = log_request_body.to_lowercase() == "true";
-        }
-        if let Ok(max_body_log_size) = std::env::var("LOG_MAX_BODY_SIZE") {
-            config.logging.max_body_log_size = max_body_log_size.parse()?;
-        }
-        if let Ok(log_response_body) = std::env::var("LOG_RESPONSE_BODY") {
-            config.logging.log_response_body = log_response_body.to_lowercase() == "true";
-        }
+        config.logging = LoggingConfig::from_env(&loader);
 
         // OpenTelemetry configuration
-        if let Ok(enabled) = std::env::var("OTEL_ENABLED") {
-            config.opentelemetry.enabled = enabled.to_lowercase() == "true";
-        }
-        if let Ok(endpoint) = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT") {
-            config.opentelemetry.otlp_endpoint = endpoint;
-            config.opentelemetry.enabled = true; // Auto-enable if endpoint is provided
-        }
-        if let Ok(service_name) = std::env::var("OTEL_SERVICE_NAME") {
-            config.opentelemetry.service_name = service_name;
-        }
-        if let Ok(service_version) = std::env::var("OTEL_SERVICE_VERSION") {
-            config.opentelemetry.service_version = service_version;
+        config.opentelemetry.enabled =
+            loader.get_bool_or_default("OTEL_ENABLED", config.opentelemetry.enabled);
+        config.opentelemetry.otlp_endpoint = loader.get_string_or_default(
+            "OTEL_EXPORTER_OTLP_ENDPOINT",
+            &config.opentelemetry.otlp_endpoint,
+        );
+        config.opentelemetry.service_name =
+            loader.get_string_or_default("OTEL_SERVICE_NAME", &config.opentelemetry.service_name);
+        config.opentelemetry.service_version = loader.get_string_or_default(
+            "OTEL_SERVICE_VERSION",
+            &config.opentelemetry.service_version,
+        );
+
+        // Auto-enable OpenTelemetry if endpoint is provided
+        if loader.has_key("OTEL_EXPORTER_OTLP_ENDPOINT") {
+            config.opentelemetry.enabled = true;
         }
 
         // Redis configuration
-        if let Ok(redis_url) = std::env::var("REDIS_URL") {
-            config.redis.url = redis_url;
-        }
-        if let Ok(enabled) = std::env::var("REDIS_ENABLED") {
-            config.redis.enabled = enabled.to_lowercase() == "true";
-        }
-        if let Ok(pool_size) = std::env::var("REDIS_POOL_SIZE") {
-            config.redis.pool_size = pool_size.parse()?;
-        }
-        if let Ok(timeout) = std::env::var("REDIS_CONNECTION_TIMEOUT") {
-            config.redis.connection_timeout = timeout.parse()?;
-        }
-        if let Ok(ttl) = std::env::var("REDIS_JWT_CACHE_TTL") {
-            config.redis.jwt_cache_ttl = ttl.parse()?;
-        }
-        if let Ok(ttl) = std::env::var("REDIS_API_KEY_CACHE_TTL") {
-            config.redis.api_key_cache_ttl = ttl.parse()?;
-        }
+        config.redis = RedisConfig::from_env(&loader);
 
         Ok(config)
     }
@@ -252,9 +186,9 @@ mod tests {
     fn test_default_config() {
         let config = GatewayConfig::default();
         assert_eq!(config.server.host, "0.0.0.0");
-        assert_eq!(config.server.port, 8080);
-        assert_eq!(config.services.core_url, "http://localhost:8081");
-        assert_eq!(config.services.secure_url, "http://localhost:8082");
+        assert_eq!(config.server.port, 11111);
+        assert_eq!(config.services.core_url, "http://localhost:11112");
+        assert_eq!(config.services.secure_url, "http://localhost:11113");
         assert!(config.api.enable_api_key_validation);
     }
 
@@ -262,6 +196,6 @@ mod tests {
     fn test_socket_addr() {
         let config = GatewayConfig::default();
         let addr = config.socket_addr().unwrap();
-        assert_eq!(addr.to_string(), "0.0.0.0:8080");
+        assert_eq!(addr.to_string(), "0.0.0.0:11111");
     }
 }

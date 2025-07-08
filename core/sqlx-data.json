@@ -1,0 +1,629 @@
+{
+  "db": "PostgreSQL",
+  "089e6b5c4c5c8b5a1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d": {
+    "describe": {
+      "columns": [
+        {
+          "name": "id",
+          "ordinal": 0,
+          "type_info": "Uuid"
+        },
+        {
+          "name": "email",
+          "ordinal": 1,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "username",
+          "ordinal": 2,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "password_hash",
+          "ordinal": 3,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "full_name",
+          "ordinal": 4,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "status",
+          "ordinal": 5,
+          "type_info": "UserStatus"
+        },
+        {
+          "name": "email_verified",
+          "ordinal": 6,
+          "type_info": "Bool"
+        },
+        {
+          "name": "phone",
+          "ordinal": 7,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "phone_verified",
+          "ordinal": 8,
+          "type_info": "Bool"
+        },
+        {
+          "name": "avatar_url",
+          "ordinal": 9,
+          "type_info": "Text"
+        },
+        {
+          "name": "bio",
+          "ordinal": 10,
+          "type_info": "Text"
+        },
+        {
+          "name": "created_at",
+          "ordinal": 11,
+          "type_info": "Timestamptz"
+        },
+        {
+          "name": "updated_at",
+          "ordinal": 12,
+          "type_info": "Timestamptz"
+        },
+        {
+          "name": "last_login_at",
+          "ordinal": 13,
+          "type_info": "Timestamptz"
+        },
+        {
+          "name": "login_attempts",
+          "ordinal": 14,
+          "type_info": "Int4"
+        },
+        {
+          "name": "locked_until",
+          "ordinal": 15,
+          "type_info": "Timestamptz"
+        },
+        {
+          "name": "preferences",
+          "ordinal": 16,
+          "type_info": "Jsonb"
+        },
+        {
+          "name": "metadata",
+          "ordinal": 17,
+          "type_info": "Jsonb"
+        }
+      ],
+      "nullable": [
+        false,
+        false,
+        false,
+        false,
+        true,
+        false,
+        false,
+        true,
+        false,
+        true,
+        true,
+        false,
+        false,
+        true,
+        false,
+        true,
+        false,
+        false
+      ],
+      "parameters": {
+        "Left": [
+          "Varchar",
+          "Varchar",
+          "Varchar",
+          "Varchar",
+          "UserStatus",
+          "Varchar",
+          "Text"
+        ]
+      }
+    },
+    "query": "INSERT INTO users (\n                username, email, password_hash, full_name, status, phone, bio\n            ) VALUES (\n                $1, $2, $3, $4, $5, $6, $7\n            )\n            RETURNING *"
+  },
+  "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b": {
+    "describe": {
+      "columns": [
+        {
+          "name": "id",
+          "ordinal": 0,
+          "type_info": "Uuid"
+        },
+        {
+          "name": "email",
+          "ordinal": 1,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "username",
+          "ordinal": 2,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "password_hash",
+          "ordinal": 3,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "full_name",
+          "ordinal": 4,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "status",
+          "ordinal": 5,
+          "type_info": "UserStatus"
+        },
+        {
+          "name": "email_verified",
+          "ordinal": 6,
+          "type_info": "Bool"
+        },
+        {
+          "name": "phone",
+          "ordinal": 7,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "phone_verified",
+          "ordinal": 8,
+          "type_info": "Bool"
+        },
+        {
+          "name": "avatar_url",
+          "ordinal": 9,
+          "type_info": "Text"
+        },
+        {
+          "name": "bio",
+          "ordinal": 10,
+          "type_info": "Text"
+        },
+        {
+          "name": "created_at",
+          "ordinal": 11,
+          "type_info": "Timestamptz"
+        },
+        {
+          "name": "updated_at",
+          "ordinal": 12,
+          "type_info": "Timestamptz"
+        },
+        {
+          "name": "last_login_at",
+          "ordinal": 13,
+          "type_info": "Timestamptz"
+        },
+        {
+          "name": "login_attempts",
+          "ordinal": 14,
+          "type_info": "Int4"
+        },
+        {
+          "name": "locked_until",
+          "ordinal": 15,
+          "type_info": "Timestamptz"
+        },
+        {
+          "name": "preferences",
+          "ordinal": 16,
+          "type_info": "Jsonb"
+        },
+        {
+          "name": "metadata",
+          "ordinal": 17,
+          "type_info": "Jsonb"
+        }
+      ],
+      "nullable": [
+        false,
+        false,
+        false,
+        false,
+        true,
+        false,
+        false,
+        true,
+        false,
+        true,
+        true,
+        false,
+        false,
+        true,
+        false,
+        true,
+        false,
+        false
+      ],
+      "parameters": {
+        "Left": ["Uuid"]
+      }
+    },
+    "query": "SELECT * FROM users WHERE id = $1"
+  },
+  "2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c": {
+    "describe": {
+      "columns": [
+        {
+          "name": "id",
+          "ordinal": 0,
+          "type_info": "Uuid"
+        },
+        {
+          "name": "email",
+          "ordinal": 1,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "username",
+          "ordinal": 2,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "password_hash",
+          "ordinal": 3,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "full_name",
+          "ordinal": 4,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "status",
+          "ordinal": 5,
+          "type_info": "UserStatus"
+        },
+        {
+          "name": "email_verified",
+          "ordinal": 6,
+          "type_info": "Bool"
+        },
+        {
+          "name": "phone",
+          "ordinal": 7,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "phone_verified",
+          "ordinal": 8,
+          "type_info": "Bool"
+        },
+        {
+          "name": "avatar_url",
+          "ordinal": 9,
+          "type_info": "Text"
+        },
+        {
+          "name": "bio",
+          "ordinal": 10,
+          "type_info": "Text"
+        },
+        {
+          "name": "created_at",
+          "ordinal": 11,
+          "type_info": "Timestamptz"
+        },
+        {
+          "name": "updated_at",
+          "ordinal": 12,
+          "type_info": "Timestamptz"
+        },
+        {
+          "name": "last_login_at",
+          "ordinal": 13,
+          "type_info": "Timestamptz"
+        },
+        {
+          "name": "login_attempts",
+          "ordinal": 14,
+          "type_info": "Int4"
+        },
+        {
+          "name": "locked_until",
+          "ordinal": 15,
+          "type_info": "Timestamptz"
+        },
+        {
+          "name": "preferences",
+          "ordinal": 16,
+          "type_info": "Jsonb"
+        },
+        {
+          "name": "metadata",
+          "ordinal": 17,
+          "type_info": "Jsonb"
+        }
+      ],
+      "nullable": [
+        false,
+        false,
+        false,
+        false,
+        true,
+        false,
+        false,
+        true,
+        false,
+        true,
+        true,
+        false,
+        false,
+        true,
+        false,
+        true,
+        false,
+        false
+      ],
+      "parameters": {
+        "Left": ["Varchar"]
+      }
+    },
+    "query": "SELECT * FROM users WHERE email = $1"
+  },
+  "3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d": {
+    "describe": {
+      "columns": [
+        {
+          "name": "id",
+          "ordinal": 0,
+          "type_info": "Uuid"
+        },
+        {
+          "name": "email",
+          "ordinal": 1,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "username",
+          "ordinal": 2,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "password_hash",
+          "ordinal": 3,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "full_name",
+          "ordinal": 4,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "status",
+          "ordinal": 5,
+          "type_info": "UserStatus"
+        },
+        {
+          "name": "email_verified",
+          "ordinal": 6,
+          "type_info": "Bool"
+        },
+        {
+          "name": "phone",
+          "ordinal": 7,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "phone_verified",
+          "ordinal": 8,
+          "type_info": "Bool"
+        },
+        {
+          "name": "avatar_url",
+          "ordinal": 9,
+          "type_info": "Text"
+        },
+        {
+          "name": "bio",
+          "ordinal": 10,
+          "type_info": "Text"
+        },
+        {
+          "name": "created_at",
+          "ordinal": 11,
+          "type_info": "Timestamptz"
+        },
+        {
+          "name": "updated_at",
+          "ordinal": 12,
+          "type_info": "Timestamptz"
+        },
+        {
+          "name": "last_login_at",
+          "ordinal": 13,
+          "type_info": "Timestamptz"
+        },
+        {
+          "name": "login_attempts",
+          "ordinal": 14,
+          "type_info": "Int4"
+        },
+        {
+          "name": "locked_until",
+          "ordinal": 15,
+          "type_info": "Timestamptz"
+        },
+        {
+          "name": "preferences",
+          "ordinal": 16,
+          "type_info": "Jsonb"
+        },
+        {
+          "name": "metadata",
+          "ordinal": 17,
+          "type_info": "Jsonb"
+        }
+      ],
+      "nullable": [
+        false,
+        false,
+        false,
+        false,
+        true,
+        false,
+        false,
+        true,
+        false,
+        true,
+        true,
+        false,
+        false,
+        true,
+        false,
+        true,
+        false,
+        false
+      ],
+      "parameters": {
+        "Left": ["Varchar"]
+      }
+    },
+    "query": "SELECT * FROM users WHERE username = $1"
+  },
+  "4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e": {
+    "describe": {
+      "columns": [],
+      "nullable": [],
+      "parameters": {
+        "Left": ["Uuid"]
+      }
+    },
+    "query": "DELETE FROM users WHERE id = $1"
+  },
+  "5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f": {
+    "describe": {
+      "columns": [
+        {
+          "name": "count",
+          "ordinal": 0,
+          "type_info": "Int8"
+        }
+      ],
+      "nullable": [false],
+      "parameters": {
+        "Left": []
+      }
+    },
+    "query": "SELECT COUNT(*) FROM users"
+  },
+  "6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a": {
+    "describe": {
+      "columns": [],
+      "nullable": [],
+      "parameters": {
+        "Left": ["Varchar", "Uuid"]
+      }
+    },
+    "query": "UPDATE users\n            SET password_hash = $1, updated_at = NOW()\n            WHERE id = $2"
+  },
+  "7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b": {
+    "describe": {
+      "columns": [],
+      "nullable": [],
+      "parameters": {
+        "Left": ["Uuid"]
+      }
+    },
+    "query": "UPDATE users\n            SET last_login_at = NOW(), updated_at = NOW(), login_attempts = 0, locked_until = NULL\n            WHERE id = $1"
+  },
+  "8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c": {
+    "describe": {
+      "columns": [],
+      "nullable": [],
+      "parameters": {
+        "Left": ["Uuid"]
+      }
+    },
+    "query": "UPDATE users\n            SET login_attempts = login_attempts + 1, updated_at = NOW()\n            WHERE id = $1"
+  },
+  "9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d": {
+    "describe": {
+      "columns": [
+        {
+          "name": "id",
+          "ordinal": 0,
+          "type_info": "Uuid"
+        },
+        {
+          "name": "user_id",
+          "ordinal": 1,
+          "type_info": "Uuid"
+        },
+        {
+          "name": "code",
+          "ordinal": 2,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "verification_type",
+          "ordinal": 3,
+          "type_info": "VerificationType"
+        },
+        {
+          "name": "expires_at",
+          "ordinal": 4,
+          "type_info": "Timestamptz"
+        },
+        {
+          "name": "created_at",
+          "ordinal": 5,
+          "type_info": "Timestamptz"
+        },
+        {
+          "name": "used_at",
+          "ordinal": 6,
+          "type_info": "Timestamptz"
+        },
+        {
+          "name": "is_used",
+          "ordinal": 7,
+          "type_info": "Bool"
+        },
+        {
+          "name": "attempts",
+          "ordinal": 8,
+          "type_info": "Int4"
+        },
+        {
+          "name": "metadata",
+          "ordinal": 9,
+          "type_info": "Jsonb"
+        }
+      ],
+      "nullable": [
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        true,
+        false,
+        false,
+        false
+      ],
+      "parameters": {
+        "Left": ["Uuid", "Varchar", "VerificationType", "Timestamptz"]
+      }
+    },
+    "query": "INSERT INTO verification_codes (\n                user_id, code, verification_type, expires_at\n            ) VALUES (\n                $1, $2, $3, $4\n            )\n            RETURNING *"
+  },
+  "0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e": {
+    "describe": {
+      "columns": [],
+      "nullable": [],
+      "parameters": {
+        "Left": ["Uuid"]
+      }
+    },
+    "query": "UPDATE verification_codes SET used_at = NOW(), is_used = TRUE WHERE id = $1"
+  }
+}

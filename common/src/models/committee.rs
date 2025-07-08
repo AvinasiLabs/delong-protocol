@@ -4,9 +4,10 @@
 //! including member operations, membership checks, and committee data.
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 /// Request payload for setting committee member
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct SetCommitteeMemberRequest {
     /// Wallet address of the committee member
     pub member_wallet: String,
@@ -15,7 +16,7 @@ pub struct SetCommitteeMemberRequest {
 }
 
 /// Committee member data model
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct CommitteeMemberData {
     /// Unique identifier for the committee member
     pub id: u64,
@@ -30,14 +31,14 @@ pub struct CommitteeMemberData {
 }
 
 /// Response for committee member operations
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct CommitteeMemberResponse {
     /// ID of the created or updated committee member
     pub id: u64,
 }
 
 /// Response for committee membership check
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct MembershipCheckResponse {
     /// Whether the wallet address is a committee member
     pub is_member: bool,

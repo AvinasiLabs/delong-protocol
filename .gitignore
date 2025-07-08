@@ -54,5 +54,13 @@ Thumbs.db
 # Environment files (may contain secrets)
 .env
 .env.local
-.env.*.local
-.env.*
+.env.production
+.env.staging
+.env.test
+.env.development
+
+# Docker override files
+docker-compose.override.yml
+
+# Keep example files (these should be committed)
+!.env.example

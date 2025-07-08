@@ -3,14 +3,17 @@ use axum::http::HeaderMap;
 pub mod http_client;
 
 // Re-export utilities from common crate
-pub use common::utils::{
+pub use core::utils::{
     clean_for_logging, current_timestamp_ms, current_timestamp_secs, env_var_as_bool,
     env_var_as_u64, env_var_or_default, format_bytes, format_duration, generate_unique_id,
     hash_string, is_safe_for_logging, sanitize_path_for_logging, truncate_string,
 };
 
 // Re-export auth utilities from common crate
-pub use common::is_valid_api_key_format;
+pub use core::is_valid_api_key_format;
+
+// Re-export request ID utilities from common crate
+pub use core::generate_request_id;
 
 /// Extract API key from request headers
 pub fn extract_api_key(headers: &HeaderMap) -> Option<String> {
@@ -32,11 +35,6 @@ pub fn extract_api_key(headers: &HeaderMap) -> Option<String> {
     }
 
     None
-}
-
-/// Generate a unique request ID with "req_" prefix
-pub fn generate_request_id() -> String {
-    format!("req_{}", generate_unique_id())
 }
 
 #[cfg(test)]

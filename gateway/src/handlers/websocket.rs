@@ -20,10 +20,10 @@ use tracing::{error, info, warn};
 
 use crate::{config::GatewayConfig, routes::AppState};
 
-use common::{NotificationMessage, TransactionStatus, generate_client_id};
+use core::{NotificationMessage, TransactionStatus, generate_client_id};
 
 #[cfg(test)]
-use common::BlockchainTransactionNotification;
+use core::BlockchainTransactionNotification;
 
 /// WebSocket connection manager
 pub type ConnectionManager = Arc<Mutex<HashMap<String, broadcast::Sender<NotificationMessage>>>>;
@@ -32,6 +32,18 @@ pub type ConnectionManager = Arc<Mutex<HashMap<String, broadcast::Sender<Notific
 ///
 /// GET /api/ws
 /// Upgrades HTTP connection to WebSocket for real-time notifications
+#[utoipa::path(
+    get,
+    path = "/api/ws",
+    tag = "websocket",
+    summary = "WebSocket connection",
+    description = "Upgrade HTTP connection to WebSocket for real-time notifications and blockchain transaction updates",
+    responses(
+        (status = 101, description = "WebSocket connection upgraded successfully"),
+        (status = 400, description = "Invalid WebSocket upgrade request"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 pub async fn websocket_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
     info!("WebSocket connection request received");
 

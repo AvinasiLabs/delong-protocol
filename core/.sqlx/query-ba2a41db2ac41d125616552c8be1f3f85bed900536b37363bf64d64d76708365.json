@@ -1,0 +1,53 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT\n                COUNT(*) as total_votes,\n                COUNT(CASE WHEN vote_type = 'upvote' THEN 1 END) as upvotes,\n                COUNT(CASE WHEN vote_type = 'downvote' THEN 1 END) as downvotes,\n                COUNT(CASE WHEN vote_type = 'abstain' THEN 1 END) as abstains,\n                COALESCE(SUM(CASE WHEN vote_type = 'upvote' THEN weight ELSE 0 END), 0) as upvote_weight,\n                COALESCE(SUM(CASE WHEN vote_type = 'downvote' THEN weight ELSE 0 END), 0) as downvote_weight\n            FROM votes\n            WHERE target_type = $1 AND target_id = $2\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "total_votes",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "upvotes",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "downvotes",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "abstains",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "upvote_weight",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 5,
+        "name": "downvote_weight",
+        "type_info": "Numeric"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "ba2a41db2ac41d125616552c8be1f3f85bed900536b37363bf64d64d76708365"
+}

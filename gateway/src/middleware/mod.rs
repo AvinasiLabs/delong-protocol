@@ -9,7 +9,7 @@
 pub mod auth;
 
 // Re-export middleware from common crate
-pub use common::middleware::{
+pub use core::middleware::{
     MiddlewareUtils, REQUEST_ID_HEADER,
     logging::{LoggingConfig, logging_middleware, security_logging_middleware},
     request_id::{
@@ -19,5 +19,5 @@ pub use common::middleware::{
 };
 
 // Re-export for backward compatibility
-pub use common::middleware::logging::log_large_request;
-pub use common::middleware::logging::log_slow_request;
+pub use core::middleware::logging::log_large_request;
+pub use core::middleware::logging::log_slow_request;

@@ -1,0 +1,36 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COUNT(*) FROM votes WHERE target_type = $1 AND target_id = $2 AND user_id = $3 AND vote_type = $4",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid",
+        "Uuid",
+        {
+          "Custom": {
+            "name": "vote_type",
+            "kind": {
+              "Enum": [
+                "upvote",
+                "downvote",
+                "abstain"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "d107b28840dd287c675d0d4531279644839d63956ee56dd32c04e7ba3c3f1758"
+}

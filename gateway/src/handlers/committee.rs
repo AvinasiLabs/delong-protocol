@@ -13,10 +13,10 @@ use tracing::{error, info};
 use crate::{
     handlers::{ApiResponse, PaginatedResponse, PaginationParams},
     routes::AppState,
-    utils::http_client::{forward_get, forward_post},
+    services::http_client::{forward_get, forward_post},
 };
 
-use common::{
+use core::{
     CommitteeMemberData, CommitteeMemberResponse, MembershipCheckResponse,
     SetCommitteeMemberRequest,
 };
@@ -25,6 +25,24 @@ use common::{
 ///
 /// POST /api/committee
 /// Forwards the request to the Secure service (TEE Hardware) to add or update committee member
+#[utoipa::path(
+    post,
+    path = "/api/committee",
+    tag = "committee",
+    summary = "Set committee member",
+    description = "Add or update a committee member's status and approval",
+    request_body = SetCommitteeMemberRequest,
+    responses(
+        (status = 200, description = "Committee member set successfully", body = ApiResponse<CommitteeMemberResponse>),
+        (status = 400, description = "Invalid request parameters", body = ApiResponse<String>),
+        (status = 401, description = "Unauthorized - invalid or missing API key", body = ApiResponse<String>),
+        (status = 403, description = "Forbidden - insufficient permissions", body = ApiResponse<String>),
+        (status = 500, description = "Internal server error", body = ApiResponse<String>)
+    ),
+    security(
+        ("api_key" = [])
+    )
+)]
 pub async fn set_committee_member_handler(
     State(state): State<AppState>,
     Json(payload): Json<SetCommitteeMemberRequest>,
@@ -56,10 +74,30 @@ pub async fn set_committee_member_handler(
     }
 }
 
-/// Handler for getting committee member list
+/// Handler for getting committee members list
 ///
 /// GET /api/committee
 /// Returns paginated list of committee members
+#[utoipa::path(
+    get,
+    path = "/api/committee",
+    tag = "committee",
+    summary = "List committee members",
+    description = "Retrieve a paginated list of committee members",
+    params(
+        ("page" = Option<u32>, Query, description = "Page number (default: 1)"),
+        ("limit" = Option<u32>, Query, description = "Items per page (default: 20, max: 100)")
+    ),
+    responses(
+        (status = 200, description = "Committee members retrieved successfully", body = ApiResponse<PaginatedResponse<CommitteeMemberData>>),
+        (status = 400, description = "Invalid query parameters", body = ApiResponse<String>),
+        (status = 401, description = "Unauthorized - invalid or missing API key", body = ApiResponse<String>),
+        (status = 500, description = "Internal server error", body = ApiResponse<String>)
+    ),
+    security(
+        ("api_key" = [])
+    )
+)]
 pub async fn get_committee_members_handler(
     State(state): State<AppState>,
     Query(params): Query<PaginationParams>,
@@ -102,6 +140,26 @@ pub async fn get_committee_members_handler(
 ///
 /// GET /api/committee/{id}
 /// Returns detailed information about a specific committee member
+#[utoipa::path(
+    get,
+    path = "/api/committee/{id}",
+    tag = "committee",
+    summary = "Get committee member",
+    description = "Retrieve detailed information about a specific committee member",
+    params(
+        ("id" = u64, Path, description = "Committee member ID")
+    ),
+    responses(
+        (status = 200, description = "Committee member retrieved successfully", body = ApiResponse<CommitteeMemberData>),
+        (status = 400, description = "Invalid committee member ID", body = ApiResponse<String>),
+        (status = 401, description = "Unauthorized - invalid or missing API key", body = ApiResponse<String>),
+        (status = 404, description = "Committee member not found", body = ApiResponse<String>),
+        (status = 500, description = "Internal server error", body = ApiResponse<String>)
+    ),
+    security(
+        ("api_key" = [])
+    )
+)]
 pub async fn get_committee_member_handler(
     State(state): State<AppState>,
     Path(id): Path<u64>,
@@ -129,7 +187,26 @@ pub async fn get_committee_member_handler(
 /// Handler for checking committee membership
 ///
 /// GET /api/committee/check/{wallet}
-/// Checks if the given wallet address is a committee member
+/// Returns membership status for a given wallet address
+#[utoipa::path(
+    get,
+    path = "/api/committee/check/{wallet}",
+    tag = "committee",
+    summary = "Check committee membership",
+    description = "Check if a wallet address is a committee member and their approval status",
+    params(
+        ("wallet" = String, Path, description = "Wallet address to check")
+    ),
+    responses(
+        (status = 200, description = "Membership check completed successfully", body = ApiResponse<MembershipCheckResponse>),
+        (status = 400, description = "Invalid wallet address", body = ApiResponse<String>),
+        (status = 401, description = "Unauthorized - invalid or missing API key", body = ApiResponse<String>),
+        (status = 500, description = "Internal server error", body = ApiResponse<String>)
+    ),
+    security(
+        ("api_key" = [])
+    )
+)]
 pub async fn check_committee_membership_handler(
     State(state): State<AppState>,
     Path(wallet): Path<String>,

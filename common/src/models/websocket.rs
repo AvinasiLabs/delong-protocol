@@ -4,9 +4,10 @@
 //! including blockchain transaction updates, system events, and connection management.
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 /// WebSocket notification message types
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
 #[serde(tag = "type", content = "data")]
 pub enum NotificationMessage {
     /// Blockchain transaction status update
@@ -67,7 +68,7 @@ pub enum NotificationMessage {
 }
 
 /// Blockchain transaction notification data
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct BlockchainTransactionNotification {
     /// Unique identifier for the notification
     pub id: u64,
@@ -92,7 +93,7 @@ pub struct BlockchainTransactionNotification {
 }
 
 /// Transaction status enumeration
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub enum TransactionStatus {
     /// Transaction is pending in mempool
     #[serde(rename = "pending")]
@@ -112,7 +113,7 @@ pub enum TransactionStatus {
 }
 
 /// WebSocket client connection information
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct WebSocketClient {
     /// Unique client identifier
     pub id: String,
@@ -129,7 +130,7 @@ pub struct WebSocketClient {
 }
 
 /// WebSocket connection statistics
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct ConnectionStats {
     /// Total number of active connections
     pub active_connections: u32,
@@ -144,7 +145,7 @@ pub struct ConnectionStats {
 }
 
 /// Subscription request from client
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct SubscriptionRequest {
     /// Topics to subscribe to
     pub topics: Vec<String>,
@@ -153,7 +154,7 @@ pub struct SubscriptionRequest {
 }
 
 /// Subscription response to client
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct SubscriptionResponse {
     /// Whether subscription was successful
     pub success: bool,

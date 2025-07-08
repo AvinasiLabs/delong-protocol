@@ -5,9 +5,11 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use utoipa::ToSchema;
 
 /// Permission levels for API access control
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, ToSchema)]
+#[schema(example = "data_read")]
 pub enum Permission {
     /// Read access to dataset information
     #[serde(rename = "data_read")]
@@ -33,7 +35,8 @@ pub enum Permission {
 }
 
 /// Rate limiting tiers for API access
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[schema(example = "basic")]
 pub enum RateLimitTier {
     /// Basic tier: 100 requests per minute
     #[serde(rename = "basic")]
@@ -50,58 +53,110 @@ pub enum RateLimitTier {
 }
 
 /// API key information returned to users
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+#[schema(example = json!({
+    "id": "key_123456",
+    "name": "My API Key",
+    "description": "API key for data access",
+    "permissions": ["data_read"],
+    "rate_limit_tier": "basic",
+    "is_active": true,
+    "created_at": "2024-01-01T00:00:00Z",
+    "last_used_at": "2024-01-01T12:00:00Z",
+    "expires_at": "2024-12-31T23:59:59Z",
+    "api_key": null
+}))]
 pub struct ApiKeyInfo {
     /// Unique identifier for the API key
+    #[schema(example = "key_123456")]
     pub id: String,
     /// Human-readable name for the API key
+    #[schema(example = "My API Key")]
     pub name: String,
     /// Optional description of the API key's purpose
+    #[schema(example = "API key for data access")]
     pub description: Option<String>,
     /// Permissions granted to this API key
+    #[schema(example = json!(["data_read"]))]
     pub permissions: Vec<Permission>,
     /// Rate limiting tier for this API key
+    #[schema(example = "basic")]
     pub rate_limit_tier: RateLimitTier,
     /// Whether the API key is currently active
+    #[schema(example = true)]
     pub is_active: bool,
     /// Creation timestamp in RFC3339 format
+    #[schema(example = "2024-01-01T00:00:00Z")]
     pub created_at: String,
     /// Last usage timestamp in RFC3339 format (if ever used)
+    #[schema(example = "2024-01-01T12:00:00Z")]
     pub last_used_at: Option<String>,
     /// Expiration timestamp in RFC3339 format (if set)
+    #[schema(example = "2024-12-31T23:59:59Z")]
     pub expires_at: Option<String>,
     /// The actual API key value (only returned during creation)
+    #[schema(example = "delong_live_1234567890abcdef")]
     pub api_key: Option<String>,
 }
 
 /// Request body for creating a new API key
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, ToSchema)]
+#[schema(example = json!({
+    "name": "My API Key",
+    "description": "API key for data access",
+    "permissions": ["data_read"],
+    "rate_limit_tier": "basic",
+    "expires_in_days": 30,
+    "is_active": true
+}))]
 pub struct CreateApiKeyRequest {
     /// Human-readable name for the API key
+    #[schema(example = "My API Key")]
     pub name: String,
     /// Optional description of the API key's purpose
+    #[schema(example = "API key for data access")]
     pub description: Option<String>,
     /// Permissions to grant to this API key
+    #[schema(example = json!(["data_read"]))]
     pub permissions: Vec<Permission>,
     /// Rate limiting tier (optional, defaults to Basic)
+    #[schema(example = "basic")]
     pub rate_limit_tier: Option<RateLimitTier>,
     /// Expiration time in days (optional, default 30 days)
+    #[schema(minimum = 1, maximum = 365, example = 30)]
     pub expires_in_days: Option<u32>,
     /// Whether the key should be active immediately (optional, default true)
+    #[schema(example = true)]
     pub is_active: Option<bool>,
 }
 
 /// Response for successful API key creation
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, ToSchema)]
+#[schema(example = json!({
+    "api_key_info": {
+        "id": "key_123456",
+        "name": "My API Key",
+        "description": "API key for data access",
+        "permissions": ["data_read"],
+        "rate_limit_tier": "basic",
+        "is_active": true,
+        "created_at": "2024-01-01T00:00:00Z",
+        "last_used_at": null,
+        "expires_at": "2024-12-31T23:59:59Z",
+        "api_key": "delong_live_1234567890abcdef"
+    },
+    "warning": "Store this API key securely. It will not be shown again."
+}))]
 pub struct CreateApiKeyResponse {
     /// The created API key information
     pub api_key_info: ApiKeyInfo,
     /// Security warning message
+    #[schema(example = "Store this API key securely. It will not be shown again.")]
     pub warning: Option<String>,
 }
 
 /// Request body for API key validation
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct ValidateApiKeyRequest {
     /// The API key to validate
     pub api_key: String,
@@ -110,7 +165,7 @@ pub struct ValidateApiKeyRequest {
 }
 
 /// Response for API key validation
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct ValidateApiKeyResponse {
     /// Whether the API key is valid
     pub is_valid: bool,
@@ -127,7 +182,7 @@ pub struct ValidateApiKeyResponse {
 }
 
 /// Request body for revoking an API key
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct RevokeApiKeyRequest {
     /// Optional reason for revocation
     pub reason: Option<String>,
@@ -136,7 +191,7 @@ pub struct RevokeApiKeyRequest {
 }
 
 /// Response for API key revocation
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct RevokeApiKeyResponse {
     /// Whether the revocation was successful
     pub revoked: bool,
@@ -164,7 +219,7 @@ pub struct ApiKeyListQuery {
 }
 
 /// JWT token claims structure
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct JwtClaims {
     /// Subject (user ID)
     pub sub: String,
@@ -187,7 +242,7 @@ pub struct JwtClaims {
 }
 
 /// User session information
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct UserSession {
     /// Unique session ID
     pub session_id: String,
@@ -208,7 +263,7 @@ pub struct UserSession {
 }
 
 /// Authentication context for request processing
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct AuthContext {
     /// User ID
     pub user_id: String,
@@ -223,7 +278,7 @@ pub struct AuthContext {
 }
 
 /// Authentication method enumeration
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub enum AuthMethod {
     /// JWT token authentication
     JwtToken,

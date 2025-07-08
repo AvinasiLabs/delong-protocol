@@ -4,9 +4,10 @@
 //! including vote operations, duration management, and vote data.
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 /// Vote decision enumeration
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub enum VoteDecision {
     /// Approve the algorithm
     #[serde(rename = "approve")]
@@ -20,7 +21,7 @@ pub enum VoteDecision {
 }
 
 /// Vote status enumeration
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub enum VoteStatus {
     /// Voting is active
     #[serde(rename = "active")]
@@ -37,14 +38,14 @@ pub enum VoteStatus {
 }
 
 /// Request payload for setting vote duration
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct SetVoteDurationRequest {
     /// Duration in seconds for voting periods
     pub duration: u64,
 }
 
 /// Vote data model
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct VoteData {
     /// Unique identifier for the vote record
     pub id: u64,
@@ -63,14 +64,14 @@ pub struct VoteData {
 }
 
 /// Response for vote duration setting
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct VoteDurationResponse {
     /// The set duration in seconds
     pub duration: u64,
 }
 
 /// Extended vote data with additional information
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct ExtendedVoteData {
     /// Basic vote information
     #[serde(flatten)]
@@ -84,7 +85,7 @@ pub struct ExtendedVoteData {
 }
 
 /// Request for casting a vote
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct CastVoteRequest {
     /// Algorithm CID to vote on
     pub algo_cid: String,
@@ -97,7 +98,7 @@ pub struct CastVoteRequest {
 }
 
 /// Voting session information
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct VotingSession {
     /// Unique identifier for the voting session
     pub id: String,
@@ -124,7 +125,7 @@ pub struct VotingSession {
 }
 
 /// Vote summary for reporting
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct VoteSummary {
     /// Algorithm CID
     pub algo_cid: String,
@@ -143,7 +144,7 @@ pub struct VoteSummary {
 }
 
 /// Query parameters for vote listing
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct VoteQuery {
     /// Filter by algorithm CID (optional)
     pub algo_cid: Option<String>,

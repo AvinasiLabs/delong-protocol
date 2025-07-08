@@ -6,7 +6,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::config::RedisConfig;
 use crate::middleware::auth::AuthContext;
-use common::{Permission, RateLimitTier};
+use core::{Permission, RateLimitTier};
 
 /// Redis cache client for authentication data
 #[derive(Clone)]

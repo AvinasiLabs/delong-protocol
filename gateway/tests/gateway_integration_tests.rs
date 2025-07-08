@@ -9,7 +9,7 @@ use axum::{
 };
 use gateway::{
     config::GatewayConfig, create_auth_test_router, create_test_router,
-    utils::http_client::HttpBackendClient,
+    services::http_client::HttpBackendClient,
 };
 use serde_json::{Value, json};
 use tower::util::ServiceExt;

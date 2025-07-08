@@ -7,14 +7,32 @@ use axum::{extract::State, http::StatusCode, response::Json};
 
 use tracing::{error, info};
 
-use crate::{handlers::ApiResponse, routes::AppState, utils::http_client::forward_post};
+use crate::{handlers::ApiResponse, routes::AppState, services::http_client::forward_post};
 
-use common::{UploadReportRequest, UploadReportResponse};
+use core::{UploadReportRequest, UploadReportResponse};
 
 /// Handler for uploading test report
 ///
 /// POST /api/reports
 /// Forwards the request to the Secure service (TEE Hardware) for test report processing
+#[utoipa::path(
+    post,
+    path = "/api/reports",
+    tag = "reports",
+    summary = "Upload test report",
+    description = "Upload a test report for algorithm validation and processing",
+    request_body = UploadReportRequest,
+    responses(
+        (status = 200, description = "Test report uploaded successfully", body = ApiResponse<UploadReportResponse>),
+        (status = 400, description = "Invalid request parameters", body = ApiResponse<String>),
+        (status = 401, description = "Unauthorized - invalid or missing API key", body = ApiResponse<String>),
+        (status = 403, description = "Forbidden - insufficient permissions", body = ApiResponse<String>),
+        (status = 500, description = "Internal server error", body = ApiResponse<String>)
+    ),
+    security(
+        ("api_key" = [])
+    )
+)]
 pub async fn upload_report_handler(
     State(state): State<AppState>,
     Json(payload): Json<UploadReportRequest>,

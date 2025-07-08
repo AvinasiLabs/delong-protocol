@@ -13,9 +13,9 @@ use axum::{
 use reqwest::multipart::Form;
 use tracing::{error, info, instrument, warn};
 
-use crate::{routes::AppState, utils::generate_request_id};
+use crate::{routes::AppState, services::generate_request_id};
 
-use common::{
+use core::{
     CreateDatasetRequest, DatasetPaginatedResponse, DelongApiResponse, DynamicDatasetInfo,
     DynamicDatasetListQuery, StaticDatasetInfo, StaticDatasetListQuery, UpdateDatasetRequest,
     UpdateStaticDatasetRequest,
@@ -23,6 +23,28 @@ use common::{
 
 /// Upload static dataset (multipart/form-data)
 /// Forwards to POST /api/static-datasets on secure service
+#[utoipa::path(
+    post,
+    path = "/api/static-datasets",
+    tag = "static-datasets",
+    summary = "Upload static dataset",
+    description = "Upload a new static dataset with TEE encryption and IPFS storage",
+    request_body(
+        content = String,
+        description = "Multipart form data containing dataset file and metadata",
+        content_type = "multipart/form-data"
+    ),
+    responses(
+        (status = 200, description = "Dataset uploaded successfully", body = DelongApiResponse<String>),
+        (status = 400, description = "Invalid request or file format", body = DelongApiResponse<String>),
+        (status = 401, description = "Unauthorized - invalid or missing API key", body = DelongApiResponse<String>),
+        (status = 413, description = "File too large", body = DelongApiResponse<String>),
+        (status = 500, description = "Internal server error", body = DelongApiResponse<String>)
+    ),
+    security(
+        ("api_key" = [])
+    )
+)]
 #[instrument(skip(multipart, state), fields(request_id))]
 pub async fn upload_static_dataset_handler(
     State(state): State<AppState>,
@@ -143,8 +165,31 @@ pub async fn upload_static_dataset_handler(
     }
 }
 
-/// Get static datasets list with pagination
+/// Get static datasets with pagination
 /// Forwards to GET /api/static-datasets on secure service
+#[utoipa::path(
+    get,
+    path = "/api/static-datasets",
+    tag = "static-datasets",
+    summary = "List static datasets",
+    description = "Retrieve a paginated list of static datasets with filtering options",
+    params(
+        ("page" = Option<u32>, Query, description = "Page number (default: 1)"),
+        ("limit" = Option<u32>, Query, description = "Items per page (default: 20, max: 100)"),
+        ("status" = Option<String>, Query, description = "Filter by dataset status"),
+        ("created_after" = Option<String>, Query, description = "Filter datasets created after this date (ISO 8601)"),
+        ("created_before" = Option<String>, Query, description = "Filter datasets created before this date (ISO 8601)")
+    ),
+    responses(
+        (status = 200, description = "Datasets retrieved successfully", body = DelongApiResponse<Vec<StaticDatasetInfo>>),
+        (status = 400, description = "Invalid query parameters", body = DelongApiResponse<String>),
+        (status = 401, description = "Unauthorized - invalid or missing API key", body = DelongApiResponse<String>),
+        (status = 500, description = "Internal server error", body = DelongApiResponse<String>)
+    ),
+    security(
+        ("api_key" = [])
+    )
+)]
 #[instrument(skip(state), fields(request_id))]
 pub async fn get_static_datasets_handler(
     State(state): State<AppState>,
@@ -207,6 +252,28 @@ pub async fn get_static_datasets_handler(
 
 /// Get single static dataset by ID
 /// Forwards to GET /api/static-datasets/{id} on secure service
+/// Get static dataset by ID
+/// Forwards to GET /api/static-datasets/{id} on secure service
+#[utoipa::path(
+    get,
+    path = "/api/static-datasets/{id}",
+    tag = "static-datasets",
+    summary = "Get static dataset",
+    description = "Retrieve detailed information about a specific static dataset",
+    params(
+        ("id" = u32, Path, description = "Dataset ID")
+    ),
+    responses(
+        (status = 200, description = "Dataset retrieved successfully", body = DelongApiResponse<StaticDatasetInfo>),
+        (status = 400, description = "Invalid dataset ID", body = DelongApiResponse<String>),
+        (status = 401, description = "Unauthorized - invalid or missing API key", body = DelongApiResponse<String>),
+        (status = 404, description = "Dataset not found", body = DelongApiResponse<String>),
+        (status = 500, description = "Internal server error", body = DelongApiResponse<String>)
+    ),
+    security(
+        ("api_key" = [])
+    )
+)]
 #[instrument(skip(state), fields(request_id, dataset_id = %dataset_id))]
 pub async fn get_static_dataset_handler(
     State(state): State<AppState>,
@@ -271,6 +338,22 @@ pub async fn get_static_dataset_handler(
 
 /// Get sample data by CID (public access, no authentication required)
 /// Forwards to GET /api/sample/{cid} on secure service
+#[utoipa::path(
+    get,
+    path = "/api/sample/{cid}",
+    tag = "sample-data",
+    summary = "Get sample data",
+    description = "Retrieve sample data by IPFS CID. This endpoint is public and does not require authentication.",
+    params(
+        ("cid" = String, Path, description = "IPFS Content Identifier (CID)")
+    ),
+    responses(
+        (status = 200, description = "Sample data retrieved successfully", content_type = "application/octet-stream"),
+        (status = 400, description = "Invalid CID format"),
+        (status = 404, description = "Sample data not found"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 #[instrument(skip(state), fields(request_id, cid = %cid))]
 pub async fn get_sample_data_handler(
     State(state): State<AppState>,
@@ -350,6 +433,24 @@ pub async fn get_sample_data_handler(
 
 /// Create dynamic dataset (admin only)
 /// Forwards to POST /api/datasets on core service
+#[utoipa::path(
+    post,
+    path = "/api/datasets",
+    tag = "dynamic-datasets",
+    summary = "Create dynamic dataset",
+    description = "Create a new dynamic dataset with mutable storage (admin only)",
+    request_body = CreateDatasetRequest,
+    responses(
+        (status = 200, description = "Dataset created successfully", body = DelongApiResponse<DynamicDatasetInfo>),
+        (status = 400, description = "Invalid request parameters", body = DelongApiResponse<String>),
+        (status = 401, description = "Unauthorized - invalid or missing API key", body = DelongApiResponse<String>),
+        (status = 403, description = "Forbidden - admin access required", body = DelongApiResponse<String>),
+        (status = 500, description = "Internal server error", body = DelongApiResponse<String>)
+    ),
+    security(
+        ("api_key" = [])
+    )
+)]
 #[instrument(skip(payload, state), fields(request_id))]
 pub async fn create_dataset_handler(
     State(state): State<AppState>,
@@ -415,8 +516,31 @@ pub async fn create_dataset_handler(
     }
 }
 
-/// Get dynamic datasets list with pagination
+/// Get dynamic datasets with pagination
 /// Forwards to GET /api/datasets on core service
+#[utoipa::path(
+    get,
+    path = "/api/datasets",
+    tag = "dynamic-datasets",
+    summary = "List dynamic datasets",
+    description = "Retrieve a paginated list of dynamic datasets with filtering options",
+    params(
+        ("page" = Option<u32>, Query, description = "Page number (default: 1)"),
+        ("limit" = Option<u32>, Query, description = "Items per page (default: 20, max: 100)"),
+        ("status" = Option<String>, Query, description = "Filter by dataset status"),
+        ("created_after" = Option<String>, Query, description = "Filter datasets created after this date (ISO 8601)"),
+        ("created_before" = Option<String>, Query, description = "Filter datasets created before this date (ISO 8601)")
+    ),
+    responses(
+        (status = 200, description = "Datasets retrieved successfully", body = DelongApiResponse<Vec<DynamicDatasetInfo>>),
+        (status = 400, description = "Invalid query parameters", body = DelongApiResponse<String>),
+        (status = 401, description = "Unauthorized - invalid or missing API key", body = DelongApiResponse<String>),
+        (status = 500, description = "Internal server error", body = DelongApiResponse<String>)
+    ),
+    security(
+        ("api_key" = [])
+    )
+)]
 #[instrument(skip(state), fields(request_id))]
 pub async fn get_datasets_handler(
     State(state): State<AppState>,
@@ -509,6 +633,28 @@ fn map_core_service_status(status: reqwest::StatusCode) -> StatusCode {
 
 /// Update dynamic dataset
 /// PUT /api/datasets/{id}
+#[utoipa::path(
+    put,
+    path = "/api/datasets/{id}",
+    tag = "dynamic-datasets",
+    summary = "Update dynamic dataset",
+    description = "Update an existing dynamic dataset's metadata and configuration",
+    params(
+        ("id" = u32, Path, description = "Dataset ID")
+    ),
+    request_body = UpdateDatasetRequest,
+    responses(
+        (status = 200, description = "Dataset updated successfully", body = DelongApiResponse<DynamicDatasetInfo>),
+        (status = 400, description = "Invalid request parameters", body = DelongApiResponse<String>),
+        (status = 401, description = "Unauthorized - invalid or missing API key", body = DelongApiResponse<String>),
+        (status = 403, description = "Forbidden - insufficient permissions", body = DelongApiResponse<String>),
+        (status = 404, description = "Dataset not found", body = DelongApiResponse<String>),
+        (status = 500, description = "Internal server error", body = DelongApiResponse<String>)
+    ),
+    security(
+        ("api_key" = [])
+    )
+)]
 #[instrument(skip(state), fields(request_id))]
 pub async fn update_dataset_handler(
     State(state): State<AppState>,
@@ -571,6 +717,27 @@ pub async fn update_dataset_handler(
 
 /// Delete dynamic dataset
 /// DELETE /api/datasets/{id}
+#[utoipa::path(
+    delete,
+    path = "/api/datasets/{id}",
+    tag = "dynamic-datasets",
+    summary = "Delete dynamic dataset",
+    description = "Delete an existing dynamic dataset and all its associated data",
+    params(
+        ("id" = u32, Path, description = "Dataset ID")
+    ),
+    responses(
+        (status = 200, description = "Dataset deleted successfully", body = DelongApiResponse<String>),
+        (status = 400, description = "Invalid dataset ID", body = DelongApiResponse<String>),
+        (status = 401, description = "Unauthorized - invalid or missing API key", body = DelongApiResponse<String>),
+        (status = 403, description = "Forbidden - insufficient permissions", body = DelongApiResponse<String>),
+        (status = 404, description = "Dataset not found", body = DelongApiResponse<String>),
+        (status = 500, description = "Internal server error", body = DelongApiResponse<String>)
+    ),
+    security(
+        ("api_key" = [])
+    )
+)]
 #[instrument(skip(state), fields(request_id))]
 pub async fn delete_dataset_handler(
     State(state): State<AppState>,
@@ -630,6 +797,28 @@ pub async fn delete_dataset_handler(
 
 /// Update static dataset
 /// PUT /api/static-datasets/{id}
+#[utoipa::path(
+    put,
+    path = "/api/static-datasets/{id}",
+    tag = "static-datasets",
+    summary = "Update static dataset",
+    description = "Update an existing static dataset's metadata and configuration",
+    params(
+        ("id" = u32, Path, description = "Dataset ID")
+    ),
+    request_body = UpdateStaticDatasetRequest,
+    responses(
+        (status = 200, description = "Dataset updated successfully", body = DelongApiResponse<StaticDatasetInfo>),
+        (status = 400, description = "Invalid request parameters", body = DelongApiResponse<String>),
+        (status = 401, description = "Unauthorized - invalid or missing API key", body = DelongApiResponse<String>),
+        (status = 403, description = "Forbidden - insufficient permissions", body = DelongApiResponse<String>),
+        (status = 404, description = "Dataset not found", body = DelongApiResponse<String>),
+        (status = 500, description = "Internal server error", body = DelongApiResponse<String>)
+    ),
+    security(
+        ("api_key" = [])
+    )
+)]
 #[instrument(skip(state), fields(request_id))]
 pub async fn update_static_dataset_handler(
     State(state): State<AppState>,
@@ -695,6 +884,27 @@ pub async fn update_static_dataset_handler(
 
 /// Delete static dataset
 /// DELETE /api/static-datasets/{id}
+#[utoipa::path(
+    delete,
+    path = "/api/static-datasets/{id}",
+    tag = "static-datasets",
+    summary = "Delete static dataset",
+    description = "Delete an existing static dataset and all its associated data from IPFS and blockchain",
+    params(
+        ("id" = u32, Path, description = "Dataset ID")
+    ),
+    responses(
+        (status = 200, description = "Dataset deleted successfully", body = DelongApiResponse<String>),
+        (status = 400, description = "Invalid dataset ID", body = DelongApiResponse<String>),
+        (status = 401, description = "Unauthorized - invalid or missing API key", body = DelongApiResponse<String>),
+        (status = 403, description = "Forbidden - insufficient permissions", body = DelongApiResponse<String>),
+        (status = 404, description = "Dataset not found", body = DelongApiResponse<String>),
+        (status = 500, description = "Internal server error", body = DelongApiResponse<String>)
+    ),
+    security(
+        ("api_key" = [])
+    )
+)]
 #[instrument(skip(state), fields(request_id))]
 pub async fn delete_static_dataset_handler(
     State(state): State<AppState>,

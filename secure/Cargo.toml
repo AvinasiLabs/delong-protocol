@@ -2,3 +2,7 @@
 name = "secure"
 version = { workspace = true }
 edition = { workspace = true }
+
+[dependencies]
+# Common utilities and middleware
+common = { path = "../common" }

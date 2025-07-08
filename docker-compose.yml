@@ -1,0 +1,328 @@
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:latest
+    container_name: delong-postgres
+    environment:
+      POSTGRES_DB: delong_protocol
+      POSTGRES_USER: delong_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secure_password}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "5432:5432"
+    networks:
+      - delong-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U delong_user -d delong_protocol"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Redis Cache
+  redis:
+    image: redis:latest
+    container_name: delong-redis
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis_password}
+    volumes:
+      - redis_data:/data
+      - ./redis.conf:/usr/local/etc/redis/redis.conf:ro
+    ports:
+      - "6379:6379"
+    networks:
+      - delong-network
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "redis-cli",
+          "--no-auth-warning",
+          "-a",
+          "${REDIS_PASSWORD:-redis_password}",
+          "ping",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Core Service
+  core:
+    build:
+      context: .
+      dockerfile: ./core/Dockerfile
+      target: runtime
+    container_name: delong-core
+    environment:
+      # Server Configuration
+      HOST: 0.0.0.0
+      PORT: 11112
+      TIMEOUT_SECONDS: 30
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+
+      # Database Configuration
+      DATABASE_URL: postgresql://delong_user:${POSTGRES_PASSWORD:-secure_password}@postgres:5432/db_core
+      DATABASE_MAX_CONNECTIONS: 20
+      DATABASE_CONNECT_TIMEOUT: 30
+      DATABASE_QUERY_TIMEOUT: 30
+      DATABASE_AUTO_MIGRATE: true
+
+      # Redis Configuration (Optional)
+      REDIS_URL: redis://:${REDIS_PASSWORD:-redis_password}@redis:6379
+
+      # JWT Configuration
+      JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-change-in-production}
+
+      # API Configuration
+      ENABLE_API_KEY_VALIDATION: false
+      DEFAULT_KEY_EXPIRATION_DAYS: 30
+      MAX_KEYS_PER_USER: 10
+      ENABLE_RATE_LIMITING: false
+
+      # Development Configuration
+      DEVELOPMENT_MODE: ${DEVELOPMENT_MODE:-true}
+
+      # External Services
+      AI_AUDIT_SERVICE_URL: ${AI_AUDIT_SERVICE_URL}
+
+      # Logging Configuration
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_JSON_FORMAT: false
+
+      # OpenTelemetry Configuration
+      OTEL_ENABLED: ${OTEL_ENABLED:-false}
+      OTEL_SERVICE_NAME: delong-core
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://localhost:4317}
+
+      # Global Configuration
+      RUST_LOG: ${RUST_LOG:-info}
+
+    volumes:
+      - core_uploads:/app/uploads
+      - core_temp:/app/temp
+      - core_logs:/app/logs
+
+    ports:
+      - "11112:11112"
+
+    networks:
+      - delong-network
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11112/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # Gateway Service
+  gateway:
+    build:
+      context: .
+      dockerfile: ./gateway/Dockerfile
+      target: runtime
+    container_name: delong-gateway
+    environment:
+      # Server Configuration
+      HOST: 0.0.0.0
+      PORT: 11111
+      TIMEOUT_SECONDS: 30
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+
+      # Backend Services Configuration
+      CORE_SERVICE_URL: http://core:11112
+      SECURE_SERVICE_URL: ${SECURE_SERVICE_URL:-http://secure:11113}
+
+      # API Configuration
+      MAX_BODY_SIZE: 10485760
+      ENABLE_API_KEY_VALIDATION: true
+
+      # Redis Configuration
+      REDIS_URL: redis://:${REDIS_PASSWORD:-redis_password}@redis:6379
+      REDIS_ENABLED: true
+      REDIS_POOL_SIZE: 10
+      REDIS_CONNECTION_TIMEOUT: 5
+      REDIS_DEFAULT_TTL: 3600
+      REDIS_JWT_CACHE_TTL: 1800
+      REDIS_API_KEY_CACHE_TTL: 3600
+
+      # Logging Configuration
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_JSON_FORMAT: false
+      LOG_HEALTH_CHECKS: false
+      LOG_REQUEST_HEADERS: false
+      LOG_REQUEST_BODY: false
+      LOG_MAX_BODY_SIZE: 1024
+      LOG_RESPONSE_BODY: false
+
+      # OpenTelemetry Configuration
+      OTEL_ENABLED: ${OTEL_ENABLED:-false}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://localhost:4317}
+      OTEL_SERVICE_NAME: delong-gateway
+      OTEL_SERVICE_VERSION: 0.2.0
+
+      # Global Configuration
+      RUST_LOG: ${RUST_LOG:-info}
+
+    volumes:
+      - gateway_logs:/app/logs
+
+    ports:
+      - "11111:11111"
+
+    networks:
+      - delong-network
+
+    depends_on:
+      core:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11111/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # Nginx Reverse Proxy (Optional)
+  nginx:
+    image: nginx:alpine
+    container_name: delong-nginx
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - nginx_logs:/var/log/nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    networks:
+      - delong-network
+    depends_on:
+      - gateway
+    restart: unless-stopped
+    profiles:
+      - nginx
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Prometheus Monitoring (Optional)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: delong-prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/etc/prometheus/console_libraries"
+      - "--web.console.templates=/etc/prometheus/consoles"
+      - "--storage.tsdb.retention.time=200h"
+      - "--web.enable-lifecycle"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - delong-network
+    restart: unless-stopped
+    profiles:
+      - monitoring
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Grafana Dashboard (Optional)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: delong-grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_INSTALL_PLUGINS: redis-datasource
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3001:3000"
+    networks:
+      - delong-network
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    profiles:
+      - monitoring
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  delong-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  core_uploads:
+    driver: local
+  core_temp:
+    driver: local
+  core_logs:
+    driver: local
+  gateway_logs:
+    driver: local
+  nginx_logs:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local

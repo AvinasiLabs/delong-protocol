@@ -4,9 +4,10 @@
 //! including report submission, status tracking, and report metadata.
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 /// Report type enumeration
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub enum ReportType {
     /// Algorithm execution test report
     #[serde(rename = "algorithm_test")]
@@ -29,7 +30,7 @@ pub enum ReportType {
 }
 
 /// Report status enumeration
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub enum ReportStatus {
     /// Report is being uploaded
     #[serde(rename = "uploading")]
@@ -49,7 +50,7 @@ pub enum ReportStatus {
 }
 
 /// Request payload for uploading test report
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct UploadReportRequest {
     /// The report content/data
     pub report_data: String,
@@ -68,7 +69,7 @@ pub struct UploadReportRequest {
 }
 
 /// Response for test report upload
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct UploadReportResponse {
     /// Unique identifier for the uploaded report
     pub report_id: String,
@@ -79,7 +80,7 @@ pub struct UploadReportResponse {
 }
 
 /// Detailed report information
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct ReportInfo {
     /// Unique identifier for the report
     pub id: String,
@@ -110,7 +111,7 @@ pub struct ReportInfo {
 }
 
 /// Request for querying reports
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct ReportQuery {
     /// Filter by report type (optional)
     pub report_type: Option<ReportType>,
@@ -133,7 +134,7 @@ pub struct ReportQuery {
 }
 
 /// Report summary for listing
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct ReportSummary {
     /// Report ID
     pub id: String,

@@ -4,11 +4,21 @@
 //! services in the DeLong Protocol, including middleware, utilities, and
 //! common data structures.
 
+pub mod config;
 pub mod middleware;
 pub mod models;
+pub mod server;
 pub mod utils;
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
+
+// Conditional imports for error conversion
+#[cfg(feature = "database")]
+use sqlx;
+
+#[cfg(feature = "auth")]
+use bcrypt;
 
 // Re-export commonly used items for convenience
 pub use models::{
@@ -113,6 +123,12 @@ pub use middleware::{
 // Re-export key constants
 pub use middleware::REQUEST_ID_HEADER;
 
+// Re-export server utilities
+pub use server::{
+    OpenTelemetryConfig, ServerConfig, get_env_bool, get_env_string, get_env_u16, get_env_u64,
+    init_logging, load_env_file, parse_socket_addr, shutdown_signal, start_server,
+};
+
 /// Common error types that can be used across services
 #[derive(Debug, thiserror::Error)]
 pub enum CommonError {
@@ -130,7 +146,7 @@ pub enum CommonError {
 }
 
 /// Standard API response codes following the project design
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
 pub enum ResponseCode {
     #[serde(rename = "SUCCESS")]
     Success,
@@ -167,15 +183,13 @@ impl ResponseCode {
 }
 
 /// Standard API response structure following the project design
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ApiResponse<T> {
     pub code: ResponseCode,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<T>,
-    pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
-    pub timestamp: String,
 }
 
 impl<T> ApiResponse<T>
@@ -187,20 +201,7 @@ where
         Self {
             code: ResponseCode::Success,
             data: Some(data),
-            message: "Operation completed successfully".to_string(),
             request_id: None,
-            timestamp: chrono::Utc::now().to_rfc3339(),
-        }
-    }
-
-    /// Create a successful response with custom message
-    pub fn success_with_message(data: T, message: &str) -> Self {
-        Self {
-            code: ResponseCode::Success,
-            data: Some(data),
-            message: message.to_string(),
-            request_id: None,
-            timestamp: chrono::Utc::now().to_rfc3339(),
         }
     }
 
@@ -209,120 +210,438 @@ where
         Self {
             code: ResponseCode::Success,
             data: Some(data),
-            message: "Operation completed successfully".to_string(),
             request_id: Some(request_id),
-            timestamp: chrono::Utc::now().to_rfc3339(),
-        }
-    }
-
-    /// Create a successful response with message and request ID
-    pub fn success_with_message_and_id(data: T, message: &str, request_id: String) -> Self {
-        Self {
-            code: ResponseCode::Success,
-            data: Some(data),
-            message: message.to_string(),
-            request_id: Some(request_id),
-            timestamp: chrono::Utc::now().to_rfc3339(),
         }
     }
 }
 
 impl ApiResponse<()> {
     /// Create an error response
-    pub fn error(code: ResponseCode, message: &str) -> Self {
+    pub fn error(code: ResponseCode) -> Self {
         Self {
             code,
             data: None,
-            message: message.to_string(),
             request_id: None,
-            timestamp: chrono::Utc::now().to_rfc3339(),
         }
     }
 
     /// Create an error response with request ID
-    pub fn error_with_id(code: ResponseCode, message: &str, request_id: String) -> Self {
+    pub fn error_with_id(code: ResponseCode, request_id: String) -> Self {
         Self {
             code,
             data: None,
-            message: message.to_string(),
             request_id: Some(request_id),
-            timestamp: chrono::Utc::now().to_rfc3339(),
         }
     }
 
     /// Create a bad request error
-    pub fn bad_request(message: &str) -> Self {
-        Self::error(ResponseCode::BadRequest, message)
+    pub fn bad_request() -> Self {
+        Self::error(ResponseCode::BadRequest)
+    }
+
+    /// Create a bad request error with request ID
+    pub fn bad_request_with_id(request_id: String) -> Self {
+        Self::error_with_id(ResponseCode::BadRequest, request_id)
     }
 
     /// Create an unauthorized error
-    pub fn unauthorized(message: &str) -> Self {
-        Self::error(ResponseCode::Unauthorized, message)
+    pub fn unauthorized() -> Self {
+        Self::error(ResponseCode::Unauthorized)
+    }
+
+    /// Create an unauthorized error with request ID
+    pub fn unauthorized_with_id(request_id: String) -> Self {
+        Self::error_with_id(ResponseCode::Unauthorized, request_id)
     }
 
     /// Create a forbidden error
-    pub fn forbidden(message: &str) -> Self {
-        Self::error(ResponseCode::Forbidden, message)
+    pub fn forbidden() -> Self {
+        Self::error(ResponseCode::Forbidden)
+    }
+
+    /// Create a forbidden error with request ID
+    pub fn forbidden_with_id(request_id: String) -> Self {
+        Self::error_with_id(ResponseCode::Forbidden, request_id)
     }
 
     /// Create a not found error
-    pub fn not_found(message: &str) -> Self {
-        Self::error(ResponseCode::NotFound, message)
+    pub fn not_found() -> Self {
+        Self::error(ResponseCode::NotFound)
+    }
+
+    /// Create a not found error with request ID
+    pub fn not_found_with_id(request_id: String) -> Self {
+        Self::error_with_id(ResponseCode::NotFound, request_id)
     }
 
     /// Create an internal server error
-    pub fn internal_error(message: &str) -> Self {
-        Self::error(ResponseCode::InternalServerError, message)
+    pub fn internal_error() -> Self {
+        Self::error(ResponseCode::InternalServerError)
+    }
+
+    /// Create an internal server error with request ID
+    pub fn internal_error_with_id(request_id: String) -> Self {
+        Self::error_with_id(ResponseCode::InternalServerError, request_id)
     }
 }
 
 /// Common error types that can be converted to API responses
 #[derive(Debug, thiserror::Error)]
 pub enum ApiError {
-    #[error("Bad request: {0}")]
-    BadRequest(String),
+    #[error("Bad request")]
+    BadRequest,
 
-    #[error("Unauthorized: {0}")]
-    Unauthorized(String),
+    #[error("Unauthorized")]
+    Unauthorized,
 
-    #[error("Forbidden: {0}")]
-    Forbidden(String),
+    #[error("Forbidden")]
+    Forbidden,
 
-    #[error("Not found: {0}")]
-    NotFound(String),
+    #[error("Not found")]
+    NotFound,
 
-    #[error("Internal server error: {0}")]
-    InternalError(String),
+    #[error("Internal server error")]
+    InternalError,
 
-    #[error("Timeout: {0}")]
-    Timeout(String),
+    #[error("Timeout")]
+    Timeout,
 
-    #[error("Too many requests: {0}")]
-    TooManyRequests(String),
+    #[error("Too many requests")]
+    TooManyRequests,
+
+    // Authentication errors
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
+
+    #[error("User not found")]
+    UserNotFound,
+
+    #[error("Invalid password")]
+    InvalidPassword,
+
+    #[error("Account is not active")]
+    AccountInactive,
+
+    #[error("Resource already exists: {0}")]
+    AlreadyExists(String),
+
+    #[error("Server error")]
+    ServerError,
+
+    #[error("Email configuration error")]
+    EmailConfigError,
+
+    #[error("Invalid verification code")]
+    VerificationCodeInvalid,
+
+    #[error("Email is required")]
+    EmailRequired,
+
+    #[error("Password is required")]
+    PasswordRequired,
+
+    #[error("Username is required")]
+    UsernameRequired,
+
+    #[error("Verification code is required")]
+    VerificationCodeRequired,
+
+    #[error("Invalid email format")]
+    EmailInvalidFormat,
+
+    #[error("Password too short")]
+    PasswordTooShort,
+
+    #[error("Invalid username format")]
+    UsernameInvalidFormat,
+
+    #[error("Username already taken")]
+    UsernameTaken,
+
+    #[error("Duplicate entry")]
+    DuplicateEntry,
+
+    #[error("Email already sent")]
+    EmailAlreadySent,
+
+    #[error("Database error: {0}")]
+    DatabaseError(String),
+
+    #[error("Migration error")]
+    MigrationError,
+
+    #[error("Authentication failed")]
+    AuthenticationFailed,
+
+    #[error("Invalid token")]
+    InvalidToken,
+
+    #[error("Token expired")]
+    TokenExpired,
+
+    #[error("Invalid API key")]
+    InvalidApiKey,
+
+    #[error("Account locked")]
+    AccountLocked,
+
+    #[error("Email verification required")]
+    EmailVerificationRequired,
+
+    #[error("Two factor authentication required")]
+    TwoFactorRequired,
+
+    #[error("Validation failed")]
+    ValidationFailed,
+
+    #[error("Invalid request")]
+    InvalidRequest,
+
+    #[error("Missing field")]
+    MissingField,
+
+    #[error("Invalid field")]
+    InvalidField,
+
+    #[error("Conflict")]
+    Conflict,
+
+    #[error("External API error")]
+    ExternalApiError,
+
+    #[error("OAuth error: {0}")]
+    OAuthError(String),
+
+    #[error("Configuration error: {0}")]
+    ConfigurationError(String),
+
+    #[error("AI audit error")]
+    AiAuditError,
+
+    #[error("Blockchain error")]
+    BlockchainError,
+
+    #[error("File upload error")]
+    FileUploadError,
+
+    #[error("File too large")]
+    FileTooLarge,
+
+    #[error("Unsupported file type")]
+    UnsupportedFileType,
+
+    #[error("File not found")]
+    FileNotFound,
+
+    #[error("File processing error")]
+    FileProcessingError,
+
+    #[error("Rate limit exceeded")]
+    RateLimitExceeded,
+
+    #[error("Request timeout")]
+    RequestTimeout,
+
+    #[error("Payload too large")]
+    PayloadTooLarge,
+
+    #[error("Invalid content type")]
+    InvalidContentType,
+
+    #[error("Email error")]
+    EmailError,
+
+    #[error("SMS error")]
+    SmsError,
+
+    #[error("Notification error")]
+    NotificationError,
+
+    #[error("Cache error")]
+    CacheError,
+
+    #[error("Session error")]
+    SessionError,
+
+    #[error("Session expired")]
+    SessionExpired,
+
+    #[error("Service unavailable")]
+    ServiceUnavailable,
+
+    #[error("Business logic error")]
+    BusinessLogicError,
+
+    #[error("Insufficient permissions")]
+    InsufficientPermissions,
+
+    #[error("Operation not allowed")]
+    OperationNotAllowed,
+
+    #[error("Quota exceeded")]
+    QuotaExceeded,
+
+    #[error("Audit failed")]
+    AuditFailed,
+
+    #[error("Vote already exists")]
+    VoteAlreadyExists,
+
+    #[error("Invalid wallet address")]
+    InvalidWalletAddress,
+
+    #[error("Invalid transaction hash")]
+    InvalidTransactionHash,
+
+    #[error("Method not allowed")]
+    MethodNotAllowed,
+
+    #[error("Unsupported media type")]
+    UnsupportedMediaType,
+
+    #[error("Network error")]
+    NetworkError,
+
+    #[error("Not implemented: {0}")]
+    NotImplemented(String),
+
+    #[error("Serialization error")]
+    SerializationError,
 }
 
 impl ApiError {
     /// Convert ApiError to ResponseCode
     pub fn to_response_code(&self) -> ResponseCode {
         match self {
-            ApiError::BadRequest(_) => ResponseCode::BadRequest,
-            ApiError::Unauthorized(_) => ResponseCode::Unauthorized,
-            ApiError::Forbidden(_) => ResponseCode::Forbidden,
-            ApiError::NotFound(_) => ResponseCode::NotFound,
-            ApiError::InternalError(_) => ResponseCode::InternalServerError,
-            ApiError::Timeout(_) => ResponseCode::Timeout,
-            ApiError::TooManyRequests(_) => ResponseCode::TooManyRequests,
+            ApiError::BadRequest => ResponseCode::BadRequest,
+            ApiError::Unauthorized => ResponseCode::Unauthorized,
+            ApiError::Forbidden => ResponseCode::Forbidden,
+            ApiError::NotFound => ResponseCode::NotFound,
+            ApiError::InternalError => ResponseCode::InternalServerError,
+            ApiError::Timeout => ResponseCode::Timeout,
+            ApiError::TooManyRequests => ResponseCode::TooManyRequests,
+
+            // Authentication and input validation errors
+            ApiError::InvalidInput(_) => ResponseCode::BadRequest,
+            ApiError::UserNotFound => ResponseCode::NotFound,
+            ApiError::InvalidPassword => ResponseCode::Unauthorized,
+            ApiError::AccountInactive => ResponseCode::Forbidden,
+            ApiError::AlreadyExists(_) => ResponseCode::BadRequest,
+            ApiError::ServerError => ResponseCode::InternalServerError,
+            ApiError::EmailConfigError => ResponseCode::InternalServerError,
+            ApiError::VerificationCodeInvalid => ResponseCode::BadRequest,
+            ApiError::EmailRequired => ResponseCode::BadRequest,
+            ApiError::PasswordRequired => ResponseCode::BadRequest,
+            ApiError::UsernameRequired => ResponseCode::BadRequest,
+            ApiError::VerificationCodeRequired => ResponseCode::BadRequest,
+            ApiError::EmailInvalidFormat => ResponseCode::BadRequest,
+            ApiError::PasswordTooShort => ResponseCode::BadRequest,
+            ApiError::UsernameInvalidFormat => ResponseCode::BadRequest,
+            ApiError::UsernameTaken => ResponseCode::BadRequest,
+            ApiError::DuplicateEntry => ResponseCode::BadRequest,
+            ApiError::EmailAlreadySent => ResponseCode::TooManyRequests,
+
+            // Database and system errors
+            ApiError::DatabaseError(_) => ResponseCode::InternalServerError,
+            ApiError::MigrationError => ResponseCode::InternalServerError,
+            ApiError::AuthenticationFailed => ResponseCode::Unauthorized,
+            ApiError::InvalidToken => ResponseCode::Unauthorized,
+            ApiError::TokenExpired => ResponseCode::Unauthorized,
+            ApiError::InvalidApiKey => ResponseCode::Unauthorized,
+            ApiError::AccountLocked => ResponseCode::Forbidden,
+            ApiError::EmailVerificationRequired => ResponseCode::Forbidden,
+            ApiError::TwoFactorRequired => ResponseCode::Forbidden,
+            ApiError::ValidationFailed => ResponseCode::BadRequest,
+            ApiError::InvalidRequest => ResponseCode::BadRequest,
+            ApiError::MissingField => ResponseCode::BadRequest,
+            ApiError::InvalidField => ResponseCode::BadRequest,
+            ApiError::Conflict => ResponseCode::BadRequest,
+
+            // External service errors
+            ApiError::ExternalApiError => ResponseCode::InternalServerError,
+            ApiError::OAuthError(_) => ResponseCode::BadRequest,
+            ApiError::ConfigurationError(_) => ResponseCode::InternalServerError,
+            ApiError::AiAuditError => ResponseCode::InternalServerError,
+            ApiError::BlockchainError => ResponseCode::InternalServerError,
+
+            // File handling errors
+            ApiError::FileUploadError => ResponseCode::BadRequest,
+            ApiError::FileTooLarge => ResponseCode::BadRequest,
+            ApiError::UnsupportedFileType => ResponseCode::BadRequest,
+            ApiError::FileNotFound => ResponseCode::NotFound,
+            ApiError::FileProcessingError => ResponseCode::InternalServerError,
+
+            // Rate limiting and request errors
+            ApiError::RateLimitExceeded => ResponseCode::TooManyRequests,
+            ApiError::RequestTimeout => ResponseCode::Timeout,
+            ApiError::PayloadTooLarge => ResponseCode::BadRequest,
+            ApiError::InvalidContentType => ResponseCode::BadRequest,
+
+            // Communication errors
+            ApiError::EmailError => ResponseCode::InternalServerError,
+            ApiError::SmsError => ResponseCode::InternalServerError,
+            ApiError::NotificationError => ResponseCode::InternalServerError,
+
+            // Session and cache errors
+            ApiError::CacheError => ResponseCode::InternalServerError,
+            ApiError::SessionError => ResponseCode::InternalServerError,
+            ApiError::SessionExpired => ResponseCode::Unauthorized,
+            ApiError::ServiceUnavailable => ResponseCode::InternalServerError,
+
+            // Business logic errors
+            ApiError::BusinessLogicError => ResponseCode::BadRequest,
+            ApiError::InsufficientPermissions => ResponseCode::Forbidden,
+            ApiError::OperationNotAllowed => ResponseCode::Forbidden,
+            ApiError::QuotaExceeded => ResponseCode::TooManyRequests,
+            ApiError::AuditFailed => ResponseCode::BadRequest,
+            ApiError::VoteAlreadyExists => ResponseCode::BadRequest,
+            ApiError::InvalidWalletAddress => ResponseCode::BadRequest,
+            ApiError::InvalidTransactionHash => ResponseCode::BadRequest,
+
+            // HTTP method errors
+            ApiError::MethodNotAllowed => ResponseCode::BadRequest,
+            ApiError::UnsupportedMediaType => ResponseCode::BadRequest,
+            ApiError::NetworkError => ResponseCode::InternalServerError,
+            ApiError::NotImplemented(_) => ResponseCode::InternalServerError,
+            ApiError::SerializationError => ResponseCode::InternalServerError,
         }
     }
 
     /// Convert to ApiResponse
     pub fn to_response(self) -> ApiResponse<()> {
-        ApiResponse::error(self.to_response_code(), &self.to_string())
+        ApiResponse::error(self.to_response_code())
     }
 
     /// Convert to ApiResponse with request ID
     pub fn to_response_with_id(self, request_id: String) -> ApiResponse<()> {
-        ApiResponse::error_with_id(self.to_response_code(), &self.to_string(), request_id)
+        ApiResponse::error_with_id(self.to_response_code(), request_id)
+    }
+}
+
+// Error conversion implementations
+#[cfg(feature = "database")]
+impl From<sqlx::Error> for ApiError {
+    fn from(err: sqlx::Error) -> Self {
+        match err {
+            sqlx::Error::RowNotFound => ApiError::NotFound,
+            sqlx::Error::Database(db_err) if db_err.constraint().is_some() => {
+                ApiError::AlreadyExists("Resource already exists".to_string())
+            }
+            _ => ApiError::DatabaseError("Database operation failed".to_string()),
+        }
+    }
+}
+
+#[cfg(feature = "auth")]
+impl From<bcrypt::BcryptError> for ApiError {
+    fn from(_: bcrypt::BcryptError) -> Self {
+        ApiError::AuthenticationFailed
+    }
+}
+
+impl From<serde_json::Error> for ApiError {
+    fn from(_: serde_json::Error) -> Self {
+        ApiError::SerializationError
     }
 }
 
@@ -380,19 +699,6 @@ mod tests {
 
         assert_eq!(response.code, ResponseCode::Success);
         assert_eq!(response.data, Some("test data"));
-        assert_eq!(response.message, "Operation completed successfully");
-        assert!(response.request_id.is_none());
-        assert!(!response.timestamp.is_empty());
-    }
-
-    #[test]
-    fn test_api_response_success_with_message() {
-        let data = 42;
-        let response = ApiResponse::success_with_message(data, "Custom success message");
-
-        assert_eq!(response.code, ResponseCode::Success);
-        assert_eq!(response.data, Some(42));
-        assert_eq!(response.message, "Custom success message");
         assert!(response.request_id.is_none());
     }
 
@@ -407,119 +713,93 @@ mod tests {
     }
 
     #[test]
-    fn test_api_response_success_with_message_and_id() {
-        let data = true;
-        let response = ApiResponse::success_with_message_and_id(
-            data,
-            "Operation successful",
-            "req_456".to_string(),
-        );
-
-        assert_eq!(response.code, ResponseCode::Success);
-        assert_eq!(response.data, Some(true));
-        assert_eq!(response.message, "Operation successful");
-        assert_eq!(response.request_id, Some("req_456".to_string()));
-    }
-
-    #[test]
     fn test_api_response_error() {
-        let response: ApiResponse<()> =
-            ApiResponse::error(ResponseCode::BadRequest, "Invalid input provided");
+        let response: ApiResponse<()> = ApiResponse::error(ResponseCode::BadRequest);
 
         assert_eq!(response.code, ResponseCode::BadRequest);
         assert!(response.data.is_none());
-        assert_eq!(response.message, "Invalid input provided");
         assert!(response.request_id.is_none());
     }
 
     #[test]
     fn test_api_response_error_with_id() {
-        let response: ApiResponse<()> = ApiResponse::error_with_id(
-            ResponseCode::InternalServerError,
-            "Something went wrong",
-            "req_789".to_string(),
-        );
+        let response: ApiResponse<()> =
+            ApiResponse::error_with_id(ResponseCode::InternalServerError, "req_789".to_string());
 
         assert_eq!(response.code, ResponseCode::InternalServerError);
         assert!(response.data.is_none());
-        assert_eq!(response.message, "Something went wrong");
         assert_eq!(response.request_id, Some("req_789".to_string()));
     }
 
     #[test]
     fn test_api_response_convenience_errors() {
-        let bad_request = ApiResponse::bad_request("Bad input");
+        let bad_request = ApiResponse::bad_request();
         assert_eq!(bad_request.code, ResponseCode::BadRequest);
-        assert_eq!(bad_request.message, "Bad input");
 
-        let unauthorized = ApiResponse::unauthorized("Access denied");
+        let unauthorized = ApiResponse::unauthorized();
         assert_eq!(unauthorized.code, ResponseCode::Unauthorized);
-        assert_eq!(unauthorized.message, "Access denied");
 
-        let forbidden = ApiResponse::forbidden("Permission denied");
+        let forbidden = ApiResponse::forbidden();
         assert_eq!(forbidden.code, ResponseCode::Forbidden);
-        assert_eq!(forbidden.message, "Permission denied");
 
-        let not_found = ApiResponse::not_found("Resource not found");
+        let not_found = ApiResponse::not_found();
         assert_eq!(not_found.code, ResponseCode::NotFound);
-        assert_eq!(not_found.message, "Resource not found");
 
-        let internal_error = ApiResponse::internal_error("Server error");
+        let internal_error = ApiResponse::internal_error();
         assert_eq!(internal_error.code, ResponseCode::InternalServerError);
-        assert_eq!(internal_error.message, "Server error");
+
+        // Test with request IDs
+        let bad_request_with_id = ApiResponse::bad_request_with_id("req_123".to_string());
+        assert_eq!(bad_request_with_id.code, ResponseCode::BadRequest);
+        assert_eq!(bad_request_with_id.request_id, Some("req_123".to_string()));
     }
 
     #[test]
     fn test_api_error_to_response_code() {
         assert_eq!(
-            ApiError::BadRequest("test".to_string()).to_response_code(),
+            ApiError::BadRequest.to_response_code(),
             ResponseCode::BadRequest
         );
         assert_eq!(
-            ApiError::Unauthorized("test".to_string()).to_response_code(),
+            ApiError::Unauthorized.to_response_code(),
             ResponseCode::Unauthorized
         );
         assert_eq!(
-            ApiError::Forbidden("test".to_string()).to_response_code(),
+            ApiError::Forbidden.to_response_code(),
             ResponseCode::Forbidden
         );
         assert_eq!(
-            ApiError::NotFound("test".to_string()).to_response_code(),
+            ApiError::NotFound.to_response_code(),
             ResponseCode::NotFound
         );
         assert_eq!(
-            ApiError::InternalError("test".to_string()).to_response_code(),
+            ApiError::InternalError.to_response_code(),
             ResponseCode::InternalServerError
         );
+        assert_eq!(ApiError::Timeout.to_response_code(), ResponseCode::Timeout);
         assert_eq!(
-            ApiError::Timeout("test".to_string()).to_response_code(),
-            ResponseCode::Timeout
-        );
-        assert_eq!(
-            ApiError::TooManyRequests("test".to_string()).to_response_code(),
+            ApiError::TooManyRequests.to_response_code(),
             ResponseCode::TooManyRequests
         );
     }
 
     #[test]
     fn test_api_error_to_response() {
-        let error = ApiError::BadRequest("Invalid data".to_string());
+        let error = ApiError::BadRequest;
         let response = error.to_response();
 
         assert_eq!(response.code, ResponseCode::BadRequest);
         assert!(response.data.is_none());
-        assert_eq!(response.message, "Bad request: Invalid data");
         assert!(response.request_id.is_none());
     }
 
     #[test]
     fn test_api_error_to_response_with_id() {
-        let error = ApiError::InternalError("Database error".to_string());
+        let error = ApiError::InternalError;
         let response = error.to_response_with_id("req_error_123".to_string());
 
         assert_eq!(response.code, ResponseCode::InternalServerError);
         assert!(response.data.is_none());
-        assert_eq!(response.message, "Internal server error: Database error");
         assert_eq!(response.request_id, Some("req_error_123".to_string()));
     }
 
@@ -529,17 +809,19 @@ mod tests {
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("\"code\":\"SUCCESS\""));
         assert!(json.contains("\"data\":\"test\""));
-        assert!(json.contains("\"message\":\"Operation completed successfully\""));
+        // request_id should be omitted when None due to skip_serializing_if
+        assert!(!json.contains("\"request_id\""));
     }
 
     #[test]
     fn test_api_response_error_serialization() {
-        let response: ApiResponse<()> = ApiResponse::bad_request("Invalid request");
+        let response: ApiResponse<()> = ApiResponse::bad_request();
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("\"code\":\"BAD_REQUEST\""));
-        assert!(json.contains("\"message\":\"Invalid request\""));
         // data should be omitted when None due to skip_serializing_if
         assert!(!json.contains("\"data\""));
+        // request_id should be omitted when None due to skip_serializing_if
+        assert!(!json.contains("\"request_id\""));
     }
 
     #[test]
@@ -547,16 +829,13 @@ mod tests {
         let json = r#"{
             "code": "SUCCESS",
             "data": "test",
-            "message": "Success",
-            "timestamp": "2023-01-01T00:00:00Z"
+            "request_id": "req_123"
         }"#;
 
         let response: ApiResponse<String> = serde_json::from_str(json).unwrap();
         assert_eq!(response.code, ResponseCode::Success);
         assert_eq!(response.data, Some("test".to_string()));
-        assert_eq!(response.message, "Success");
-        assert_eq!(response.timestamp, "2023-01-01T00:00:00Z");
-        assert!(response.request_id.is_none());
+        assert_eq!(response.request_id, Some("req_123".to_string()));
     }
 
     #[test]
@@ -570,10 +849,10 @@ mod tests {
 
     #[test]
     fn test_api_error_display() {
-        let error = ApiError::BadRequest("Invalid input".to_string());
-        assert_eq!(error.to_string(), "Bad request: Invalid input");
+        let error = ApiError::BadRequest;
+        assert_eq!(error.to_string(), "Bad request");
 
-        let error = ApiError::NotFound("Resource missing".to_string());
-        assert_eq!(error.to_string(), "Not found: Resource missing");
+        let error = ApiError::NotFound;
+        assert_eq!(error.to_string(), "Not found");
     }
 }

@@ -1,0 +1,96 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO votes (user_id, target_type, target_id, vote_type, weight)\n            VALUES ($1, $2, $3, $4, $5)\n            ON CONFLICT (user_id, target_type, target_id)\n            DO UPDATE SET\n                vote_type = EXCLUDED.vote_type,\n                weight = EXCLUDED.weight,\n                updated_at = NOW()\n            RETURNING id, user_id, target_type, target_id, vote_type as \"vote_type: VoteType\",\n                      weight, created_at, updated_at, metadata\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "user_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "target_type",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "target_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 4,
+        "name": "vote_type: VoteType",
+        "type_info": {
+          "Custom": {
+            "name": "vote_type",
+            "kind": {
+              "Enum": [
+                "upvote",
+                "downvote",
+                "abstain"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "weight",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 6,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "metadata",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Varchar",
+        "Uuid",
+        {
+          "Custom": {
+            "name": "vote_type",
+            "kind": {
+              "Enum": [
+                "upvote",
+                "downvote",
+                "abstain"
+              ]
+            }
+          }
+        },
+        "Numeric"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "54774ccabbb1194978b2635a4f4bfe20cf7e653b82b1a9bf4bbccd78c2dd6030"
+}

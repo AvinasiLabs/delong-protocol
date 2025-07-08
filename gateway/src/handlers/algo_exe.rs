@@ -8,10 +8,15 @@ use axum::{
     http::StatusCode,
     response::Json,
 };
-use tracing::{error, info};
+use core::ResponseCode;
+use tracing::{error, info, instrument};
 
-use crate::{handlers::ApiResponse, routes::AppState, utils::http_client::forward_post};
-use common::{
+use crate::{
+    handlers::ApiResponse,
+    routes::AppState,
+    services::{generate_request_id, http_client::forward_post},
+};
+use core::{
     AlgoExeData, AlgoExeSubmissionRequest, AlgoExeSubmissionResponse, PaginatedResponse,
     PaginationParams,
 };
@@ -20,10 +25,31 @@ use common::{
 ///
 /// POST /api/algo-exes
 /// Forwards the request to the Secure service (TEE Hardware) for algorithm execution submission
+#[utoipa::path(
+    post,
+    path = "/api/algo-exes",
+    tag = "algo-exe",
+    summary = "Submit algorithm execution",
+    description = "Submit a new algorithm for execution in the TEE environment",
+    request_body = AlgoExeSubmissionRequest,
+    responses(
+        (status = 200, description = "Algorithm execution submitted successfully", body = ApiResponse<AlgoExeSubmissionResponse>),
+        (status = 400, description = "Invalid request parameters", body = ApiResponse<String>),
+        (status = 401, description = "Unauthorized - invalid or missing API key", body = ApiResponse<String>),
+        (status = 403, description = "Forbidden - insufficient permissions", body = ApiResponse<String>),
+        (status = 500, description = "Internal server error", body = ApiResponse<String>)
+    ),
+    security(
+        ("api_key" = [])
+    )
+)]
+#[instrument(skip(state, payload), fields(request_id))]
 pub async fn submit_algo_exe_handler(
     State(state): State<AppState>,
     Json(payload): Json<AlgoExeSubmissionRequest>,
 ) -> Result<Json<ApiResponse<AlgoExeSubmissionResponse>>, StatusCode> {
+    let request_id = generate_request_id();
+    tracing::Span::current().record("request_id", &request_id);
     info!(
         "Submitting algorithm execution: repo={}, commit={}, scientist={}",
         payload.github_repo, payload.commit_hash, payload.scientist_wallet
@@ -48,8 +74,16 @@ pub async fn submit_algo_exe_handler(
             Ok(Json(ApiResponse::success(response)))
         }
         Err(e) => {
-            error!("Failed to submit algorithm execution: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            error!(
+                request_id = request_id,
+                error = %e,
+                "Failed to submit algorithm execution"
+            );
+            Ok(Json(ApiResponse {
+                code: ResponseCode::InternalServerError,
+                data: None,
+                request_id: Some(request_id),
+            }))
         }
     }
 }
@@ -58,10 +92,33 @@ pub async fn submit_algo_exe_handler(
 ///
 /// GET /api/algo-exes
 /// Returns paginated list of algorithm executions
+#[utoipa::path(
+    get,
+    path = "/api/algo-exes",
+    tag = "algo-exe",
+    summary = "List algorithm executions",
+    description = "Retrieve a paginated list of algorithm executions with their current status",
+    params(
+        ("page" = Option<u32>, Query, description = "Page number (default: 1)"),
+        ("limit" = Option<u32>, Query, description = "Items per page (default: 20, max: 100)")
+    ),
+    responses(
+        (status = 200, description = "Algorithm executions retrieved successfully", body = ApiResponse<PaginatedResponse<AlgoExeData>>),
+        (status = 400, description = "Invalid query parameters", body = ApiResponse<String>),
+        (status = 401, description = "Unauthorized - invalid or missing API key", body = ApiResponse<String>),
+        (status = 500, description = "Internal server error", body = ApiResponse<String>)
+    ),
+    security(
+        ("api_key" = [])
+    )
+)]
+#[instrument(skip(state), fields(request_id))]
 pub async fn get_algo_exes_handler(
     State(state): State<AppState>,
     Query(params): Query<PaginationParams>,
 ) -> Result<Json<ApiResponse<PaginatedResponse<AlgoExeData>>>, StatusCode> {
+    let request_id = generate_request_id();
+    tracing::Span::current().record("request_id", &request_id);
     info!(
         "Getting algorithm executions list: page={}, limit={}",
         params.page, params.limit
@@ -73,7 +130,7 @@ pub async fn get_algo_exes_handler(
         state.config.services.secure_url, params.page, params.limit
     );
 
-    match crate::utils::http_client::forward_get::<PaginatedResponse<AlgoExeData>>(
+    match crate::services::http_client::forward_get::<PaginatedResponse<AlgoExeData>>(
         state.http_client.as_ref(),
         &secure_url,
         None,
@@ -90,8 +147,16 @@ pub async fn get_algo_exes_handler(
             Ok(Json(ApiResponse::success(response)))
         }
         Err(e) => {
-            error!("Failed to get algorithm executions: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            error!(
+                request_id = request_id,
+                error = %e,
+                "Failed to get algorithm executions"
+            );
+            Ok(Json(ApiResponse {
+                code: ResponseCode::InternalServerError,
+                data: None,
+                request_id: Some(request_id),
+            }))
         }
     }
 }
@@ -100,16 +165,39 @@ pub async fn get_algo_exes_handler(
 ///
 /// GET /api/algo-exes/{id}
 /// Returns detailed information about a specific algorithm execution
+#[utoipa::path(
+    get,
+    path = "/api/algo-exes/{id}",
+    tag = "algo-exe",
+    summary = "Get algorithm execution",
+    description = "Retrieve detailed information about a specific algorithm execution",
+    params(
+        ("id" = u64, Path, description = "Algorithm execution ID")
+    ),
+    responses(
+        (status = 200, description = "Algorithm execution retrieved successfully", body = ApiResponse<AlgoExeData>),
+        (status = 400, description = "Invalid algorithm execution ID", body = ApiResponse<String>),
+        (status = 401, description = "Unauthorized - invalid or missing API key", body = ApiResponse<String>),
+        (status = 404, description = "Algorithm execution not found", body = ApiResponse<String>),
+        (status = 500, description = "Internal server error", body = ApiResponse<String>)
+    ),
+    security(
+        ("api_key" = [])
+    )
+)]
+#[instrument(skip(state), fields(request_id, algo_exe_id = %id))]
 pub async fn get_algo_exe_handler(
     State(state): State<AppState>,
     Path(id): Path<u64>,
 ) -> Result<Json<ApiResponse<AlgoExeData>>, StatusCode> {
+    let request_id = generate_request_id();
+    tracing::Span::current().record("request_id", &request_id);
     info!("Getting algorithm execution details: id={}", id);
 
     // Forward request to Secure service
     let secure_url = format!("{}/api/algo-exes/{}", state.config.services.secure_url, id);
 
-    match crate::utils::http_client::forward_get::<AlgoExeData>(
+    match crate::services::http_client::forward_get::<AlgoExeData>(
         state.http_client.as_ref(),
         &secure_url,
         None,
@@ -124,8 +212,17 @@ pub async fn get_algo_exe_handler(
             Ok(Json(ApiResponse::success(response)))
         }
         Err(e) => {
-            error!("Failed to get algorithm execution {}: {}", id, e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            error!(
+                request_id = request_id,
+                algo_exe_id = %id,
+                error = %e,
+                "Failed to get algorithm execution"
+            );
+            Ok(Json(ApiResponse {
+                code: ResponseCode::InternalServerError,
+                data: None,
+                request_id: Some(request_id),
+            }))
         }
     }
 }

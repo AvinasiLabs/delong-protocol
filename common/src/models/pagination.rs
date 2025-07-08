@@ -4,16 +4,20 @@
 //! paginated responses across all services in the DeLong Protocol.
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 /// Pagination parameters for requests
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[schema(example = json!({"page": 1, "limit": 20}))]
 pub struct PaginationParams {
     /// Page number (1-based indexing)
     #[serde(default = "default_page")]
+    #[schema(minimum = 1, example = 1)]
     pub page: u32,
 
     /// Number of items per page
     #[serde(default = "default_limit")]
+    #[schema(minimum = 1, maximum = 100, example = 20)]
     pub limit: u32,
 }
 
@@ -65,27 +69,43 @@ impl PaginationParams {
 }
 
 /// Paginated response wrapper
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+#[schema(example = json!({
+    "items": [],
+    "page": 1,
+    "limit": 20,
+    "total_items": 0,
+    "total_pages": 0,
+    "has_next": false,
+    "has_previous": false
+}))]
 pub struct PaginatedResponse<T> {
     /// Items for the current page
+    #[schema(example = json!([]))]
     pub items: Vec<T>,
 
     /// Current page number (1-based)
+    #[schema(minimum = 1, example = 1)]
     pub page: u32,
 
     /// Number of items per page
+    #[schema(minimum = 1, maximum = 100, example = 20)]
     pub limit: u32,
 
     /// Total number of items across all pages
+    #[schema(minimum = 0, example = 0)]
     pub total_items: u64,
 
     /// Total number of pages
+    #[schema(minimum = 0, example = 0)]
     pub total_pages: u32,
 
     /// Whether there is a next page
+    #[schema(example = false)]
     pub has_next: bool,
 
     /// Whether there is a previous page
+    #[schema(example = false)]
     pub has_previous: bool,
 }
 

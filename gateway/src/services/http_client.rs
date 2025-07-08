@@ -7,7 +7,9 @@
 use async_trait::async_trait;
 use reqwest::{Client, Method, Response};
 use serde::{Serialize, de::DeserializeOwned};
+use serde_urlencoded;
 use std::collections::HashMap;
+
 use tracing::{error, info, instrument};
 
 /// HTTP client error types
@@ -23,6 +25,75 @@ pub enum HttpClientError {
     HttpError { status: u16, message: String },
 }
 
+/// Request builder for chaining HTTP operations
+pub struct RequestBuilder {
+    client: Client,
+    url: String,
+    method: Method,
+    json_payload: Option<serde_json::Value>,
+    headers: HashMap<String, String>,
+}
+
+impl RequestBuilder {
+    pub fn new(client: Client, url: String, method: Method) -> Self {
+        Self {
+            client,
+            url,
+            method,
+            json_payload: None,
+            headers: HashMap::new(),
+        }
+    }
+
+    pub fn json<T: Serialize>(mut self, payload: &T) -> Self {
+        self.json_payload = Some(serde_json::to_value(payload).unwrap());
+        self
+    }
+
+    pub fn query<T: Serialize>(mut self, query: &T) -> Self {
+        if let Ok(query_string) = serde_urlencoded::to_string(query) {
+            if self.url.contains('?') {
+                self.url.push_str(&format!("&{}", query_string));
+            } else {
+                self.url.push_str(&format!("?{}", query_string));
+            }
+        }
+        self
+    }
+
+    pub fn header(mut self, key: &str, value: &str) -> Self {
+        self.headers.insert(key.to_string(), value.to_string());
+        self
+    }
+
+    pub async fn send(self) -> Result<ResponseWrapper, HttpClientError> {
+        let mut request = self.client.request(self.method, &self.url);
+
+        if let Some(json_payload) = self.json_payload {
+            request = request.json(&json_payload);
+        }
+
+        for (key, value) in self.headers {
+            request = request.header(&key, &value);
+        }
+
+        let response = request.send().await?;
+        Ok(ResponseWrapper { response })
+    }
+}
+
+/// Response wrapper for deserializing responses
+pub struct ResponseWrapper {
+    response: Response,
+}
+
+impl ResponseWrapper {
+    pub async fn json<T: DeserializeOwned>(self) -> Result<T, HttpClientError> {
+        let response = self.response.json::<T>().await?;
+        Ok(response)
+    }
+}
+
 /// Trait for backend HTTP client operations
 /// Uses JSON values to maintain dyn compatibility
 #[async_trait]
@@ -35,6 +106,18 @@ pub trait BackendClient: Send + Sync {
         payload: Option<serde_json::Value>,
         headers: Option<HashMap<String, String>>,
     ) -> Result<serde_json::Value, HttpClientError>;
+
+    /// Create a POST request builder
+    fn post(&self, url: &str) -> RequestBuilder;
+
+    /// Create a GET request builder
+    fn get(&self, url: &str) -> RequestBuilder;
+
+    /// Create a PUT request builder
+    fn put(&self, url: &str) -> RequestBuilder;
+
+    /// Create a DELETE request builder
+    fn delete(&self, url: &str) -> RequestBuilder;
 }
 
 /// Concrete HTTP client implementation for backend service communication
@@ -92,6 +175,30 @@ impl HttpBackendClient {
             })
         }
     }
+
+    /// Create a POST request builder
+    #[allow(dead_code)]
+    fn post(&self, url: &str) -> RequestBuilder {
+        RequestBuilder::new(self.client.clone(), url.to_string(), Method::POST)
+    }
+
+    /// Create a GET request builder
+    #[allow(dead_code)]
+    fn get(&self, url: &str) -> RequestBuilder {
+        RequestBuilder::new(self.client.clone(), url.to_string(), Method::GET)
+    }
+
+    /// Create a PUT request builder
+    #[allow(dead_code)]
+    fn put(&self, url: &str) -> RequestBuilder {
+        RequestBuilder::new(self.client.clone(), url.to_string(), Method::PUT)
+    }
+
+    /// Create a DELETE request builder
+    #[allow(dead_code)]
+    fn delete(&self, url: &str) -> RequestBuilder {
+        RequestBuilder::new(self.client.clone(), url.to_string(), Method::DELETE)
+    }
 }
 
 #[async_trait]
@@ -123,6 +230,26 @@ impl BackendClient for HttpBackendClient {
 
         let response = request_builder.send().await?;
         self.handle_response(response).await
+    }
+
+    /// Create a POST request builder
+    fn post(&self, url: &str) -> RequestBuilder {
+        RequestBuilder::new(self.client.clone(), url.to_string(), Method::POST)
+    }
+
+    /// Create a GET request builder
+    fn get(&self, url: &str) -> RequestBuilder {
+        RequestBuilder::new(self.client.clone(), url.to_string(), Method::GET)
+    }
+
+    /// Create a PUT request builder
+    fn put(&self, url: &str) -> RequestBuilder {
+        RequestBuilder::new(self.client.clone(), url.to_string(), Method::PUT)
+    }
+
+    /// Create a DELETE request builder
+    fn delete(&self, url: &str) -> RequestBuilder {
+        RequestBuilder::new(self.client.clone(), url.to_string(), Method::DELETE)
     }
 }
 
@@ -292,6 +419,28 @@ mod tests {
                     message: "Not found in mock".to_string(),
                 })
             }
+        }
+
+        /// Create a POST request builder for mock testing
+        fn post(&self, url: &str) -> RequestBuilder {
+            // For mock client, create a dummy request builder
+            // In real usage, tests should use forward_request_json directly
+            RequestBuilder::new(Client::new(), url.to_string(), Method::POST)
+        }
+
+        /// Create a GET request builder for mock testing
+        fn get(&self, url: &str) -> RequestBuilder {
+            RequestBuilder::new(Client::new(), url.to_string(), Method::GET)
+        }
+
+        /// Create a PUT request builder for mock testing
+        fn put(&self, url: &str) -> RequestBuilder {
+            RequestBuilder::new(Client::new(), url.to_string(), Method::PUT)
+        }
+
+        /// Create a DELETE request builder for mock testing
+        fn delete(&self, url: &str) -> RequestBuilder {
+            RequestBuilder::new(Client::new(), url.to_string(), Method::DELETE)
         }
     }
 

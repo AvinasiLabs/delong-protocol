@@ -8,20 +8,39 @@ use axum::{
     http::StatusCode,
     response::Json,
 };
+use core::ResponseCode;
 use tracing::{info, instrument, warn};
+use utoipa;
 
 use crate::{
     handlers::{ApiResponse, PaginatedResponse},
-    utils::generate_request_id,
+    services::{generate_request_id, generate_unique_id},
 };
 
-use common::{
+use core::{
     ApiKeyInfo, ApiKeyListQuery, CreateApiKeyRequest, CreateApiKeyResponse, Permission,
     RateLimitTier, RevokeApiKeyRequest, RevokeApiKeyResponse, ValidateApiKeyRequest,
     ValidateApiKeyResponse, is_valid_api_key_format,
 };
 
 /// Create a new API key
+#[utoipa::path(
+    post,
+    path = "/api/auth/keys",
+    tag = "auth",
+    summary = "Create API key",
+    description = "Create a new API key with specified permissions and rate limiting",
+    request_body = CreateApiKeyRequest,
+    responses(
+        (status = 200, description = "API key created successfully", body = ApiResponse<CreateApiKeyResponse>),
+        (status = 400, description = "Invalid request parameters", body = ApiResponse<String>),
+        (status = 401, description = "Unauthorized - invalid or missing API key", body = ApiResponse<String>),
+        (status = 500, description = "Internal server error", body = ApiResponse<String>)
+    ),
+    security(
+        ("api_key" = [])
+    )
+)]
 #[instrument(skip(payload), fields(request_id))]
 pub async fn create_api_key_handler(
     Json(payload): Json<CreateApiKeyRequest>,
@@ -43,7 +62,11 @@ pub async fn create_api_key_handler(
             request_id = request_id,
             "API key creation failed: empty name"
         );
-        return Err(StatusCode::BAD_REQUEST);
+        return Ok(Json(ApiResponse {
+            code: ResponseCode::BadRequest,
+            data: None,
+            request_id: Some(request_id),
+        }));
     }
 
     if payload.permissions.is_empty() {
@@ -51,7 +74,11 @@ pub async fn create_api_key_handler(
             request_id = request_id,
             "API key creation failed: no permissions specified"
         );
-        return Err(StatusCode::BAD_REQUEST);
+        return Ok(Json(ApiResponse {
+            code: ResponseCode::BadRequest,
+            data: None,
+            request_id: Some(request_id),
+        }));
     }
 
     // Validate expiration days
@@ -62,7 +89,11 @@ pub async fn create_api_key_handler(
             expires_in_days = expires_in_days,
             "API key creation failed: expiration too long"
         );
-        return Err(StatusCode::BAD_REQUEST);
+        return Ok(Json(ApiResponse {
+            code: ResponseCode::BadRequest,
+            data: None,
+            request_id: Some(request_id),
+        }));
     }
 
     // TODO: Forward to core service for actual API key creation
@@ -74,7 +105,7 @@ pub async fn create_api_key_handler(
     // 5. Log creation event for audit
 
     // Generate mock API key
-    let api_key = generate_api_key();
+    let api_key = format!("dlk_{}", generate_unique_id());
     let key_id = format!("key_{}", uuid::Uuid::new_v4().simple());
     let expires_at = chrono::Utc::now() + chrono::Duration::days(expires_in_days as i64);
 
@@ -110,6 +141,23 @@ pub async fn create_api_key_handler(
 }
 
 /// Validate an API key
+#[utoipa::path(
+    post,
+    path = "/api/auth/keys/validate",
+    tag = "auth",
+    summary = "Validate API key",
+    description = "Validate an API key and return its permissions and status",
+    request_body = ValidateApiKeyRequest,
+    responses(
+        (status = 200, description = "API key validation completed", body = ApiResponse<ValidateApiKeyResponse>),
+        (status = 400, description = "Invalid request parameters", body = ApiResponse<String>),
+        (status = 401, description = "Unauthorized - invalid or missing API key", body = ApiResponse<String>),
+        (status = 500, description = "Internal server error", body = ApiResponse<String>)
+    ),
+    security(
+        ("api_key" = [])
+    )
+)]
 #[instrument(skip(payload), fields(request_id))]
 pub async fn validate_api_key_handler(
     Json(payload): Json<ValidateApiKeyRequest>,
@@ -154,7 +202,7 @@ pub async fn validate_api_key_handler(
     // 5. Return validation result with user context
 
     // Mock validation logic
-    let is_valid = validate_mock_api_key(&payload.api_key);
+    let is_valid = is_valid_api_key_format(&payload.api_key);
 
     let response_data = if is_valid {
         ValidateApiKeyResponse {
@@ -194,6 +242,27 @@ pub async fn validate_api_key_handler(
 }
 
 /// Revoke an API key
+#[utoipa::path(
+    delete,
+    path = "/api/auth/keys/{key_id}",
+    tag = "auth",
+    summary = "Revoke API key",
+    description = "Revoke an existing API key and make it inactive",
+    params(
+        ("key_id" = String, Path, description = "API key ID to revoke")
+    ),
+    request_body = RevokeApiKeyRequest,
+    responses(
+        (status = 200, description = "API key revoked successfully", body = ApiResponse<RevokeApiKeyResponse>),
+        (status = 400, description = "Invalid request parameters", body = ApiResponse<String>),
+        (status = 401, description = "Unauthorized - invalid or missing API key", body = ApiResponse<String>),
+        (status = 404, description = "API key not found", body = ApiResponse<String>),
+        (status = 500, description = "Internal server error", body = ApiResponse<String>)
+    ),
+    security(
+        ("api_key" = [])
+    )
+)]
 #[instrument(skip( payload), fields(request_id, key_id = %key_id))]
 pub async fn revoke_api_key_handler(
     Path(key_id): Path<String>,
@@ -217,7 +286,11 @@ pub async fn revoke_api_key_handler(
             key_id = key_id,
             "Invalid API key ID format"
         );
-        return Err(StatusCode::BAD_REQUEST);
+        return Ok(Json(ApiResponse {
+            code: ResponseCode::BadRequest,
+            data: None,
+            request_id: Some(request_id),
+        }));
     }
 
     // TODO: Forward to core service for actual revocation
@@ -250,6 +323,31 @@ pub async fn revoke_api_key_handler(
 }
 
 /// List user's API keys (admin endpoint)
+#[utoipa::path(
+    get,
+    path = "/api/auth/keys",
+    tag = "auth",
+    summary = "List API keys",
+    description = "Retrieve a paginated list of API keys with filtering options",
+    params(
+        ("page" = Option<u32>, Query, description = "Page number (default: 1)"),
+        ("limit" = Option<u32>, Query, description = "Items per page (default: 20, max: 100)"),
+        ("is_active" = Option<bool>, Query, description = "Filter by active status"),
+        ("rate_limit_tier" = Option<String>, Query, description = "Filter by rate limit tier"),
+        ("created_after" = Option<String>, Query, description = "Filter keys created after this date (ISO 8601)"),
+        ("created_before" = Option<String>, Query, description = "Filter keys created before this date (ISO 8601)")
+    ),
+    responses(
+        (status = 200, description = "API keys retrieved successfully", body = ApiResponse<PaginatedResponse<ApiKeyInfo>>),
+        (status = 400, description = "Invalid query parameters", body = ApiResponse<String>),
+        (status = 401, description = "Unauthorized - invalid or missing API key", body = ApiResponse<String>),
+        (status = 403, description = "Forbidden - admin access required", body = ApiResponse<String>),
+        (status = 500, description = "Internal server error", body = ApiResponse<String>)
+    ),
+    security(
+        ("api_key" = [])
+    )
+)]
 #[instrument(fields(request_id))]
 pub async fn list_api_keys_handler(
     Query(query): Query<ApiKeyListQuery>,
@@ -297,26 +395,6 @@ pub async fn list_api_keys_handler(
 }
 
 /// Generate a new API key
-fn generate_api_key() -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-
-    let mut hasher = DefaultHasher::new();
-    chrono::Utc::now()
-        .timestamp_nanos_opt()
-        .unwrap_or(0)
-        .hash(&mut hasher);
-    std::thread::current().id().hash(&mut hasher);
-
-    // In a real implementation, use a cryptographically secure random generator
-    format!("dlk_{:x}", hasher.finish())
-}
-
-/// Validate mock API key (for testing)
-fn validate_mock_api_key(api_key: &str) -> bool {
-    // Mock validation - in reality this would hash and check against database
-    api_key.len() >= 16 && (api_key.starts_with("dlk_") || api_key.starts_with("test-api-key"))
-}
 
 /// Create mock API keys for testing
 fn create_mock_api_keys() -> Vec<ApiKeyInfo> {
@@ -417,8 +495,8 @@ mod tests {
 
     #[test]
     fn test_generate_api_key() {
-        let key1 = generate_api_key();
-        let key2 = generate_api_key();
+        let key1 = format!("dlk_{}", generate_unique_id());
+        let key2 = format!("dlk_{}", generate_unique_id());
 
         assert!(key1.starts_with("dlk_"));
         assert!(key2.starts_with("dlk_"));
@@ -427,11 +505,11 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_mock_api_key() {
-        assert!(validate_mock_api_key("dlk_1234567890abcdef"));
-        assert!(validate_mock_api_key("test-api-key-123456"));
-        assert!(!validate_mock_api_key("invalid"));
-        assert!(!validate_mock_api_key("short"));
+    fn test_validate_api_key_format() {
+        assert!(is_valid_api_key_format("dlk_1234567890abcdef"));
+        assert!(is_valid_api_key_format("test-api-key-123456"));
+        assert!(!is_valid_api_key_format("invalid"));
+        assert!(!is_valid_api_key_format("short"));
     }
 
     #[test]

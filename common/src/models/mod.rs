@@ -19,7 +19,7 @@
 //! # Examples
 //!
 //! ```rust
-//! use common::models::{
+//! use core::models::{
 //!     AlgoExeSubmissionRequest, PaginatedResponse, PaginationParams,
 //!     CreateApiKeyRequest, Permission, RateLimitTier,
 //!     SetCommitteeMemberRequest, ContractData,

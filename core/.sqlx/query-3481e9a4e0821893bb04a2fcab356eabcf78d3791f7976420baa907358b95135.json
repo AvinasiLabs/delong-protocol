@@ -1,0 +1,73 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT DISTINCT p.id, p.name, p.description, p.permission_type as \"permission_type: PermissionType\", p.resource, p.created_at, p.updated_at\n            FROM permissions p\n            JOIN role_permissions rp ON p.id = rp.permission_id\n            JOIN user_roles ur ON rp.role_id = ur.role_id\n            WHERE ur.user_id = $1 AND ur.is_active = true\n            UNION\n            SELECT DISTINCT p.id, p.name, p.description, p.permission_type as \"permission_type: PermissionType\", p.resource, p.created_at, p.updated_at\n            FROM permissions p\n            JOIN user_permissions up ON p.id = up.permission_id\n            WHERE up.user_id = $1 AND up.is_active = true\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "permission_type: PermissionType",
+        "type_info": {
+          "Custom": {
+            "name": "permission_type",
+            "kind": {
+              "Enum": [
+                "read",
+                "write",
+                "delete",
+                "admin",
+                "vote",
+                "create_dataset",
+                "view_audit"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "resource",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "3481e9a4e0821893bb04a2fcab356eabcf78d3791f7976420baa907358b95135"
+}
