@@ -1,4 +1,5 @@
-use axum::{http::StatusCode, response::Json};
+use axum::response::Json;
+use common::prelude::ApiResponse;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -37,7 +38,7 @@ pub struct HealthResponse {
         (status = 500, description = "Service is unhealthy")
     )
 )]
-pub async fn health_handler() -> Result<Json<HealthResponse>, StatusCode> {
+pub async fn health_handler() -> Json<ApiResponse<HealthResponse>> {
     let response = HealthResponse {
         status: "healthy".to_string(),
         service: "delong-gateway".to_string(),
@@ -45,5 +46,5 @@ pub async fn health_handler() -> Result<Json<HealthResponse>, StatusCode> {
         timestamp: chrono::Utc::now().to_rfc3339(),
     };
 
-    Ok(Json(response))
+    Json(ApiResponse::success(response))
 }

@@ -19,7 +19,7 @@
 //! ## Usage
 //!
 //! ```rust
-//! use core::{AppState, create_app};
+//! use delong_core::{AppState, create_app};
 //! use std::sync::Arc;
 //!
 //! #[tokio::main]
@@ -91,7 +91,7 @@ impl AppState {
     /// # Examples
     ///
     /// ```rust
-    /// use core::{AppState, AppConfig};
+    /// use delong_core::{AppState, AppConfig};
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -206,7 +206,7 @@ impl AppState {
 /// # Examples
 ///
 /// ```rust
-/// use core::{AppState, create_app};
+/// use delong_core::{AppState, create_app};
 /// use std::sync::Arc;
 ///
 /// #[tokio::main]

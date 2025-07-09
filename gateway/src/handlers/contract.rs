@@ -5,7 +5,6 @@
 
 use axum::{
     extract::{Query, State},
-    http::StatusCode,
     response::Json,
 };
 use tracing::{error, info};
@@ -16,7 +15,7 @@ use crate::{
     services::http_client::forward_get,
 };
 
-use core::ContractData;
+use common::prelude::ContractData;
 
 /// Handler for getting contract list
 ///
@@ -45,7 +44,7 @@ use core::ContractData;
 pub async fn get_contracts_handler(
     State(state): State<AppState>,
     Query(params): Query<PaginationParams>,
-) -> Result<Json<ApiResponse<PaginatedResponse<ContractData>>>, StatusCode> {
+) -> Json<ApiResponse<PaginatedResponse<ContractData>>> {
     info!(
         "Getting contracts list: page={}, limit={}",
         params.page, params.limit
@@ -71,11 +70,11 @@ pub async fn get_contracts_handler(
                 response.page,
                 response.total_pages
             );
-            Ok(Json(ApiResponse::success(response)))
+            Json(ApiResponse::success(response))
         }
         Err(e) => {
-            error!("Failed to get contracts: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            error!("Failed to get contracts: {:?}", e);
+            Json(ApiResponse::internal_error())
         }
     }
 }

@@ -6,10 +6,10 @@
 use tracing::{error, info, instrument};
 
 // Import from lib crate
-use core::{create_app, init, shutdown};
+use delong_core::{create_app, init, shutdown};
 
 // Import common server utilities
-use common::{load_env_file, start_server};
+use common::prelude::{load_env_file, start_server};
 
 #[tokio::main]
 #[instrument]

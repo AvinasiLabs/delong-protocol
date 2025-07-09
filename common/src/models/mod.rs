@@ -19,7 +19,7 @@
 //! # Examples
 //!
 //! ```rust
-//! use core::models::{
+//! use delong_core::models::{
 //!     AlgoExeSubmissionRequest, PaginatedResponse, PaginationParams,
 //!     CreateApiKeyRequest, Permission, RateLimitTier,
 //!     SetCommitteeMemberRequest, ContractData,
@@ -84,8 +84,8 @@ pub use contract::{
 // Dataset models
 pub use dataset::{
     CreateDatasetRequest, DatasetFormat, DatasetPaginatedResponse, DatasetStatus,
-    DelongApiResponse, DynamicDatasetInfo, DynamicDatasetListQuery, StaticDatasetInfo,
-    StaticDatasetListQuery, UpdateDatasetRequest, UpdateStaticDatasetRequest,
+    DynamicDatasetInfo, DynamicDatasetListQuery, StaticDatasetInfo, StaticDatasetListQuery,
+    UpdateDatasetRequest, UpdateStaticDatasetRequest,
 };
 
 // Pagination models

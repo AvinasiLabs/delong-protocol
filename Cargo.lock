@@ -601,48 +601,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "core"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "argon2",
- "axum 0.8.4",
- "axum-test",
- "bcrypt",
- "bigdecimal",
- "chrono",
- "common",
- "config",
- "dotenvy",
- "jsonwebtoken",
- "lettre",
- "mime",
- "multer",
- "num-traits",
- "rand 0.8.5",
- "redis",
- "regex",
- "reqwest",
- "serde",
- "serde_json",
- "sha2",
- "sqlx",
- "thiserror 2.0.12",
- "tokio",
- "tokio-test",
- "tower",
- "tower-http",
- "tracing",
- "tracing-subscriber",
- "urlencoding",
- "utoipa",
- "utoipa-scalar",
- "utoipa-swagger-ui",
- "uuid",
- "validator",
-]
-
-[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -762,6 +720,48 @@ name = "data-encoding"
 version = "2.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2a2330da5de22e8a3cb63252ce2abb30116bf5265e89c0e01bc17015ce30a476"
+
+[[package]]
+name = "delong-core"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "argon2",
+ "axum 0.8.4",
+ "axum-test",
+ "bcrypt",
+ "bigdecimal",
+ "chrono",
+ "common",
+ "config",
+ "dotenvy",
+ "jsonwebtoken",
+ "lettre",
+ "mime",
+ "multer",
+ "num-traits",
+ "rand 0.8.5",
+ "redis",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "thiserror 2.0.12",
+ "tokio",
+ "tokio-test",
+ "tower",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "urlencoding",
+ "utoipa",
+ "utoipa-scalar",
+ "utoipa-swagger-ui",
+ "uuid",
+ "validator",
+]
 
 [[package]]
 name = "der"
@@ -1082,7 +1082,7 @@ dependencies = [
  "axum 0.8.4",
  "chrono",
  "common",
- "core",
+ "delong-core",
  "dotenvy",
  "futures-util",
  "jsonwebtoken",

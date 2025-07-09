@@ -5,7 +5,6 @@
 
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
     response::Json,
 };
 use tracing::{error, info};
@@ -16,7 +15,7 @@ use crate::{
     services::http_client::{forward_get, forward_post},
 };
 
-use core::{
+use common::prelude::{
     CommitteeMemberData, CommitteeMemberResponse, MembershipCheckResponse,
     SetCommitteeMemberRequest,
 };
@@ -46,7 +45,7 @@ use core::{
 pub async fn set_committee_member_handler(
     State(state): State<AppState>,
     Json(payload): Json<SetCommitteeMemberRequest>,
-) -> Result<Json<ApiResponse<CommitteeMemberResponse>>, StatusCode> {
+) -> Json<ApiResponse<CommitteeMemberResponse>> {
     info!(
         "Setting committee member: wallet={}, approved={}",
         payload.member_wallet, payload.is_approved
@@ -65,11 +64,11 @@ pub async fn set_committee_member_handler(
     {
         Ok(response) => {
             info!("Committee member set successfully: id={}", response.id);
-            Ok(Json(ApiResponse::success(response)))
+            Json(ApiResponse::success(response))
         }
         Err(e) => {
-            error!("Failed to set committee member: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            error!("Failed to set committee member: {:?}", e);
+            Json(ApiResponse::internal_error())
         }
     }
 }
@@ -101,7 +100,7 @@ pub async fn set_committee_member_handler(
 pub async fn get_committee_members_handler(
     State(state): State<AppState>,
     Query(params): Query<PaginationParams>,
-) -> Result<Json<ApiResponse<PaginatedResponse<CommitteeMemberData>>>, StatusCode> {
+) -> Json<ApiResponse<PaginatedResponse<CommitteeMemberData>>> {
     info!(
         "Getting committee members list: page={}, limit={}",
         params.page, params.limit
@@ -127,11 +126,11 @@ pub async fn get_committee_members_handler(
                 response.page,
                 response.total_pages
             );
-            Ok(Json(ApiResponse::success(response)))
+            Json(ApiResponse::success(response))
         }
         Err(e) => {
-            error!("Failed to get committee members: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            error!("Failed to get committee members: {:?}", e);
+            Json(ApiResponse::internal_error())
         }
     }
 }
@@ -163,7 +162,7 @@ pub async fn get_committee_members_handler(
 pub async fn get_committee_member_handler(
     State(state): State<AppState>,
     Path(id): Path<u64>,
-) -> Result<Json<ApiResponse<CommitteeMemberData>>, StatusCode> {
+) -> Json<ApiResponse<CommitteeMemberData>> {
     info!("Getting committee member details: id={}", id);
 
     // Forward request to Secure service
@@ -175,11 +174,11 @@ pub async fn get_committee_member_handler(
                 "Retrieved committee member: id={}, wallet={}, approved={}",
                 response.id, response.member_wallet, response.is_approved
             );
-            Ok(Json(ApiResponse::success(response)))
+            Json(ApiResponse::success(response))
         }
         Err(e) => {
-            error!("Failed to get committee member {}: {}", id, e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            error!("Failed to get committee member {}: {:?}", id, e);
+            Json(ApiResponse::internal_error())
         }
     }
 }
@@ -210,7 +209,7 @@ pub async fn get_committee_member_handler(
 pub async fn check_committee_membership_handler(
     State(state): State<AppState>,
     Path(wallet): Path<String>,
-) -> Result<Json<ApiResponse<MembershipCheckResponse>>, StatusCode> {
+) -> Json<ApiResponse<MembershipCheckResponse>> {
     info!("Checking committee membership: wallet={}", wallet);
 
     // Forward request to Secure service
@@ -227,11 +226,14 @@ pub async fn check_committee_membership_handler(
                 "Committee membership check completed: wallet={}, is_member={}",
                 wallet, response.is_member
             );
-            Ok(Json(ApiResponse::success(response)))
+            Json(ApiResponse::success(response))
         }
         Err(e) => {
-            error!("Failed to check committee membership for {}: {}", wallet, e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            error!(
+                "Failed to check committee membership for {}: {:?}",
+                wallet, e
+            );
+            Json(ApiResponse::internal_error())
         }
     }
 }

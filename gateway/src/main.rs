@@ -14,7 +14,9 @@ use gateway::{
 };
 
 // Import common server utilities
-use core::{LoggingConfig, OpenTelemetryConfig, init_logging, load_env_file, start_server};
+use common::prelude::{
+    LoggingConfig, OpenTelemetryConfig, init_logging, load_env_file, start_server,
+};
 
 #[tokio::main]
 #[instrument]

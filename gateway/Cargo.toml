@@ -72,7 +72,7 @@ rand = { workspace = true }
 common = { path = "../common" }
 
 # Core service models and business logic
-core = { path = "../core" }
+delong_core = { package = "delong-core", path = "../core" }
 
 # Redis client for caching
 redis = { workspace = true, features = ["tokio-comp", "connection-manager"] }

@@ -7,19 +7,13 @@
 
 use axum::{
     extract::{Multipart, Path, Query, State},
-    http::StatusCode,
     response::Json,
 };
 use reqwest::multipart::Form;
 use tracing::{error, info, instrument, warn};
 
-use crate::{routes::AppState, services::generate_request_id};
-
-use core::{
-    CreateDatasetRequest, DatasetPaginatedResponse, DelongApiResponse, DynamicDatasetInfo,
-    DynamicDatasetListQuery, StaticDatasetInfo, StaticDatasetListQuery, UpdateDatasetRequest,
-    UpdateStaticDatasetRequest,
-};
+use crate::routes::AppState;
+use common::prelude::*;
 
 /// Upload static dataset (multipart/form-data)
 /// Forwards to POST /api/static-datasets on secure service
@@ -35,11 +29,11 @@ use core::{
         content_type = "multipart/form-data"
     ),
     responses(
-        (status = 200, description = "Dataset uploaded successfully", body = DelongApiResponse<String>),
-        (status = 400, description = "Invalid request or file format", body = DelongApiResponse<String>),
-        (status = 401, description = "Unauthorized - invalid or missing API key", body = DelongApiResponse<String>),
-        (status = 413, description = "File too large", body = DelongApiResponse<String>),
-        (status = 500, description = "Internal server error", body = DelongApiResponse<String>)
+        (status = 200, description = "Dataset uploaded successfully", body = ApiResponse<String>),
+        (status = 400, description = "Invalid request or file format", body = ApiResponse<String>),
+        (status = 401, description = "Unauthorized - invalid or missing API key", body = ApiResponse<String>),
+        (status = 413, description = "File too large", body = ApiResponse<String>),
+        (status = 500, description = "Internal server error", body = ApiResponse<String>)
     ),
     security(
         ("api_key" = [])
@@ -49,7 +43,7 @@ use core::{
 pub async fn upload_static_dataset_handler(
     State(state): State<AppState>,
     mut multipart: Multipart,
-) -> Result<Json<DelongApiResponse<String>>, StatusCode> {
+) -> Json<ApiResponse<String>> {
     let request_id = generate_request_id();
     tracing::Span::current().record("request_id", &request_id);
 
@@ -62,19 +56,25 @@ pub async fn upload_static_dataset_handler(
     let mut form = Form::new();
     let mut dataset_name = String::new();
 
-    while let Some(field) = multipart.next_field().await.map_err(|e| {
-        error!("Failed to parse multipart field: {}", e);
-        StatusCode::BAD_REQUEST
-    })? {
+    while let Some(field) = match multipart.next_field().await {
+        Ok(field) => field,
+        Err(e) => {
+            error!("Failed to parse multipart field: {}", e);
+            return Json(ApiResponse::bad_request());
+        }
+    } {
         let field_name = field.name().unwrap_or("").to_string();
 
         match field_name.as_str() {
             "file" => {
                 let filename = field.file_name().unwrap_or("dataset.csv").to_string();
-                let data = field.bytes().await.map_err(|e| {
-                    error!("Failed to read file data: {}", e);
-                    StatusCode::BAD_REQUEST
-                })?;
+                let data = match field.bytes().await {
+                    Ok(data) => data,
+                    Err(e) => {
+                        error!("Failed to read file data: {}", e);
+                        return Json(ApiResponse::bad_request());
+                    }
+                };
 
                 form = form.part(
                     "file",
@@ -82,31 +82,43 @@ pub async fn upload_static_dataset_handler(
                 );
             }
             "name" => {
-                dataset_name = field.text().await.map_err(|e| {
-                    error!("Failed to read name field: {}", e);
-                    StatusCode::BAD_REQUEST
-                })?;
+                dataset_name = match field.text().await {
+                    Ok(name) => name,
+                    Err(e) => {
+                        error!("Failed to read name field: {}", e);
+                        return Json(ApiResponse::bad_request());
+                    }
+                };
                 form = form.text("name", dataset_name.clone());
             }
             "desc" => {
-                let desc = field.text().await.map_err(|e| {
-                    error!("Failed to read desc field: {}", e);
-                    StatusCode::BAD_REQUEST
-                })?;
+                let desc = match field.text().await {
+                    Ok(desc) => desc,
+                    Err(e) => {
+                        error!("Failed to read desc field: {}", e);
+                        return Json(ApiResponse::bad_request());
+                    }
+                };
                 form = form.text("desc", desc);
             }
             "author" => {
-                let author = field.text().await.map_err(|e| {
-                    error!("Failed to read author field: {}", e);
-                    StatusCode::BAD_REQUEST
-                })?;
+                let author = match field.text().await {
+                    Ok(author) => author,
+                    Err(e) => {
+                        error!("Failed to read author field: {}", e);
+                        return Json(ApiResponse::bad_request());
+                    }
+                };
                 form = form.text("author", author);
             }
             "author_wallet" => {
-                let author_wallet = field.text().await.map_err(|e| {
-                    error!("Failed to read author_wallet field: {}", e);
-                    StatusCode::BAD_REQUEST
-                })?;
+                let author_wallet = match field.text().await {
+                    Ok(wallet) => wallet,
+                    Err(e) => {
+                        error!("Failed to read author_wallet field: {}", e);
+                        return Json(ApiResponse::bad_request());
+                    }
+                };
                 form = form.text("author_wallet", author_wallet);
             }
             _ => {
@@ -118,28 +130,34 @@ pub async fn upload_static_dataset_handler(
     // Validate required fields
     if dataset_name.is_empty() {
         warn!(request_id = request_id, "Dataset name is required");
-        return Err(StatusCode::BAD_REQUEST);
+        return Json(ApiResponse::bad_request());
     }
 
     // Forward to secure service
     let secure_service_url = &state.config.services.secure_url;
 
     let client = reqwest::Client::new();
-    let response = client
+    let response = match client
         .post(&format!("{}/api/static-datasets", secure_service_url))
         .multipart(form)
         .send()
         .await
-        .map_err(|e| {
+    {
+        Ok(resp) => resp,
+        Err(e) => {
             error!("Failed to forward request to secure service: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+            return Json(ApiResponse::internal_error());
+        }
+    };
 
     if response.status().is_success() {
-        let response_data: DelongApiResponse<String> = response.json().await.map_err(|e| {
-            error!("Failed to parse response from secure service: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+        let response_data: String = match response.json().await {
+            Ok(data) => data,
+            Err(e) => {
+                error!("Failed to parse response from secure service: {}", e);
+                return Json(ApiResponse::internal_error());
+            }
+        };
 
         info!(
             request_id = request_id,
@@ -147,7 +165,7 @@ pub async fn upload_static_dataset_handler(
             "Static dataset upload forwarded successfully"
         );
 
-        Ok(Json(response_data))
+        Json(ApiResponse::success(response_data))
     } else {
         let status = response.status();
         let error_text = response
@@ -161,7 +179,7 @@ pub async fn upload_static_dataset_handler(
             "Secure service returned error"
         );
 
-        Err(map_secure_service_status(status))
+        Json(ApiResponse::internal_error())
     }
 }
 
@@ -181,10 +199,10 @@ pub async fn upload_static_dataset_handler(
         ("created_before" = Option<String>, Query, description = "Filter datasets created before this date (ISO 8601)")
     ),
     responses(
-        (status = 200, description = "Datasets retrieved successfully", body = DelongApiResponse<Vec<StaticDatasetInfo>>),
-        (status = 400, description = "Invalid query parameters", body = DelongApiResponse<String>),
-        (status = 401, description = "Unauthorized - invalid or missing API key", body = DelongApiResponse<String>),
-        (status = 500, description = "Internal server error", body = DelongApiResponse<String>)
+        (status = 200, description = "Datasets retrieved successfully", body = ApiResponse<Vec<StaticDatasetInfo>>),
+        (status = 400, description = "Invalid query parameters", body = ApiResponse<String>),
+        (status = 401, description = "Unauthorized - invalid or missing API key", body = ApiResponse<String>),
+        (status = 500, description = "Internal server error", body = ApiResponse<String>)
     ),
     security(
         ("api_key" = [])
@@ -194,7 +212,7 @@ pub async fn upload_static_dataset_handler(
 pub async fn get_static_datasets_handler(
     State(state): State<AppState>,
     Query(query): Query<StaticDatasetListQuery>,
-) -> Result<Json<DelongApiResponse<DatasetPaginatedResponse<StaticDatasetInfo>>>, StatusCode> {
+) -> Json<ApiResponse<DatasetPaginatedResponse<StaticDatasetInfo>>> {
     let request_id = generate_request_id();
     tracing::Span::current().record("request_id", &request_id);
 
@@ -209,30 +227,36 @@ pub async fn get_static_datasets_handler(
     let secure_service_url = &state.config.services.secure_url;
 
     let client = reqwest::Client::new();
-    let response = client
+    let response = match client
         .get(&format!("{}/api/static-datasets", secure_service_url))
         .query(&[("page", query.page), ("page_size", query.page_size)])
         .send()
         .await
-        .map_err(|e| {
+    {
+        Ok(resp) => resp,
+        Err(e) => {
             error!("Failed to forward request to secure service: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+            return Json(ApiResponse::internal_error());
+        }
+    };
 
     if response.status().is_success() {
-        let response_data: DelongApiResponse<DatasetPaginatedResponse<StaticDatasetInfo>> =
-            response.json().await.map_err(|e| {
+        let response_data: DatasetPaginatedResponse<StaticDatasetInfo> = match response.json().await
+        {
+            Ok(data) => data,
+            Err(e) => {
                 error!("Failed to parse response from secure service: {}", e);
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?;
+                return Json(ApiResponse::internal_error());
+            }
+        };
 
         info!(
             request_id = request_id,
-            total_items = response_data.data.as_ref().map(|d| d.total).unwrap_or(0),
+            total_items = response_data.total,
             "Static datasets list retrieved successfully"
         );
 
-        Ok(Json(response_data))
+        Json(ApiResponse::success(response_data))
     } else {
         let status = response.status();
         let error_text = response
@@ -246,7 +270,7 @@ pub async fn get_static_datasets_handler(
             "Secure service returned error"
         );
 
-        Err(map_secure_service_status(status))
+        Json(ApiResponse::internal_error())
     }
 }
 
@@ -264,11 +288,11 @@ pub async fn get_static_datasets_handler(
         ("id" = u32, Path, description = "Dataset ID")
     ),
     responses(
-        (status = 200, description = "Dataset retrieved successfully", body = DelongApiResponse<StaticDatasetInfo>),
-        (status = 400, description = "Invalid dataset ID", body = DelongApiResponse<String>),
-        (status = 401, description = "Unauthorized - invalid or missing API key", body = DelongApiResponse<String>),
-        (status = 404, description = "Dataset not found", body = DelongApiResponse<String>),
-        (status = 500, description = "Internal server error", body = DelongApiResponse<String>)
+        (status = 200, description = "Dataset retrieved successfully", body = ApiResponse<StaticDatasetInfo>),
+        (status = 400, description = "Invalid dataset ID", body = ApiResponse<String>),
+        (status = 401, description = "Unauthorized - invalid or missing API key", body = ApiResponse<String>),
+        (status = 404, description = "Dataset not found", body = ApiResponse<String>),
+        (status = 500, description = "Internal server error", body = ApiResponse<String>)
     ),
     security(
         ("api_key" = [])
@@ -278,7 +302,7 @@ pub async fn get_static_datasets_handler(
 pub async fn get_static_dataset_handler(
     State(state): State<AppState>,
     Path(dataset_id): Path<u32>,
-) -> Result<Json<DelongApiResponse<StaticDatasetInfo>>, StatusCode> {
+) -> Json<ApiResponse<StaticDatasetInfo>> {
     let request_id = generate_request_id();
     tracing::Span::current().record("request_id", &request_id);
 
@@ -292,24 +316,29 @@ pub async fn get_static_dataset_handler(
     let secure_service_url = &state.config.services.secure_url;
 
     let client = reqwest::Client::new();
-    let response = client
+    let response = match client
         .get(&format!(
             "{}/api/static-datasets/{}",
             secure_service_url, dataset_id
         ))
         .send()
         .await
-        .map_err(|e| {
+    {
+        Ok(resp) => resp,
+        Err(e) => {
             error!("Failed to forward request to secure service: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+            return Json(ApiResponse::internal_error());
+        }
+    };
 
     if response.status().is_success() {
-        let response_data: DelongApiResponse<StaticDatasetInfo> =
-            response.json().await.map_err(|e| {
+        let response_data: StaticDatasetInfo = match response.json().await {
+            Ok(data) => data,
+            Err(e) => {
                 error!("Failed to parse response from secure service: {}", e);
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?;
+                return Json(ApiResponse::internal_error());
+            }
+        };
 
         info!(
             request_id = request_id,
@@ -317,22 +346,23 @@ pub async fn get_static_dataset_handler(
             "Static dataset info retrieved successfully"
         );
 
-        Ok(Json(response_data))
+        Json(ApiResponse::success(response_data))
     } else {
         let status = response.status();
         let error_text = response
             .text()
             .await
             .unwrap_or_else(|_| "Unknown error".to_string());
+
         error!(
             request_id = request_id,
             dataset_id = dataset_id,
             status = %status,
             error = error_text,
-            "Secure service returned error"
+            "Failed to get static dataset info"
         );
 
-        Err(map_secure_service_status(status))
+        Json(ApiResponse::internal_error())
     }
 }
 
@@ -358,7 +388,7 @@ pub async fn get_static_dataset_handler(
 pub async fn get_sample_data_handler(
     State(state): State<AppState>,
     Path(cid): Path<String>,
-) -> Result<axum::response::Response, StatusCode> {
+) -> axum::response::Response {
     let request_id = generate_request_id();
     tracing::Span::current().record("request_id", &request_id);
 
@@ -372,14 +402,20 @@ pub async fn get_sample_data_handler(
     let secure_service_url = &state.config.services.secure_url;
 
     let client = reqwest::Client::new();
-    let response = client
+    let response = match client
         .get(&format!("{}/api/sample/{}", secure_service_url, cid))
         .send()
         .await
-        .map_err(|e| {
+    {
+        Ok(resp) => resp,
+        Err(e) => {
             error!("Failed to forward request to secure service: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+            return axum::response::Response::builder()
+                .status(500)
+                .body(axum::body::Body::from("Internal server error"))
+                .unwrap();
+        }
+    };
 
     if response.status().is_success() {
         let headers = response.headers().clone();
@@ -394,10 +430,16 @@ pub async fn get_sample_data_handler(
             .and_then(|v| v.to_str().ok())
             .unwrap_or(&default_disposition);
 
-        let body = response.bytes().await.map_err(|e| {
-            error!("Failed to read response body from secure service: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+        let body = match response.bytes().await {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                error!("Failed to read response body from secure service: {}", e);
+                return axum::response::Response::builder()
+                    .status(500)
+                    .body(axum::body::Body::from("Internal server error"))
+                    .unwrap();
+            }
+        };
 
         info!(
             request_id = request_id,
@@ -407,12 +449,12 @@ pub async fn get_sample_data_handler(
         );
 
         // Return the raw CSV data with appropriate headers
-        Ok(axum::response::Response::builder()
-            .status(StatusCode::OK)
+        axum::response::Response::builder()
+            .status(200)
             .header("Content-Type", content_type)
             .header("Content-Disposition", content_disposition)
             .body(axum::body::Body::from(body))
-            .unwrap())
+            .unwrap()
     } else {
         let status = response.status();
         let error_text = response
@@ -427,7 +469,10 @@ pub async fn get_sample_data_handler(
             "Secure service returned error"
         );
 
-        Err(map_secure_service_status(status))
+        axum::response::Response::builder()
+            .status(500)
+            .body(axum::body::Body::from("Internal server error"))
+            .unwrap()
     }
 }
 
@@ -441,11 +486,11 @@ pub async fn get_sample_data_handler(
     description = "Create a new dynamic dataset with mutable storage (admin only)",
     request_body = CreateDatasetRequest,
     responses(
-        (status = 200, description = "Dataset created successfully", body = DelongApiResponse<DynamicDatasetInfo>),
-        (status = 400, description = "Invalid request parameters", body = DelongApiResponse<String>),
-        (status = 401, description = "Unauthorized - invalid or missing API key", body = DelongApiResponse<String>),
-        (status = 403, description = "Forbidden - admin access required", body = DelongApiResponse<String>),
-        (status = 500, description = "Internal server error", body = DelongApiResponse<String>)
+        (status = 200, description = "Dataset created successfully", body = ApiResponse<DynamicDatasetInfo>),
+        (status = 400, description = "Invalid request parameters", body = ApiResponse<String>),
+        (status = 401, description = "Unauthorized - invalid or missing API key", body = ApiResponse<String>),
+        (status = 403, description = "Forbidden - admin access required", body = ApiResponse<String>),
+        (status = 500, description = "Internal server error", body = ApiResponse<String>)
     ),
     security(
         ("api_key" = [])
@@ -455,7 +500,7 @@ pub async fn get_sample_data_handler(
 pub async fn create_dataset_handler(
     State(state): State<AppState>,
     Json(payload): Json<CreateDatasetRequest>,
-) -> Result<Json<DelongApiResponse<DynamicDatasetInfo>>, StatusCode> {
+) -> Json<ApiResponse<DynamicDatasetInfo>> {
     let request_id = generate_request_id();
     tracing::Span::current().record("request_id", &request_id);
 
@@ -468,29 +513,34 @@ pub async fn create_dataset_handler(
     // Validate request
     if payload.name.trim().is_empty() {
         warn!(request_id = request_id, "Dataset name is required");
-        return Err(StatusCode::BAD_REQUEST);
+        return Json(ApiResponse::bad_request());
     }
 
     // Forward to core service
     let core_service_url = &state.config.services.core_url;
 
     let client = reqwest::Client::new();
-    let response = client
+    let response = match client
         .post(&format!("{}/api/datasets", core_service_url))
         .json(&payload)
         .send()
         .await
-        .map_err(|e| {
+    {
+        Ok(resp) => resp,
+        Err(e) => {
             error!("Failed to forward request to core service: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+            return Json(ApiResponse::internal_error());
+        }
+    };
 
     if response.status().is_success() {
-        let response_data: DelongApiResponse<DynamicDatasetInfo> =
-            response.json().await.map_err(|e| {
+        let response_data: DynamicDatasetInfo = match response.json().await {
+            Ok(data) => data,
+            Err(e) => {
                 error!("Failed to parse response from core service: {}", e);
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?;
+                return Json(ApiResponse::internal_error());
+            }
+        };
 
         info!(
             request_id = request_id,
@@ -498,7 +548,7 @@ pub async fn create_dataset_handler(
             "Dynamic dataset creation forwarded successfully"
         );
 
-        Ok(Json(response_data))
+        Json(ApiResponse::success(response_data))
     } else {
         let status = response.status();
         let error_text = response
@@ -512,7 +562,7 @@ pub async fn create_dataset_handler(
             "Core service returned error"
         );
 
-        Err(map_core_service_status(status))
+        Json(ApiResponse::internal_error())
     }
 }
 
@@ -532,10 +582,10 @@ pub async fn create_dataset_handler(
         ("created_before" = Option<String>, Query, description = "Filter datasets created before this date (ISO 8601)")
     ),
     responses(
-        (status = 200, description = "Datasets retrieved successfully", body = DelongApiResponse<Vec<DynamicDatasetInfo>>),
-        (status = 400, description = "Invalid query parameters", body = DelongApiResponse<String>),
-        (status = 401, description = "Unauthorized - invalid or missing API key", body = DelongApiResponse<String>),
-        (status = 500, description = "Internal server error", body = DelongApiResponse<String>)
+        (status = 200, description = "Datasets retrieved successfully", body = ApiResponse<Vec<DynamicDatasetInfo>>),
+        (status = 400, description = "Invalid query parameters", body = ApiResponse<String>),
+        (status = 401, description = "Unauthorized - invalid or missing API key", body = ApiResponse<String>),
+        (status = 500, description = "Internal server error", body = ApiResponse<String>)
     ),
     security(
         ("api_key" = [])
@@ -545,7 +595,7 @@ pub async fn create_dataset_handler(
 pub async fn get_datasets_handler(
     State(state): State<AppState>,
     Query(query): Query<DynamicDatasetListQuery>,
-) -> Result<Json<DelongApiResponse<DatasetPaginatedResponse<DynamicDatasetInfo>>>, StatusCode> {
+) -> Json<ApiResponse<DatasetPaginatedResponse<DynamicDatasetInfo>>> {
     let request_id = generate_request_id();
     tracing::Span::current().record("request_id", &request_id);
 
@@ -560,30 +610,36 @@ pub async fn get_datasets_handler(
     let core_service_url = &state.config.services.core_url;
 
     let client = reqwest::Client::new();
-    let response = client
+    let response = match client
         .get(&format!("{}/api/datasets", core_service_url))
         .query(&[("page", query.page), ("page_size", query.page_size)])
         .send()
         .await
-        .map_err(|e| {
+    {
+        Ok(resp) => resp,
+        Err(e) => {
             error!("Failed to forward request to core service: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+            return Json(ApiResponse::internal_error());
+        }
+    };
 
     if response.status().is_success() {
-        let response_data: DelongApiResponse<DatasetPaginatedResponse<DynamicDatasetInfo>> =
-            response.json().await.map_err(|e| {
-                error!("Failed to parse response from core service: {}", e);
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?;
+        let response_data: DatasetPaginatedResponse<DynamicDatasetInfo> =
+            match response.json().await {
+                Ok(data) => data,
+                Err(e) => {
+                    error!("Failed to parse response from core service: {}", e);
+                    return Json(ApiResponse::internal_error());
+                }
+            };
 
         info!(
             request_id = request_id,
-            total_items = response_data.data.as_ref().map(|d| d.total).unwrap_or(0),
+            total_items = response_data.total,
             "Dynamic datasets list retrieved successfully"
         );
 
-        Ok(Json(response_data))
+        Json(ApiResponse::success(response_data))
     } else {
         let status = response.status();
         let error_text = response
@@ -597,39 +653,11 @@ pub async fn get_datasets_handler(
             "Core service returned error"
         );
 
-        Err(map_core_service_status(status))
+        Json(ApiResponse::internal_error())
     }
 }
 
 /// Map secure service HTTP status to gateway status
-fn map_secure_service_status(status: reqwest::StatusCode) -> StatusCode {
-    match status {
-        reqwest::StatusCode::BAD_REQUEST => StatusCode::BAD_REQUEST,
-        reqwest::StatusCode::UNAUTHORIZED => StatusCode::UNAUTHORIZED,
-        reqwest::StatusCode::FORBIDDEN => StatusCode::FORBIDDEN,
-        reqwest::StatusCode::NOT_FOUND => StatusCode::NOT_FOUND,
-        reqwest::StatusCode::CONFLICT => StatusCode::CONFLICT,
-        reqwest::StatusCode::UNPROCESSABLE_ENTITY => StatusCode::UNPROCESSABLE_ENTITY,
-        reqwest::StatusCode::INTERNAL_SERVER_ERROR => StatusCode::INTERNAL_SERVER_ERROR,
-        reqwest::StatusCode::SERVICE_UNAVAILABLE => StatusCode::SERVICE_UNAVAILABLE,
-        _ => StatusCode::INTERNAL_SERVER_ERROR,
-    }
-}
-
-/// Map core service HTTP status to gateway status
-fn map_core_service_status(status: reqwest::StatusCode) -> StatusCode {
-    match status {
-        reqwest::StatusCode::BAD_REQUEST => StatusCode::BAD_REQUEST,
-        reqwest::StatusCode::UNAUTHORIZED => StatusCode::UNAUTHORIZED,
-        reqwest::StatusCode::FORBIDDEN => StatusCode::FORBIDDEN,
-        reqwest::StatusCode::NOT_FOUND => StatusCode::NOT_FOUND,
-        reqwest::StatusCode::CONFLICT => StatusCode::CONFLICT,
-        reqwest::StatusCode::UNPROCESSABLE_ENTITY => StatusCode::UNPROCESSABLE_ENTITY,
-        reqwest::StatusCode::INTERNAL_SERVER_ERROR => StatusCode::INTERNAL_SERVER_ERROR,
-        reqwest::StatusCode::SERVICE_UNAVAILABLE => StatusCode::SERVICE_UNAVAILABLE,
-        _ => StatusCode::INTERNAL_SERVER_ERROR,
-    }
-}
 
 /// Update dynamic dataset
 /// PUT /api/datasets/{id}
@@ -644,12 +672,12 @@ fn map_core_service_status(status: reqwest::StatusCode) -> StatusCode {
     ),
     request_body = UpdateDatasetRequest,
     responses(
-        (status = 200, description = "Dataset updated successfully", body = DelongApiResponse<DynamicDatasetInfo>),
-        (status = 400, description = "Invalid request parameters", body = DelongApiResponse<String>),
-        (status = 401, description = "Unauthorized - invalid or missing API key", body = DelongApiResponse<String>),
-        (status = 403, description = "Forbidden - insufficient permissions", body = DelongApiResponse<String>),
-        (status = 404, description = "Dataset not found", body = DelongApiResponse<String>),
-        (status = 500, description = "Internal server error", body = DelongApiResponse<String>)
+        (status = 200, description = "Dataset updated successfully", body = ApiResponse<DynamicDatasetInfo>),
+        (status = 400, description = "Invalid request parameters", body = ApiResponse<String>),
+        (status = 401, description = "Unauthorized - invalid or missing API key", body = ApiResponse<String>),
+        (status = 403, description = "Forbidden - insufficient permissions", body = ApiResponse<String>),
+        (status = 404, description = "Dataset not found", body = ApiResponse<String>),
+        (status = 500, description = "Internal server error", body = ApiResponse<String>)
     ),
     security(
         ("api_key" = [])
@@ -660,7 +688,7 @@ pub async fn update_dataset_handler(
     State(state): State<AppState>,
     Path(id): Path<u32>,
     Json(payload): Json<UpdateDatasetRequest>,
-) -> Result<Json<DelongApiResponse<DynamicDatasetInfo>>, StatusCode> {
+) -> Json<ApiResponse<DynamicDatasetInfo>> {
     let request_id = generate_request_id();
     tracing::Span::current().record("request_id", &request_id);
 
@@ -674,22 +702,27 @@ pub async fn update_dataset_handler(
     let core_service_url = &state.config.services.core_url;
 
     let client = reqwest::Client::new();
-    let response = client
+    let response = match client
         .put(&format!("{}/api/datasets/{}", core_service_url, id))
         .json(&payload)
         .send()
         .await
-        .map_err(|e| {
+    {
+        Ok(resp) => resp,
+        Err(e) => {
             error!("Failed to forward request to core service: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+            return Json(ApiResponse::internal_error());
+        }
+    };
 
     if response.status().is_success() {
-        let response_data: DelongApiResponse<DynamicDatasetInfo> =
-            response.json().await.map_err(|e| {
+        let response_data: DynamicDatasetInfo = match response.json().await {
+            Ok(data) => data,
+            Err(e) => {
                 error!("Failed to parse response from core service: {}", e);
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?;
+                return Json(ApiResponse::internal_error());
+            }
+        };
 
         info!(
             request_id = request_id,
@@ -697,7 +730,7 @@ pub async fn update_dataset_handler(
             "Dynamic dataset updated successfully"
         );
 
-        Ok(Json(response_data))
+        Json(ApiResponse::success(response_data))
     } else {
         let status = response.status();
         let error_text = response
@@ -711,7 +744,7 @@ pub async fn update_dataset_handler(
             "Core service returned error"
         );
 
-        Err(map_core_service_status(status))
+        Json(ApiResponse::internal_error())
     }
 }
 
@@ -727,12 +760,12 @@ pub async fn update_dataset_handler(
         ("id" = u32, Path, description = "Dataset ID")
     ),
     responses(
-        (status = 200, description = "Dataset deleted successfully", body = DelongApiResponse<String>),
-        (status = 400, description = "Invalid dataset ID", body = DelongApiResponse<String>),
-        (status = 401, description = "Unauthorized - invalid or missing API key", body = DelongApiResponse<String>),
-        (status = 403, description = "Forbidden - insufficient permissions", body = DelongApiResponse<String>),
-        (status = 404, description = "Dataset not found", body = DelongApiResponse<String>),
-        (status = 500, description = "Internal server error", body = DelongApiResponse<String>)
+        (status = 200, description = "Dataset deleted successfully", body = ApiResponse<String>),
+        (status = 400, description = "Invalid dataset ID", body = ApiResponse<String>),
+        (status = 401, description = "Unauthorized - invalid or missing API key", body = ApiResponse<String>),
+        (status = 403, description = "Forbidden - insufficient permissions", body = ApiResponse<String>),
+        (status = 404, description = "Dataset not found", body = ApiResponse<String>),
+        (status = 500, description = "Internal server error", body = ApiResponse<String>)
     ),
     security(
         ("api_key" = [])
@@ -742,7 +775,7 @@ pub async fn update_dataset_handler(
 pub async fn delete_dataset_handler(
     State(state): State<AppState>,
     Path(id): Path<u32>,
-) -> Result<Json<DelongApiResponse<()>>, StatusCode> {
+) -> Json<ApiResponse<()>> {
     let request_id = generate_request_id();
     tracing::Span::current().record("request_id", &request_id);
 
@@ -756,20 +789,26 @@ pub async fn delete_dataset_handler(
     let core_service_url = &state.config.services.core_url;
 
     let client = reqwest::Client::new();
-    let response = client
+    let response = match client
         .delete(&format!("{}/api/datasets/{}", core_service_url, id))
         .send()
         .await
-        .map_err(|e| {
+    {
+        Ok(resp) => resp,
+        Err(e) => {
             error!("Failed to forward request to core service: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+            return Json(ApiResponse::internal_error());
+        }
+    };
 
     if response.status().is_success() {
-        let response_data: DelongApiResponse<()> = response.json().await.map_err(|e| {
-            error!("Failed to parse response from core service: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+        let _response_data: () = match response.json().await {
+            Ok(data) => data,
+            Err(e) => {
+                error!("Failed to parse response from core service: {}", e);
+                return Json(ApiResponse::internal_error());
+            }
+        };
 
         info!(
             request_id = request_id,
@@ -777,7 +816,7 @@ pub async fn delete_dataset_handler(
             "Dynamic dataset deleted successfully"
         );
 
-        Ok(Json(response_data))
+        Json(ApiResponse::success(()))
     } else {
         let status = response.status();
         let error_text = response
@@ -791,7 +830,7 @@ pub async fn delete_dataset_handler(
             "Core service returned error"
         );
 
-        Err(map_core_service_status(status))
+        Json(ApiResponse::internal_error())
     }
 }
 
@@ -808,12 +847,12 @@ pub async fn delete_dataset_handler(
     ),
     request_body = UpdateStaticDatasetRequest,
     responses(
-        (status = 200, description = "Dataset updated successfully", body = DelongApiResponse<StaticDatasetInfo>),
-        (status = 400, description = "Invalid request parameters", body = DelongApiResponse<String>),
-        (status = 401, description = "Unauthorized - invalid or missing API key", body = DelongApiResponse<String>),
-        (status = 403, description = "Forbidden - insufficient permissions", body = DelongApiResponse<String>),
-        (status = 404, description = "Dataset not found", body = DelongApiResponse<String>),
-        (status = 500, description = "Internal server error", body = DelongApiResponse<String>)
+        (status = 200, description = "Dataset updated successfully", body = ApiResponse<StaticDatasetInfo>),
+        (status = 400, description = "Invalid request parameters", body = ApiResponse<String>),
+        (status = 401, description = "Unauthorized - invalid or missing API key", body = ApiResponse<String>),
+        (status = 403, description = "Forbidden - insufficient permissions", body = ApiResponse<String>),
+        (status = 404, description = "Dataset not found", body = ApiResponse<String>),
+        (status = 500, description = "Internal server error", body = ApiResponse<String>)
     ),
     security(
         ("api_key" = [])
@@ -824,7 +863,7 @@ pub async fn update_static_dataset_handler(
     State(state): State<AppState>,
     Path(id): Path<u32>,
     Json(payload): Json<UpdateStaticDatasetRequest>,
-) -> Result<Json<DelongApiResponse<StaticDatasetInfo>>, StatusCode> {
+) -> Json<ApiResponse<StaticDatasetInfo>> {
     let request_id = generate_request_id();
     tracing::Span::current().record("request_id", &request_id);
 
@@ -838,7 +877,7 @@ pub async fn update_static_dataset_handler(
     let secure_service_url = &state.config.services.secure_url;
 
     let client = reqwest::Client::new();
-    let response = client
+    let response = match client
         .put(&format!(
             "{}/api/static-datasets/{}",
             secure_service_url, id
@@ -846,17 +885,22 @@ pub async fn update_static_dataset_handler(
         .json(&payload)
         .send()
         .await
-        .map_err(|e| {
+    {
+        Ok(resp) => resp,
+        Err(e) => {
             error!("Failed to forward request to secure service: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+            return Json(ApiResponse::internal_error());
+        }
+    };
 
     if response.status().is_success() {
-        let response_data: DelongApiResponse<StaticDatasetInfo> =
-            response.json().await.map_err(|e| {
+        let response_data: StaticDatasetInfo = match response.json().await {
+            Ok(data) => data,
+            Err(e) => {
                 error!("Failed to parse response from secure service: {}", e);
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?;
+                return Json(ApiResponse::internal_error());
+            }
+        };
 
         info!(
             request_id = request_id,
@@ -864,7 +908,7 @@ pub async fn update_static_dataset_handler(
             "Static dataset updated successfully"
         );
 
-        Ok(Json(response_data))
+        Json(ApiResponse::success(response_data))
     } else {
         let status = response.status();
         let error_text = response
@@ -878,7 +922,7 @@ pub async fn update_static_dataset_handler(
             "Secure service returned error"
         );
 
-        Err(map_secure_service_status(status))
+        Json(ApiResponse::internal_error())
     }
 }
 
@@ -894,12 +938,12 @@ pub async fn update_static_dataset_handler(
         ("id" = u32, Path, description = "Dataset ID")
     ),
     responses(
-        (status = 200, description = "Dataset deleted successfully", body = DelongApiResponse<String>),
-        (status = 400, description = "Invalid dataset ID", body = DelongApiResponse<String>),
-        (status = 401, description = "Unauthorized - invalid or missing API key", body = DelongApiResponse<String>),
-        (status = 403, description = "Forbidden - insufficient permissions", body = DelongApiResponse<String>),
-        (status = 404, description = "Dataset not found", body = DelongApiResponse<String>),
-        (status = 500, description = "Internal server error", body = DelongApiResponse<String>)
+        (status = 200, description = "Dataset deleted successfully", body = ApiResponse<String>),
+        (status = 400, description = "Invalid dataset ID", body = ApiResponse<String>),
+        (status = 401, description = "Unauthorized - invalid or missing API key", body = ApiResponse<String>),
+        (status = 403, description = "Forbidden - insufficient permissions", body = ApiResponse<String>),
+        (status = 404, description = "Dataset not found", body = ApiResponse<String>),
+        (status = 500, description = "Internal server error", body = ApiResponse<String>)
     ),
     security(
         ("api_key" = [])
@@ -909,7 +953,7 @@ pub async fn update_static_dataset_handler(
 pub async fn delete_static_dataset_handler(
     State(state): State<AppState>,
     Path(id): Path<u32>,
-) -> Result<Json<DelongApiResponse<()>>, StatusCode> {
+) -> Json<ApiResponse<()>> {
     let request_id = generate_request_id();
     tracing::Span::current().record("request_id", &request_id);
 
@@ -923,23 +967,29 @@ pub async fn delete_static_dataset_handler(
     let secure_service_url = &state.config.services.secure_url;
 
     let client = reqwest::Client::new();
-    let response = client
+    let response = match client
         .delete(&format!(
             "{}/api/static-datasets/{}",
             secure_service_url, id
         ))
         .send()
         .await
-        .map_err(|e| {
+    {
+        Ok(resp) => resp,
+        Err(e) => {
             error!("Failed to forward request to secure service: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+            return Json(ApiResponse::internal_error());
+        }
+    };
 
     if response.status().is_success() {
-        let response_data: DelongApiResponse<()> = response.json().await.map_err(|e| {
-            error!("Failed to parse response from secure service: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+        let _response_data: () = match response.json().await {
+            Ok(data) => data,
+            Err(e) => {
+                error!("Failed to parse response from secure service: {}", e);
+                return Json(ApiResponse::internal_error());
+            }
+        };
 
         info!(
             request_id = request_id,
@@ -947,7 +997,7 @@ pub async fn delete_static_dataset_handler(
             "Static dataset deleted successfully"
         );
 
-        Ok(Json(response_data))
+        Json(ApiResponse::success(()))
     } else {
         let status = response.status();
         let error_text = response
@@ -961,7 +1011,7 @@ pub async fn delete_static_dataset_handler(
             "Secure service returned error"
         );
 
-        Err(map_secure_service_status(status))
+        Json(ApiResponse::internal_error())
     }
 }
 
@@ -994,21 +1044,5 @@ mod tests {
         assert_eq!(request.name, "test_dataset");
         assert_eq!(request.ui_name, "Test Dataset");
         assert!(request.description.is_some());
-    }
-
-    #[test]
-    fn test_status_code_mapping() {
-        assert_eq!(
-            map_secure_service_status(reqwest::StatusCode::BAD_REQUEST),
-            StatusCode::BAD_REQUEST
-        );
-        assert_eq!(
-            map_secure_service_status(reqwest::StatusCode::NOT_FOUND),
-            StatusCode::NOT_FOUND
-        );
-        assert_eq!(
-            map_secure_service_status(reqwest::StatusCode::INTERNAL_SERVER_ERROR),
-            StatusCode::INTERNAL_SERVER_ERROR
-        );
     }
 }

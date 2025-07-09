@@ -151,19 +151,6 @@ pub struct DynamicDatasetListQuery {
     pub page_size: u32,
 }
 
-/// Standard API response format matching the documentation
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
-pub struct DelongApiResponse<T> {
-    /// Response code
-    pub code: String,
-    /// Response data (optional)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<T>,
-    /// Response message (optional)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
-}
-
 /// Paginated response wrapper for datasets
 #[derive(Debug, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct DatasetPaginatedResponse<T> {
@@ -462,35 +449,6 @@ impl UpdateStaticDatasetRequest {
     }
 }
 
-impl<T> DelongApiResponse<T> {
-    /// Create a successful response
-    pub fn success(data: T) -> Self {
-        Self {
-            code: "SUCCESS".to_string(),
-            data: Some(data),
-            message: None,
-        }
-    }
-
-    /// Create a successful response with message
-    pub fn success_with_message(data: T, message: String) -> Self {
-        Self {
-            code: "SUCCESS".to_string(),
-            data: Some(data),
-            message: Some(message),
-        }
-    }
-
-    /// Create an error response
-    pub fn error(code: String, message: String) -> Self {
-        Self {
-            code,
-            data: None,
-            message: Some(message),
-        }
-    }
-}
-
 impl<T> DatasetPaginatedResponse<T> {
     /// Create a new paginated response
     pub fn new(items: Vec<T>, page: u32, page_size: u32, total: u64) -> Self {
@@ -694,19 +652,6 @@ mod tests {
         assert_eq!(request.name, Some("New Name".to_string()));
         assert_eq!(request.desc, Some("New Description".to_string()));
         assert!(request.has_updates());
-    }
-
-    #[test]
-    fn test_delong_api_response() {
-        let success_response = DelongApiResponse::success("test data");
-        assert_eq!(success_response.code, "SUCCESS");
-        assert_eq!(success_response.data, Some("test data"));
-
-        let error_response: DelongApiResponse<()> =
-            DelongApiResponse::error("BAD_REQUEST".to_string(), "Invalid input".to_string());
-        assert_eq!(error_response.code, "BAD_REQUEST");
-        assert!(error_response.data.is_none());
-        assert_eq!(error_response.message, Some("Invalid input".to_string()));
     }
 
     #[test]

@@ -1,15 +1,8 @@
 [package]
-name = "core"
+name = "delong-core"
 version = { workspace = true }
 edition = { workspace = true }
 
-[lib]
-name = "core"
-path = "src/lib.rs"
-
-[[bin]]
-name = "core"
-path = "src/main.rs"
 
 [dependencies]
 # HTTP framework and async runtime

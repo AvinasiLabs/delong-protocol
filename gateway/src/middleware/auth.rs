@@ -15,8 +15,8 @@ use tracing::{debug, error, info, warn};
 
 use crate::cache::{CacheResult, CachedApiKeyData, CachedJwtData, RedisCache};
 use crate::services::{extract_api_key, http_client::BackendClient};
-use core::{Permission, RateLimitTier, is_valid_api_key_format};
-use core::{ValidateApiKeyRequest, ValidateApiKeyResponse};
+use common::prelude::{Permission, RateLimitTier, is_valid_api_key_format};
+use common::prelude::{ValidateApiKeyRequest, ValidateApiKeyResponse};
 
 use uuid;
 
@@ -479,7 +479,7 @@ async fn validate_api_key_with_backend(api_key: &str) -> Result<InternalApiKeyIn
             AuthError::ServiceUnavailable
         })?;
 
-    let api_response: delong_common::ApiResponse<ValidateApiKeyResponse> =
+    let api_response: common::prelude::ApiResponse<ValidateApiKeyResponse> =
         response.json().await.map_err(|e| {
             error!(error = %e, "Failed to parse API key validation response");
             AuthError::ServiceUnavailable

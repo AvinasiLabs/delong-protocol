@@ -24,7 +24,7 @@ pub mod websocket;
 // Common response types used across handlers
 
 // Use unified API response and pagination types from common crate
-pub use core::{
+pub use common::prelude::{
     ApiError, ApiResponse, ApiResult, PaginatedResponse, PaginationParams, ResponseCode,
 };
 

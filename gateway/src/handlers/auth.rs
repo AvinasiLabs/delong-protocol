@@ -5,23 +5,20 @@
 
 use axum::{
     extract::{Path, Query},
-    http::StatusCode,
     response::Json,
 };
-use core::ResponseCode;
+use common::ResponseCode;
 use tracing::{info, instrument, warn};
 use utoipa;
 
-use crate::{
-    handlers::{ApiResponse, PaginatedResponse},
-    services::{generate_request_id, generate_unique_id},
-};
+use crate::handlers::{ApiResponse, PaginatedResponse};
+use common::prelude::*;
 
-use core::{
-    ApiKeyInfo, ApiKeyListQuery, CreateApiKeyRequest, CreateApiKeyResponse, Permission,
-    RateLimitTier, RevokeApiKeyRequest, RevokeApiKeyResponse, ValidateApiKeyRequest,
-    ValidateApiKeyResponse, is_valid_api_key_format,
-};
+// use common::{
+//     ApiKeyInfo, ApiKeyListQuery, CreateApiKeyRequest, CreateApiKeyResponse, Permission,
+//     RateLimitTier, RevokeApiKeyRequest, RevokeApiKeyResponse, ValidateApiKeyRequest,
+//     ValidateApiKeyResponse, is_valid_api_key_format,
+// };
 
 /// Create a new API key
 #[utoipa::path(
@@ -44,7 +41,7 @@ use core::{
 #[instrument(skip(payload), fields(request_id))]
 pub async fn create_api_key_handler(
     Json(payload): Json<CreateApiKeyRequest>,
-) -> Result<Json<ApiResponse<CreateApiKeyResponse>>, StatusCode> {
+) -> Json<ApiResponse<CreateApiKeyResponse>> {
     let request_id = generate_request_id();
     tracing::Span::current().record("request_id", &request_id);
 
@@ -62,11 +59,11 @@ pub async fn create_api_key_handler(
             request_id = request_id,
             "API key creation failed: empty name"
         );
-        return Ok(Json(ApiResponse {
+        return Json(ApiResponse {
             code: ResponseCode::BadRequest,
             data: None,
             request_id: Some(request_id),
-        }));
+        });
     }
 
     if payload.permissions.is_empty() {
@@ -74,11 +71,11 @@ pub async fn create_api_key_handler(
             request_id = request_id,
             "API key creation failed: no permissions specified"
         );
-        return Ok(Json(ApiResponse {
+        return Json(ApiResponse {
             code: ResponseCode::BadRequest,
             data: None,
             request_id: Some(request_id),
-        }));
+        });
     }
 
     // Validate expiration days
@@ -89,11 +86,11 @@ pub async fn create_api_key_handler(
             expires_in_days = expires_in_days,
             "API key creation failed: expiration too long"
         );
-        return Ok(Json(ApiResponse {
+        return Json(ApiResponse {
             code: ResponseCode::BadRequest,
             data: None,
             request_id: Some(request_id),
-        }));
+        });
     }
 
     // TODO: Forward to core service for actual API key creation
@@ -134,10 +131,7 @@ pub async fn create_api_key_handler(
         "API key created successfully"
     );
 
-    Ok(Json(ApiResponse::success_with_id(
-        response_data,
-        request_id,
-    )))
+    Json(ApiResponse::success_with_id(response_data, request_id))
 }
 
 /// Validate an API key
@@ -161,12 +155,12 @@ pub async fn create_api_key_handler(
 #[instrument(skip(payload), fields(request_id))]
 pub async fn validate_api_key_handler(
     Json(payload): Json<ValidateApiKeyRequest>,
-) -> Result<Json<ApiResponse<ValidateApiKeyResponse>>, StatusCode> {
+) -> Json<ApiResponse<ValidateApiKeyResponse>> {
     let request_id = generate_request_id();
     tracing::Span::current().record("request_id", &request_id);
 
     info!(
-        request_id = request_id,
+        request_id = &request_id,
         context = payload.context,
         "API key validation request received"
     );
@@ -174,7 +168,7 @@ pub async fn validate_api_key_handler(
     // Validate API key format
     if !is_valid_api_key_format(&payload.api_key) {
         warn!(
-            request_id = request_id,
+            request_id = &request_id,
             "API key validation failed: invalid format"
         );
 
@@ -187,10 +181,7 @@ pub async fn validate_api_key_handler(
             validation_message: "Invalid API key format".to_string(),
         };
 
-        return Ok(Json(ApiResponse::success_with_id(
-            response_data,
-            request_id,
-        )));
+        return Json(ApiResponse::success_with_id(response_data, request_id));
     }
 
     // TODO: Forward to core service for actual validation
@@ -228,17 +219,9 @@ pub async fn validate_api_key_handler(
         }
     };
 
-    info!(
-        request_id = request_id,
-        is_valid = response_data.is_valid,
-        user_id = response_data.user_id,
-        "API key validation completed"
-    );
+    info!(request_id = &request_id, "API key validation completed");
 
-    Ok(Json(ApiResponse::success_with_id(
-        response_data,
-        request_id,
-    )))
+    Json(ApiResponse::success_with_id(response_data, request_id))
 }
 
 /// Revoke an API key
@@ -267,7 +250,7 @@ pub async fn validate_api_key_handler(
 pub async fn revoke_api_key_handler(
     Path(key_id): Path<String>,
     Json(payload): Json<RevokeApiKeyRequest>,
-) -> Result<Json<ApiResponse<RevokeApiKeyResponse>>, StatusCode> {
+) -> Json<ApiResponse<RevokeApiKeyResponse>> {
     let request_id = generate_request_id();
     tracing::Span::current().record("request_id", &request_id);
 
@@ -286,11 +269,11 @@ pub async fn revoke_api_key_handler(
             key_id = key_id,
             "Invalid API key ID format"
         );
-        return Ok(Json(ApiResponse {
+        return Json(ApiResponse {
             code: ResponseCode::BadRequest,
             data: None,
             request_id: Some(request_id),
-        }));
+        });
     }
 
     // TODO: Forward to core service for actual revocation
@@ -316,10 +299,7 @@ pub async fn revoke_api_key_handler(
         "API key revoked successfully"
     );
 
-    Ok(Json(ApiResponse::success_with_id(
-        response_data,
-        request_id,
-    )))
+    Json(ApiResponse::success_with_id(response_data, request_id))
 }
 
 /// List user's API keys (admin endpoint)
@@ -351,7 +331,7 @@ pub async fn revoke_api_key_handler(
 #[instrument(fields(request_id))]
 pub async fn list_api_keys_handler(
     Query(query): Query<ApiKeyListQuery>,
-) -> Result<Json<ApiResponse<PaginatedResponse<ApiKeyInfo>>>, StatusCode> {
+) -> Json<ApiResponse<PaginatedResponse<ApiKeyInfo>>> {
     let request_id = generate_request_id();
     tracing::Span::current().record("request_id", &request_id);
 
@@ -388,10 +368,7 @@ pub async fn list_api_keys_handler(
         "API key list retrieved successfully"
     );
 
-    Ok(Json(ApiResponse::success_with_id(
-        response_data,
-        request_id,
-    )))
+    Json(ApiResponse::success_with_id(response_data, request_id))
 }
 
 /// Generate a new API key

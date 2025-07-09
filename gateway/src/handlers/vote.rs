@@ -5,7 +5,6 @@
 
 use axum::{
     extract::{Query, State},
-    http::StatusCode,
     response::Json,
 };
 use tracing::{error, info};
@@ -16,7 +15,7 @@ use crate::{
     services::http_client::{forward_get, forward_post},
 };
 
-use core::{SetVoteDurationRequest, VoteData, VoteDurationResponse};
+use common::prelude::{SetVoteDurationRequest, VoteData, VoteDurationResponse};
 
 /// Handler for getting vote list
 ///
@@ -45,7 +44,7 @@ use core::{SetVoteDurationRequest, VoteData, VoteDurationResponse};
 pub async fn get_votes_handler(
     State(state): State<AppState>,
     Query(params): Query<PaginationParams>,
-) -> Result<Json<ApiResponse<PaginatedResponse<VoteData>>>, StatusCode> {
+) -> Json<ApiResponse<PaginatedResponse<VoteData>>> {
     info!(
         "Getting votes list: page={}, limit={}",
         params.page, params.limit
@@ -67,11 +66,11 @@ pub async fn get_votes_handler(
                 response.page,
                 response.total_pages
             );
-            Ok(Json(ApiResponse::success(response)))
+            Json(ApiResponse::success(response))
         }
         Err(e) => {
-            error!("Failed to get votes: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            error!("Failed to get votes: {:?}", e);
+            Json(ApiResponse::internal_error())
         }
     }
 }
@@ -101,7 +100,7 @@ pub async fn get_votes_handler(
 pub async fn set_vote_duration_handler(
     State(state): State<AppState>,
     Json(payload): Json<SetVoteDurationRequest>,
-) -> Result<Json<ApiResponse<VoteDurationResponse>>, StatusCode> {
+) -> Json<ApiResponse<VoteDurationResponse>> {
     info!("Setting vote duration: {} seconds", payload.duration);
 
     // Forward request to Secure service
@@ -120,11 +119,11 @@ pub async fn set_vote_duration_handler(
                 "Vote duration set successfully: {} seconds",
                 response.duration
             );
-            Ok(Json(ApiResponse::success(response)))
+            Json(ApiResponse::success(response))
         }
         Err(e) => {
-            error!("Failed to set vote duration: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            error!("Failed to set vote duration: {:?}", e);
+            Json(ApiResponse::internal_error())
         }
     }
 }

@@ -5,21 +5,17 @@
 
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
     response::Json,
 };
-use core::ResponseCode;
+
 use tracing::{error, info, instrument};
 
 use crate::{
     handlers::ApiResponse,
     routes::AppState,
-    services::{generate_request_id, http_client::forward_post},
+    services::http_client::{forward_get, forward_post},
 };
-use core::{
-    AlgoExeData, AlgoExeSubmissionRequest, AlgoExeSubmissionResponse, PaginatedResponse,
-    PaginationParams,
-};
+use common::prelude::*;
 
 /// Handler for submitting algorithm execution
 ///
@@ -47,7 +43,7 @@ use core::{
 pub async fn submit_algo_exe_handler(
     State(state): State<AppState>,
     Json(payload): Json<AlgoExeSubmissionRequest>,
-) -> Result<Json<ApiResponse<AlgoExeSubmissionResponse>>, StatusCode> {
+) -> Json<ApiResponse<AlgoExeSubmissionResponse>> {
     let request_id = generate_request_id();
     tracing::Span::current().record("request_id", &request_id);
     info!(
@@ -71,19 +67,19 @@ pub async fn submit_algo_exe_handler(
                 "Algorithm execution submitted successfully: id={}",
                 response.id
             );
-            Ok(Json(ApiResponse::success(response)))
+            Json(ApiResponse::success(response))
         }
         Err(e) => {
             error!(
                 request_id = request_id,
-                error = %e,
+                error = ?e,
                 "Failed to submit algorithm execution"
             );
-            Ok(Json(ApiResponse {
+            Json(ApiResponse {
                 code: ResponseCode::InternalServerError,
                 data: None,
                 request_id: Some(request_id),
-            }))
+            })
         }
     }
 }
@@ -116,7 +112,7 @@ pub async fn submit_algo_exe_handler(
 pub async fn get_algo_exes_handler(
     State(state): State<AppState>,
     Query(params): Query<PaginationParams>,
-) -> Result<Json<ApiResponse<PaginatedResponse<AlgoExeData>>>, StatusCode> {
+) -> Json<ApiResponse<PaginatedResponse<AlgoExeData>>> {
     let request_id = generate_request_id();
     tracing::Span::current().record("request_id", &request_id);
     info!(
@@ -130,7 +126,7 @@ pub async fn get_algo_exes_handler(
         state.config.services.secure_url, params.page, params.limit
     );
 
-    match crate::services::http_client::forward_get::<PaginatedResponse<AlgoExeData>>(
+    match forward_get::<PaginatedResponse<AlgoExeData>>(
         state.http_client.as_ref(),
         &secure_url,
         None,
@@ -144,19 +140,19 @@ pub async fn get_algo_exes_handler(
                 response.page,
                 response.total_pages
             );
-            Ok(Json(ApiResponse::success(response)))
+            Json(ApiResponse::success(response))
         }
         Err(e) => {
             error!(
                 request_id = request_id,
-                error = %e,
+                error = ?e,
                 "Failed to get algorithm executions"
             );
-            Ok(Json(ApiResponse {
+            Json(ApiResponse {
                 code: ResponseCode::InternalServerError,
                 data: None,
                 request_id: Some(request_id),
-            }))
+            })
         }
     }
 }
@@ -189,7 +185,7 @@ pub async fn get_algo_exes_handler(
 pub async fn get_algo_exe_handler(
     State(state): State<AppState>,
     Path(id): Path<u64>,
-) -> Result<Json<ApiResponse<AlgoExeData>>, StatusCode> {
+) -> Json<ApiResponse<AlgoExeData>> {
     let request_id = generate_request_id();
     tracing::Span::current().record("request_id", &request_id);
     info!("Getting algorithm execution details: id={}", id);
@@ -197,32 +193,26 @@ pub async fn get_algo_exe_handler(
     // Forward request to Secure service
     let secure_url = format!("{}/api/algo-exes/{}", state.config.services.secure_url, id);
 
-    match crate::services::http_client::forward_get::<AlgoExeData>(
-        state.http_client.as_ref(),
-        &secure_url,
-        None,
-    )
-    .await
-    {
+    match forward_get::<AlgoExeData>(state.http_client.as_ref(), &secure_url, None).await {
         Ok(response) => {
             info!(
                 "Retrieved algorithm execution: id={}, status={}",
                 response.id, response.status
             );
-            Ok(Json(ApiResponse::success(response)))
+            Json(ApiResponse::success(response))
         }
         Err(e) => {
             error!(
                 request_id = request_id,
                 algo_exe_id = %id,
-                error = %e,
+                error = ?e,
                 "Failed to get algorithm execution"
             );
-            Ok(Json(ApiResponse {
+            Json(ApiResponse {
                 code: ResponseCode::InternalServerError,
                 data: None,
                 request_id: Some(request_id),
-            }))
+            })
         }
     }
 }

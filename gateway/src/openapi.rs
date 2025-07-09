@@ -10,88 +10,7 @@ use axum::{
 use utoipa::OpenApi;
 
 // Import all the models that have ToSchema implemented
-use core::{
-    // Algorithm execution models
-    AlgoExeData,
-    AlgoExeStatus,
-    AlgoExeSubmissionRequest,
-    AlgoExeSubmissionResponse,
-    AlgoReviewStatus,
-
-    // Auth models
-    ApiKeyInfo,
-    ApiResponse,
-    AuthContext,
-    AuthMethod,
-    // WebSocket models
-    BlockchainTransactionNotification,
-    // Vote models
-    CastVoteRequest,
-    // Committee models
-    CommitteeMemberData,
-    CommitteeMemberResponse,
-    ConnectionStats,
-    // Contract models
-    ContractData,
-    ContractResponse,
-    CreateApiKeyRequest,
-    CreateApiKeyResponse,
-    CreateContractRequest,
-    // Dataset models
-    CreateDatasetRequest,
-    DatasetFormat,
-    DatasetStatus,
-    DelongApiResponse,
-    DynamicDatasetInfo,
-    DynamicDatasetListQuery,
-    ExtendedContractData,
-    ExtendedVoteData,
-    JwtClaims,
-    MembershipCheckResponse,
-    NotificationMessage,
-    // Pagination models
-    PaginatedResponse,
-    PaginationParams,
-    Permission,
-    RateLimitTier,
-    // Report models
-    ReportInfo,
-    ReportQuery,
-    ReportStatus,
-    ReportSummary,
-    ReportType,
-    ResponseCode,
-
-    RevokeApiKeyRequest,
-    RevokeApiKeyResponse,
-    SetCommitteeMemberRequest,
-
-    SetVoteDurationRequest,
-    StaticDatasetInfo,
-    StaticDatasetListQuery,
-    SubscriptionRequest,
-    SubscriptionResponse,
-    TransactionStatus,
-    UpdateContractRequest,
-
-    UpdateDatasetRequest,
-    UpdateStaticDatasetRequest,
-
-    UploadReportRequest,
-    UploadReportResponse,
-
-    UserSession,
-    ValidateApiKeyRequest,
-    ValidateApiKeyResponse,
-
-    VoteData,
-    VoteDecision,
-    VoteDurationResponse,
-    VoteQuery,
-    VoteStatus,
-    VoteSummary,
-    VotingSession,
-};
+use common::prelude::*;
 
 #[derive(OpenApi)]
 #[openapi(
@@ -186,14 +105,14 @@ All API responses follow a consistent format:
             PaginatedResponse<ReportInfo>,
             PaginationParams,
             ResponseCode,
-            DelongApiResponse<String>,
-            DelongApiResponse<StaticDatasetInfo>,
-            DelongApiResponse<DynamicDatasetInfo>,
-            DelongApiResponse<AlgoExeData>,
-            DelongApiResponse<CommitteeMemberData>,
-            DelongApiResponse<ContractData>,
-            DelongApiResponse<VoteData>,
-            DelongApiResponse<ReportInfo>,
+            ApiResponse<String>,
+            ApiResponse<StaticDatasetInfo>,
+            ApiResponse<DynamicDatasetInfo>,
+            ApiResponse<AlgoExeData>,
+            ApiResponse<CommitteeMemberData>,
+            ApiResponse<ContractData>,
+            ApiResponse<VoteData>,
+            ApiResponse<ReportInfo>,
 
             // Auth models
             ApiKeyInfo,

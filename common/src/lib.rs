@@ -7,6 +7,7 @@
 pub mod config;
 pub mod middleware;
 pub mod models;
+pub mod prelude;
 pub mod server;
 pub mod utils;
 
@@ -19,115 +20,6 @@ use sqlx;
 
 #[cfg(feature = "auth")]
 use bcrypt;
-
-// Re-export commonly used items for convenience
-pub use models::{
-    // Algorithm execution models
-    AlgoExeData,
-    AlgoExeStatus,
-    AlgoExeSubmissionRequest,
-    AlgoExeSubmissionResponse,
-    AlgoReviewStatus,
-
-    // Authentication models
-    ApiKeyInfo,
-    ApiKeyListQuery,
-    AuthContext,
-    AuthMethod,
-    // WebSocket models
-    BlockchainTransactionNotification,
-    // Vote models
-    CastVoteRequest,
-    // Committee models
-    CommitteeMemberData,
-    CommitteeMemberResponse,
-    ConnectionStats,
-    // Contract models
-    ContractData,
-    ContractResponse,
-    CreateApiKeyRequest,
-    CreateApiKeyResponse,
-    CreateContractRequest,
-    // Dataset models
-    CreateDatasetRequest,
-    DatasetFormat,
-    DatasetPaginatedResponse,
-    DatasetStatus,
-    DelongApiResponse,
-    DynamicDatasetInfo,
-    DynamicDatasetListQuery,
-    ExtendedContractData,
-    ExtendedVoteData,
-    JwtClaims,
-    // Pagination models
-    MAX_LIMIT,
-    MembershipCheckResponse,
-    NotificationMessage,
-    PaginatedResponse,
-    PaginationParams,
-
-    Permission,
-    RateLimitTier,
-    // Report models
-    ReportInfo,
-    ReportQuery,
-    ReportStatus,
-    ReportSummary,
-    ReportType,
-    RevokeApiKeyRequest,
-    RevokeApiKeyResponse,
-    SetCommitteeMemberRequest,
-
-    SetVoteDurationRequest,
-    StaticDatasetInfo,
-    StaticDatasetListQuery,
-    SubscriptionRequest,
-    SubscriptionResponse,
-    TransactionStatus,
-    UpdateContractRequest,
-
-    UpdateDatasetRequest,
-    UpdateStaticDatasetRequest,
-
-    UploadReportRequest,
-    UploadReportResponse,
-
-    UserSession,
-    ValidateApiKeyRequest,
-    ValidateApiKeyResponse,
-    VoteData,
-    VoteDecision,
-    VoteDurationResponse,
-    VoteQuery,
-    VoteStatus,
-    VoteSummary,
-    VotingSession,
-
-    WebSocketClient,
-    generate_client_id,
-    is_valid_api_key_format,
-};
-
-pub use middleware::{
-    MiddlewareUtils,
-    logging::{
-        LoggingConfig, log_large_request, log_slow_request, logging_middleware,
-        security_logging_middleware,
-    },
-    request_id::{
-        RequestIdConfig, RequestIdGenerator, generate_request_id, get_request_id_from_headers,
-        request_id_middleware, request_id_middleware_with_config,
-    },
-};
-
-// Re-export key constants
-pub use middleware::REQUEST_ID_HEADER;
-
-// Re-export server utilities
-pub use server::{
-    OpenTelemetryConfig, ServerConfig, get_env_bool, get_env_string, get_env_u16, get_env_u64,
-    init_logging, load_env_file, parse_socket_addr, shutdown_signal, start_server,
-};
 
 /// Common error types that can be used across services
 #[derive(Debug, thiserror::Error)]
@@ -213,9 +105,7 @@ where
             request_id: Some(request_id),
         }
     }
-}
 
-impl ApiResponse<()> {
     /// Create an error response
     pub fn error(code: ResponseCode) -> Self {
         Self {
@@ -733,23 +623,23 @@ mod tests {
 
     #[test]
     fn test_api_response_convenience_errors() {
-        let bad_request = ApiResponse::bad_request();
+        let bad_request = ApiResponse::<()>::bad_request();
         assert_eq!(bad_request.code, ResponseCode::BadRequest);
 
-        let unauthorized = ApiResponse::unauthorized();
+        let unauthorized = ApiResponse::<()>::unauthorized();
         assert_eq!(unauthorized.code, ResponseCode::Unauthorized);
 
-        let forbidden = ApiResponse::forbidden();
+        let forbidden = ApiResponse::<()>::forbidden();
         assert_eq!(forbidden.code, ResponseCode::Forbidden);
 
-        let not_found = ApiResponse::not_found();
+        let not_found = ApiResponse::<()>::not_found();
         assert_eq!(not_found.code, ResponseCode::NotFound);
 
-        let internal_error = ApiResponse::internal_error();
+        let internal_error = ApiResponse::<()>::internal_error();
         assert_eq!(internal_error.code, ResponseCode::InternalServerError);
 
         // Test with request IDs
-        let bad_request_with_id = ApiResponse::bad_request_with_id("req_123".to_string());
+        let bad_request_with_id = ApiResponse::<()>::bad_request_with_id("req_123".to_string());
         assert_eq!(bad_request_with_id.code, ResponseCode::BadRequest);
         assert_eq!(bad_request_with_id.request_id, Some("req_123".to_string()));
     }

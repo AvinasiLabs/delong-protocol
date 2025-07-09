@@ -7,17 +7,3 @@
 
 // Gateway-specific middleware
 pub mod auth;
-
-// Re-export middleware from common crate
-pub use core::middleware::{
-    MiddlewareUtils, REQUEST_ID_HEADER,
-    logging::{LoggingConfig, logging_middleware, security_logging_middleware},
-    request_id::{
-        RequestIdConfig, RequestIdGenerator, generate_request_id, get_current_request_id,
-        get_request_id_from_headers, request_id_middleware, request_id_middleware_with_config,
-    },
-};
-
-// Re-export for backward compatibility
-pub use core::middleware::logging::log_large_request;
-pub use core::middleware::logging::log_slow_request;

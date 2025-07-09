@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 
 // Import configuration utilities from common crate
 
-pub use core::config::{EnvLoader, LoggingConfig, RedisConfig};
+pub use common::prelude::{EnvLoader, LoggingConfig, RedisConfig};
 
 /// Gateway configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

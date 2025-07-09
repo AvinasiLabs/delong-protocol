@@ -20,10 +20,10 @@ use tracing::{error, info, warn};
 
 use crate::{config::GatewayConfig, routes::AppState};
 
-use core::{NotificationMessage, TransactionStatus, generate_client_id};
+use common::prelude::{NotificationMessage, TransactionStatus, generate_client_id};
 
 #[cfg(test)]
-use core::BlockchainTransactionNotification;
+use common::prelude::BlockchainTransactionNotification;
 
 /// WebSocket connection manager
 pub type ConnectionManager = Arc<Mutex<HashMap<String, broadcast::Sender<NotificationMessage>>>>;

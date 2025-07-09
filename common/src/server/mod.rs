@@ -10,7 +10,7 @@ use tokio::net::TcpListener;
 use tracing::{error, info, instrument};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::middleware::logging::LoggingConfig;
+use crate::config::LoggingConfig;
 
 // OpenTelemetry imports
 use opentelemetry::global;
@@ -260,8 +260,23 @@ pub fn load_env_file(service_name: &str) -> Result<(), Box<dyn std::error::Error
 }
 
 /// Parse socket address from host and port
-pub fn parse_socket_addr(host: &str, port: u16) -> Result<SocketAddr, std::net::AddrParseError> {
-    format!("{}:{}", host, port).parse()
+/// Supports both IP addresses and hostnames
+pub fn parse_socket_addr(host: &str, port: u16) -> Result<SocketAddr, Box<dyn std::error::Error>> {
+    use std::net::ToSocketAddrs;
+
+    // Try to resolve the hostname/IP with port
+    let addr_string = format!("{}:{}", host, port);
+    let mut addrs = addr_string
+        .to_socket_addrs()
+        .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+
+    // Return the first resolved address
+    addrs.next().ok_or_else(|| {
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("Could not resolve hostname: {}", host),
+        )) as Box<dyn std::error::Error>
+    })
 }
 
 /// Get environment variable as string with default
@@ -312,8 +327,21 @@ mod tests {
 
     #[test]
     fn test_parse_socket_addr() {
-        let addr = parse_socket_addr("localhost", 3000).unwrap();
+        // Test with IP address
+        let addr = parse_socket_addr("127.0.0.1", 3000).unwrap();
         assert_eq!(addr.port(), 3000);
+
+        // Test with IPv6 address
+        let addr_v6 = parse_socket_addr("::1", 8080).unwrap();
+        assert_eq!(addr_v6.port(), 8080);
+
+        // Test with hostname (localhost should resolve)
+        let addr_localhost = parse_socket_addr("localhost", 9000).unwrap();
+        assert_eq!(addr_localhost.port(), 9000);
+
+        // Test with invalid hostname should fail
+        let result = parse_socket_addr("invalid-hostname-that-should-not-exist.local", 3000);
+        assert!(result.is_err());
     }
 
     #[test]

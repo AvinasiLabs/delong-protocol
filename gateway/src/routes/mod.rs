@@ -38,13 +38,11 @@ use crate::{
         vote::{get_votes_handler, set_vote_duration_handler},
         websocket::websocket_handler,
     },
-    middleware::{
-        auth::{auth_middleware, create_auth_middleware_with_cache},
-        logging_middleware, request_id_middleware,
-    },
+    middleware::auth::{auth_middleware, create_auth_middleware_with_cache},
     openapi::{create_scalar_ui, create_swagger_ui, get_openapi_json, get_openapi_yaml},
     services::http_client::BackendClient,
 };
+use common::prelude::{logging_middleware, request_id_middleware};
 
 /// Application state containing configuration, HTTP client, and Redis cache
 #[derive(Clone)]

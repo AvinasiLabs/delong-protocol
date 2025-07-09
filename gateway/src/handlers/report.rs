@@ -3,13 +3,13 @@
 //! This module contains handlers for test report management,
 //! including uploading test reports to the system.
 
-use axum::{extract::State, http::StatusCode, response::Json};
+use axum::{extract::State, response::Json};
 
 use tracing::{error, info};
 
 use crate::{handlers::ApiResponse, routes::AppState, services::http_client::forward_post};
 
-use core::{UploadReportRequest, UploadReportResponse};
+use common::prelude::{UploadReportRequest, UploadReportResponse};
 
 /// Handler for uploading test report
 ///
@@ -36,7 +36,7 @@ use core::{UploadReportRequest, UploadReportResponse};
 pub async fn upload_report_handler(
     State(state): State<AppState>,
     Json(payload): Json<UploadReportRequest>,
-) -> Result<Json<ApiResponse<UploadReportResponse>>, StatusCode> {
+) -> Json<ApiResponse<UploadReportResponse>> {
     info!(
         "Uploading test report: type={}, algo_id={:?}, dataset_id={:?}",
         payload.report_type, payload.algorithm_id, payload.dataset_id
@@ -58,11 +58,11 @@ pub async fn upload_report_handler(
                 "Test report uploaded successfully: id={}, status={}",
                 response.report_id, response.status
             );
-            Ok(Json(ApiResponse::success(response)))
+            Json(ApiResponse::success(response))
         }
         Err(e) => {
-            error!("Failed to upload test report: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            error!("Failed to upload test report: {:?}", e);
+            Json(ApiResponse::internal_error())
         }
     }
 }
