@@ -5,7 +5,6 @@
 
 use axum::{
     extract::{Query, State},
-    http::StatusCode,
     response::Json,
 };
 use tracing::{error, info};
@@ -13,19 +12,39 @@ use tracing::{error, info};
 use crate::{
     handlers::{ApiResponse, PaginatedResponse, PaginationParams},
     routes::AppState,
-    utils::http_client::forward_get,
+    services::http_client::forward_get,
 };
 
-use common::ContractData;
+use common::prelude::ContractData;
 
 /// Handler for getting contract list
 ///
 /// GET /api/contracts
 /// Returns paginated list of smart contracts
+#[utoipa::path(
+    get,
+    path = "/api/contracts",
+    tag = "contracts",
+    summary = "List smart contracts",
+    description = "Retrieve a paginated list of smart contract metadata",
+    params(
+        ("page" = Option<u32>, Query, description = "Page number (default: 1)"),
+        ("limit" = Option<u32>, Query, description = "Items per page (default: 20, max: 100)")
+    ),
+    responses(
+        (status = 200, description = "Smart contracts retrieved successfully", body = ApiResponse<PaginatedResponse<ContractData>>),
+        (status = 400, description = "Invalid query parameters", body = ApiResponse<String>),
+        (status = 401, description = "Unauthorized - invalid or missing API key", body = ApiResponse<String>),
+        (status = 500, description = "Internal server error", body = ApiResponse<String>)
+    ),
+    security(
+        ("api_key" = [])
+    )
+)]
 pub async fn get_contracts_handler(
     State(state): State<AppState>,
     Query(params): Query<PaginationParams>,
-) -> Result<Json<ApiResponse<PaginatedResponse<ContractData>>>, StatusCode> {
+) -> Json<ApiResponse<PaginatedResponse<ContractData>>> {
     info!(
         "Getting contracts list: page={}, limit={}",
         params.page, params.limit
@@ -51,11 +70,11 @@ pub async fn get_contracts_handler(
                 response.page,
                 response.total_pages
             );
-            Ok(Json(ApiResponse::success(response)))
+            Json(ApiResponse::success(response))
         }
         Err(e) => {
-            error!("Failed to get contracts: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            error!("Failed to get contracts: {:?}", e);
+            Json(ApiResponse::internal_error())
         }
     }
 }

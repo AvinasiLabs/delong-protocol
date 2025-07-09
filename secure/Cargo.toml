@@ -19,8 +19,19 @@ tower-http = { workspace = true, features = ["cors", "trace"] }
 chrono = { workspace = true, features = ["serde"] }
 uuid = { workspace = true }
 
-# Database
-sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid", "migrate", "macros"], default-features = false }
+# Database operations
+sqlx = { workspace = true, features = [
+    "runtime-tokio-rustls",
+    "postgres",
+    "mysql",
+    "sqlite",
+    "chrono",
+    "uuid",
+    "json",
+    "migrate",
+    "bigdecimal",
+    "ipnetwork",
+] }
 
 # Authentication
 jsonwebtoken = "9.3"

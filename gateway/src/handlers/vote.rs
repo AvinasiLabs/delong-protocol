@@ -5,7 +5,6 @@
 
 use axum::{
     extract::{Query, State},
-    http::StatusCode,
     response::Json,
 };
 use tracing::{error, info};
@@ -13,19 +12,39 @@ use tracing::{error, info};
 use crate::{
     handlers::{ApiResponse, PaginatedResponse, PaginationParams},
     routes::AppState,
-    utils::http_client::{forward_get, forward_post},
+    services::http_client::{forward_get, forward_post},
 };
 
-use common::{SetVoteDurationRequest, VoteData, VoteDurationResponse};
+use common::prelude::{SetVoteDurationRequest, VoteData, VoteDurationResponse};
 
 /// Handler for getting vote list
 ///
 /// GET /api/votes
 /// Returns paginated list of votes
+#[utoipa::path(
+    get,
+    path = "/api/votes",
+    tag = "votes",
+    summary = "List votes",
+    description = "Retrieve a paginated list of votes with their current status",
+    params(
+        ("page" = Option<u32>, Query, description = "Page number (default: 1)"),
+        ("limit" = Option<u32>, Query, description = "Items per page (default: 20, max: 100)")
+    ),
+    responses(
+        (status = 200, description = "Votes retrieved successfully", body = ApiResponse<PaginatedResponse<VoteData>>),
+        (status = 400, description = "Invalid query parameters", body = ApiResponse<String>),
+        (status = 401, description = "Unauthorized - invalid or missing API key", body = ApiResponse<String>),
+        (status = 500, description = "Internal server error", body = ApiResponse<String>)
+    ),
+    security(
+        ("api_key" = [])
+    )
+)]
 pub async fn get_votes_handler(
     State(state): State<AppState>,
     Query(params): Query<PaginationParams>,
-) -> Result<Json<ApiResponse<PaginatedResponse<VoteData>>>, StatusCode> {
+) -> Json<ApiResponse<PaginatedResponse<VoteData>>> {
     info!(
         "Getting votes list: page={}, limit={}",
         params.page, params.limit
@@ -47,11 +66,11 @@ pub async fn get_votes_handler(
                 response.page,
                 response.total_pages
             );
-            Ok(Json(ApiResponse::success(response)))
+            Json(ApiResponse::success(response))
         }
         Err(e) => {
-            error!("Failed to get votes: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            error!("Failed to get votes: {:?}", e);
+            Json(ApiResponse::internal_error())
         }
     }
 }
@@ -60,10 +79,28 @@ pub async fn get_votes_handler(
 ///
 /// POST /api/votes/duration
 /// Sets the duration for voting periods
+#[utoipa::path(
+    post,
+    path = "/api/votes/duration",
+    tag = "votes",
+    summary = "Set vote duration",
+    description = "Configure the duration for voting periods in seconds",
+    request_body = SetVoteDurationRequest,
+    responses(
+        (status = 200, description = "Vote duration set successfully", body = ApiResponse<VoteDurationResponse>),
+        (status = 400, description = "Invalid request parameters", body = ApiResponse<String>),
+        (status = 401, description = "Unauthorized - invalid or missing API key", body = ApiResponse<String>),
+        (status = 403, description = "Forbidden - insufficient permissions", body = ApiResponse<String>),
+        (status = 500, description = "Internal server error", body = ApiResponse<String>)
+    ),
+    security(
+        ("api_key" = [])
+    )
+)]
 pub async fn set_vote_duration_handler(
     State(state): State<AppState>,
     Json(payload): Json<SetVoteDurationRequest>,
-) -> Result<Json<ApiResponse<VoteDurationResponse>>, StatusCode> {
+) -> Json<ApiResponse<VoteDurationResponse>> {
     info!("Setting vote duration: {} seconds", payload.duration);
 
     // Forward request to Secure service
@@ -82,11 +119,11 @@ pub async fn set_vote_duration_handler(
                 "Vote duration set successfully: {} seconds",
                 response.duration
             );
-            Ok(Json(ApiResponse::success(response)))
+            Json(ApiResponse::success(response))
         }
         Err(e) => {
-            error!("Failed to set vote duration: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            error!("Failed to set vote duration: {:?}", e);
+            Json(ApiResponse::internal_error())
         }
     }
 }

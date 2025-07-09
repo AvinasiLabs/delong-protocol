@@ -1,0 +1,73 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                SELECT p.id, p.name, p.description, p.permission_type as \"permission_type: PermissionType\", p.resource, p.created_at, p.updated_at\n                FROM permissions p\n                JOIN role_permissions rp ON p.id = rp.permission_id\n                WHERE rp.role_id = $1\n                ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "permission_type: PermissionType",
+        "type_info": {
+          "Custom": {
+            "name": "permission_type",
+            "kind": {
+              "Enum": [
+                "read",
+                "write",
+                "delete",
+                "admin",
+                "vote",
+                "create_dataset",
+                "view_audit"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "resource",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "2ccd9689744bb25b63f08f7259d47019205f77ded1957de098752864a21cd7ee"
+}

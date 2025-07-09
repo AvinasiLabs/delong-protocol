@@ -19,7 +19,7 @@
 //! # Examples
 //!
 //! ```rust
-//! use common::models::{
+//! use delong_core::models::{
 //!     AlgoExeSubmissionRequest, PaginatedResponse, PaginationParams,
 //!     CreateApiKeyRequest, Permission, RateLimitTier,
 //!     SetCommitteeMemberRequest, ContractData,
@@ -64,9 +64,9 @@ pub use algo_exe::{
 
 // Authentication models
 pub use auth::{
-    ApiKeyInfo, ApiKeyListQuery, AuthContext, AuthConfig, CreateApiKeyRequest,
-    CreateApiKeyResponse, Claims, JwtUtils, Permission, RateLimitTier, RevokeApiKeyRequest,
-    RevokeApiKeyResponse, ValidateApiKeyRequest, ValidateApiKeyResponse,
+    ApiKeyInfo, ApiKeyListQuery, AuthContext, AuthConfig, AuthMethod, Claims, CreateApiKeyRequest,
+    CreateApiKeyResponse, JwtClaims, JwtUtils, Permission, RateLimitTier, RevokeApiKeyRequest,
+    RevokeApiKeyResponse, UserSession, ValidateApiKeyRequest, ValidateApiKeyResponse,
 };
 
 // Blockchain models
@@ -91,8 +91,8 @@ pub use contract::{
 // Dataset models
 pub use dataset::{
     CreateDatasetRequest, DatasetFormat, DatasetPaginatedResponse, DatasetStatus,
-    DelongApiResponse, DynamicDatasetInfo, DynamicDatasetListQuery, StaticDatasetInfo,
-    StaticDatasetListQuery, UpdateDatasetRequest, UpdateStaticDatasetRequest,
+    DynamicDatasetInfo, DynamicDatasetListQuery, StaticDatasetInfo, StaticDatasetListQuery,
+    UpdateDatasetRequest, UpdateStaticDatasetRequest,
 };
 
 // Pagination models

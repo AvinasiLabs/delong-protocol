@@ -4,9 +4,10 @@
 //! across all services in the DeLong Protocol.
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 /// Request payload for submitting algorithm execution
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct AlgoExeSubmissionRequest {
     /// GitHub repository URL containing the algorithm
     pub github_repo: String,
@@ -25,7 +26,7 @@ pub struct AlgoExeSubmissionRequest {
 ///
 /// Represents the complete state and metadata of an algorithm execution
 /// throughout its lifecycle from submission to completion.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct AlgoExeData {
     /// Unique identifier for the algorithm execution
     pub id: u64,
@@ -80,7 +81,7 @@ pub struct AlgoExeData {
 }
 
 /// Response for algorithm execution submission
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct AlgoExeSubmissionResponse {
     /// Unique identifier assigned to the submitted execution
     pub id: u64,
@@ -96,7 +97,7 @@ pub struct AlgoExeSubmissionResponse {
 }
 
 /// Algorithm execution status enumeration
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum AlgoExeStatus {
     /// Execution is queued and waiting to start
@@ -128,7 +129,7 @@ impl std::fmt::Display for AlgoExeStatus {
 }
 
 /// Algorithm review status enumeration
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum AlgoReviewStatus {
     /// Under committee review

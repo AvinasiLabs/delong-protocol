@@ -57,8 +57,13 @@ Thumbs.db
 # Environment files (may contain secrets)
 .env
 .env.local
+!.env.example
 .env.*.local
 .env.*
+.env.production
+.env.staging
+.env.test
+.env.development
 
 # Cursor configuration
 memory-bank/
@@ -68,6 +73,8 @@ memory-bank/
 swagger/
 
 # Secure service ignore runtime data
-/secure/.sqlx/
-/secure/sqlx-data.json
-/secure/target/
+
+# Docker override files
+docker-compose.override.yml
+
+# Keep example files (these should be committed)

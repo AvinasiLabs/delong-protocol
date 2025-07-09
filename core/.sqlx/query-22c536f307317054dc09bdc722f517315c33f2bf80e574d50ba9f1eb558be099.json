@@ -1,0 +1,97 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                    SELECT id, user_id, target_type, target_id, vote_type as \"vote_type: VoteType\",\n                           weight, created_at, updated_at, metadata\n                    FROM votes\n                    WHERE target_type = $1 AND target_id = $2 AND user_id = $3 AND vote_type = $4\n                    ORDER BY created_at DESC LIMIT $5 OFFSET $6\n                    ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "user_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "target_type",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "target_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 4,
+        "name": "vote_type: VoteType",
+        "type_info": {
+          "Custom": {
+            "name": "vote_type",
+            "kind": {
+              "Enum": [
+                "upvote",
+                "downvote",
+                "abstain"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "weight",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 6,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "metadata",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid",
+        "Uuid",
+        {
+          "Custom": {
+            "name": "vote_type",
+            "kind": {
+              "Enum": [
+                "upvote",
+                "downvote",
+                "abstain"
+              ]
+            }
+          }
+        },
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "22c536f307317054dc09bdc722f517315c33f2bf80e574d50ba9f1eb558be099"
+}

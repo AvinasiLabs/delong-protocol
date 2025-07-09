@@ -1,0 +1,101 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT id, user_id, code, verification_type as \"verification_type: VerificationType\",\n                   expires_at, created_at, used_at, is_used, attempts, metadata\n            FROM verification_codes\n            WHERE code = $1 AND verification_type = $2 AND expires_at > NOW()\n            ORDER BY created_at DESC\n            LIMIT 1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "user_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "code",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "verification_type: VerificationType",
+        "type_info": {
+          "Custom": {
+            "name": "verification_type",
+            "kind": {
+              "Enum": [
+                "email",
+                "phone",
+                "password_reset",
+                "account_activation"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "expires_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 5,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "used_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "is_used",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 8,
+        "name": "attempts",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 9,
+        "name": "metadata",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        {
+          "Custom": {
+            "name": "verification_type",
+            "kind": {
+              "Enum": [
+                "email",
+                "phone",
+                "password_reset",
+                "account_activation"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "fe184c91bf5750dc75b9b0b8e49dd06595195636ac3c33dec98384e30254bc9f"
+}

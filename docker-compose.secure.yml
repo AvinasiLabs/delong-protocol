@@ -1,0 +1,129 @@
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:latest
+    container_name: delong-secure-postgres
+    environment:
+      POSTGRES_DB: delong_protocol
+      POSTGRES_USER: delong_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secure_password}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d:ro
+    expose:
+      - "5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U delong_user -d delong_protocol"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  # IPFS for encrypted storage
+  ipfs:
+    image: ipfs/kubo:latest
+    container_name: delong-secure-ipfs
+    volumes:
+      - ipfs_staging_data:/root/.ipfs
+    expose:
+      - "5001"
+    ports:
+      - "4001:4001"
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "ipfs", "id"]
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # Data Pipeline Service
+  delong-datapipe:
+    image: lilhammer/delong-pipeline:latest
+    container_name: delong-secure-datapipe
+    expose:
+      - "8018"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8018/api/health"]
+      timeout: 10s
+      retries: 3
+      interval: 30s
+    restart: unless-stopped
+
+  # Secure Service (TEE)
+  secure:
+    build:
+      context: .
+      dockerfile: ./secure/Dockerfile
+      target: runtime
+    container_name: delong-secure
+    environment:
+      # Server Configuration
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: 11113
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+
+      # External Services (deployed separately)
+      CORE_SERVICE_URL: ${CORE_SERVICE_URL}
+      GATEWAY_SERVICE_URL: ${GATEWAY_SERVICE_URL}
+
+      # Database Configuration
+      DATABASE_URL: postgresql://delong_user:${POSTGRES_PASSWORD:-secure_password}@postgres:5432/delong_protocol
+      DATABASE_MAX_CONNECTIONS: 20
+      DATABASE_MIN_CONNECTIONS: 5
+      DATABASE_CONNECT_TIMEOUT: 30
+      DATABASE_IDLE_TIMEOUT: 600
+
+      # IPFS Configuration
+      IPFS_API_URL: http://ipfs:5001
+      IPFS_GATEWAY_URL: http://ipfs:8080
+      IPFS_ADDR: ${IPFS_ADDR:-/ip4/127.0.0.1/tcp/5001}
+
+      # Data Pipeline Configuration
+      SAMPLE_SRV_ADDR: ${SAMPLE_SRV_ADDR:-delong-datapipe:8018}
+      DIAGNOSTIC_SRV_ADDR: ${DIAGNOSTIC_SRV_ADDR:-delong-datapipe:8018}
+      DIAGNOSTIC_SRV_ENDPOINT: ${DIAGNOSTIC_SRV_ENDPOINT:-http://delong-datapipe:8018}
+
+      # Blockchain Configuration
+      BLOCKCHAIN_RPC_URL: ${BLOCKCHAIN_RPC_URL}
+      ETH_HTTP_URL: ${ETH_HTTP_URL}
+      ETH_WS_URL: ${ETH_WS_URL}
+      CHAIN_ID: ${CHAIN_ID}
+
+      # JWT Configuration
+      JWT_SECRET: ${JWT_SECRET}
+      USE_JWT: ${USE_JWT:-true}
+
+      # Official Account
+      OFFICIAL_ACCOUNT_PRIVATE_KEY: ${OFFICIAL_ACCOUNT_PRIVATE_KEY}
+
+      # Logging
+      RUST_LOG: ${RUST_LOG:-info}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+
+    ports:
+      - "11113:11113"
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ipfs:
+        condition: service_healthy
+      delong-datapipe:
+        condition: service_healthy
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11113/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  postgres_data:
+    driver: local
+  ipfs_staging_data:
+    driver: local

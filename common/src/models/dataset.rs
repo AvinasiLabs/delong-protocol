@@ -5,48 +5,94 @@
 //! and dataset operations.
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 /// Static dataset information as returned by the API
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+#[schema(example = json!({
+    "id": 1,
+    "name": "sample_dataset",
+    "ui_name": "Sample Dataset",
+    "desc": "A sample dataset for testing",
+    "file_hash": "abc123def456",
+    "ipfs_cid": "QmSampleCID123",
+    "file_size": 1024,
+    "file_format": "csv",
+    "author": "John Doe",
+    "author_wallet": "0x1234567890abcdef",
+    "sample_url": "https://api.example.com/sample/QmSampleCID123",
+    "file_path": "/data/sample_dataset.csv",
+    "created_at": "2024-01-01T00:00:00Z",
+    "updated_at": "2024-01-01T00:00:00Z"
+}))]
 pub struct StaticDatasetInfo {
     /// Unique identifier for the dataset
+    #[schema(example = 1)]
     pub id: u32,
     /// Internal name of the dataset
+    #[schema(example = "sample_dataset")]
     pub name: String,
     /// User-friendly display name
+    #[schema(example = "Sample Dataset")]
     pub ui_name: String,
     /// Optional description of the dataset
+    #[schema(example = "A sample dataset for testing")]
     pub desc: Option<String>,
     /// SHA-256 hash of the file content
+    #[schema(example = "abc123def456")]
     pub file_hash: String,
     /// IPFS Content Identifier
+    #[schema(example = "QmSampleCID123")]
     pub ipfs_cid: String,
     /// Size of the file in bytes
+    #[schema(example = 1024)]
     pub file_size: u64,
     /// Format of the file (e.g., "csv", "json", "parquet")
+    #[schema(example = "csv")]
     pub file_format: String,
     /// Optional author name
+    #[schema(example = "John Doe")]
     pub author: Option<String>,
     /// Optional author wallet address
+    #[schema(example = "0x1234567890abcdef")]
     pub author_wallet: Option<String>,
     /// URL to access sample data
+    #[schema(example = "https://api.example.com/sample/QmSampleCID123")]
     pub sample_url: String,
     /// File path in the system
+    #[schema(example = "/data/sample_dataset.csv")]
     pub file_path: String,
     /// Creation timestamp in RFC3339 format
+    #[schema(example = "2024-01-01T00:00:00Z")]
     pub created_at: String,
     /// Last update timestamp in RFC3339 format
+    #[schema(example = "2024-01-01T00:00:00Z")]
     pub updated_at: String,
 }
 
 /// Dynamic dataset information
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+#[schema(example = json!({
+    "id": 1,
+    "name": "dynamic_dataset",
+    "description": "A dynamic dataset for testing",
+    "file_path": "/data/dynamic_dataset.csv",
+    "file_size": 2048,
+    "file_format": "csv",
+    "version": 1,
+    "status": "active",
+    "created_at": "2024-01-01T00:00:00Z",
+    "updated_at": "2024-01-01T00:00:00Z"
+}))]
 pub struct DynamicDatasetInfo {
     /// Unique identifier for the dataset
+    #[schema(example = 1)]
     pub id: u32,
     /// Internal name of the dataset
+    #[schema(example = "dynamic_dataset")]
     pub name: String,
     /// Optional description of the dataset
+    #[schema(example = "A dynamic dataset for testing")]
     pub description: Option<String>,
     /// File path in the system
     pub file_path: String,
@@ -56,8 +102,8 @@ pub struct DynamicDatasetInfo {
     pub updated_at: String,
 }
 
-/// Request body for creating dynamic dataset
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+/// Request body for creating a new dynamic dataset
+#[derive(Debug, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct CreateDatasetRequest {
     /// Internal name of the dataset
     pub name: String,
@@ -68,14 +114,14 @@ pub struct CreateDatasetRequest {
 }
 
 /// Request body for updating dynamic dataset
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct UpdateDatasetRequest {
     /// Updated description of the dataset
     pub description: Option<String>,
 }
 
 /// Request body for updating static dataset
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct UpdateStaticDatasetRequest {
     /// Updated name of the dataset
     pub name: Option<String>,
@@ -84,7 +130,7 @@ pub struct UpdateStaticDatasetRequest {
 }
 
 /// Query parameters for static dataset listing
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Debug, Deserialize, PartialEq, ToSchema)]
 pub struct StaticDatasetListQuery {
     /// Page number (1-based)
     #[serde(default = "default_page")]
@@ -95,7 +141,7 @@ pub struct StaticDatasetListQuery {
 }
 
 /// Query parameters for dynamic dataset listing
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Debug, Deserialize, PartialEq, ToSchema)]
 pub struct DynamicDatasetListQuery {
     /// Page number (1-based)
     #[serde(default = "default_page")]
@@ -105,21 +151,8 @@ pub struct DynamicDatasetListQuery {
     pub page_size: u32,
 }
 
-/// Standard API response format matching the documentation
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
-pub struct DelongApiResponse<T> {
-    /// Response code
-    pub code: String,
-    /// Response data (optional)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<T>,
-    /// Response message (optional)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
-}
-
-/// Paginated response for datasets
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+/// Paginated response wrapper for datasets
+#[derive(Debug, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct DatasetPaginatedResponse<T> {
     /// List of items in the current page
     pub items: Vec<T>,
@@ -132,7 +165,7 @@ pub struct DatasetPaginatedResponse<T> {
 }
 
 /// Dataset file format enumeration
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub enum DatasetFormat {
     /// Comma-separated values
     #[serde(rename = "csv")]
@@ -155,7 +188,7 @@ pub enum DatasetFormat {
 }
 
 /// Dataset status enumeration
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub enum DatasetStatus {
     /// Dataset is being uploaded
     #[serde(rename = "uploading")]
@@ -416,35 +449,6 @@ impl UpdateStaticDatasetRequest {
     }
 }
 
-impl<T> DelongApiResponse<T> {
-    /// Create a successful response
-    pub fn success(data: T) -> Self {
-        Self {
-            code: "SUCCESS".to_string(),
-            data: Some(data),
-            message: None,
-        }
-    }
-
-    /// Create a successful response with message
-    pub fn success_with_message(data: T, message: String) -> Self {
-        Self {
-            code: "SUCCESS".to_string(),
-            data: Some(data),
-            message: Some(message),
-        }
-    }
-
-    /// Create an error response
-    pub fn error(code: String, message: String) -> Self {
-        Self {
-            code,
-            data: None,
-            message: Some(message),
-        }
-    }
-}
-
 impl<T> DatasetPaginatedResponse<T> {
     /// Create a new paginated response
     pub fn new(items: Vec<T>, page: u32, page_size: u32, total: u64) -> Self {
@@ -648,19 +652,6 @@ mod tests {
         assert_eq!(request.name, Some("New Name".to_string()));
         assert_eq!(request.desc, Some("New Description".to_string()));
         assert!(request.has_updates());
-    }
-
-    #[test]
-    fn test_delong_api_response() {
-        let success_response = DelongApiResponse::success("test data");
-        assert_eq!(success_response.code, "SUCCESS");
-        assert_eq!(success_response.data, Some("test data"));
-
-        let error_response: DelongApiResponse<()> =
-            DelongApiResponse::error("BAD_REQUEST".to_string(), "Invalid input".to_string());
-        assert_eq!(error_response.code, "BAD_REQUEST");
-        assert!(error_response.data.is_none());
-        assert_eq!(error_response.message, Some("Invalid input".to_string()));
     }
 
     #[test]

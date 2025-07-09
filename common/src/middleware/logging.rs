@@ -13,37 +13,7 @@ use std::{net::SocketAddr, time::Instant};
 use tracing::{Level, info, instrument, warn};
 
 use crate::middleware::{MiddlewareUtils, REQUEST_ID_HEADER};
-
-/// Get current timestamp in milliseconds
-fn current_timestamp_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or(std::time::Duration::from_secs(0))
-        .as_millis() as u64
-}
-
-/// Format duration for human reading
-fn format_duration(duration: std::time::Duration) -> String {
-    let ms = duration.as_millis();
-    if ms < 1000 {
-        format!("{}ms", ms)
-    } else if ms < 60_000 {
-        format!("{:.2}s", ms as f64 / 1000.0)
-    } else {
-        format!("{:.2}m", ms as f64 / 60_000.0)
-    }
-}
-
-/// Sanitize path for logging (remove sensitive parameters)
-fn sanitize_path_for_logging(path: &str) -> String {
-    // Remove query parameters that might contain sensitive data
-    if let Some(question_mark_pos) = path.find('?') {
-        let base_path = &path[..question_mark_pos];
-        format!("{}?<params>", base_path)
-    } else {
-        path.to_string()
-    }
-}
+use crate::utils::{current_timestamp_ms, format_duration, sanitize_path_for_logging};
 
 /// Logging configuration
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -264,18 +234,28 @@ fn determine_log_level(status_code: u16, is_health_check: bool) -> Level {
 
 /// Check if health check requests should be logged
 fn should_log_health_checks() -> bool {
-    // Check environment variable or use default config
-    std::env::var("LOG_HEALTH_CHECKS")
-        .map(|v| v.to_lowercase() == "true")
-        .unwrap_or(false)
+    // Check environment variable with fallback hierarchy
+    // Try service-specific first, then shared, then fallback to original
+    if let Ok(value) = std::env::var("LOG_HEALTH_CHECKS") {
+        return value.to_lowercase() == "true";
+    }
+    if let Ok(value) = std::env::var("SHARED_LOG_HEALTH_CHECKS") {
+        return value.to_lowercase() == "true";
+    }
+    false
 }
 
 /// Check if request headers should be logged
 fn should_log_headers() -> bool {
-    // Check environment variable or use default config
-    std::env::var("LOG_REQUEST_HEADERS")
-        .map(|v| v.to_lowercase() == "true")
-        .unwrap_or(false)
+    // Check environment variable with fallback hierarchy
+    // Try service-specific first, then shared, then fallback to original
+    if let Ok(value) = std::env::var("LOG_REQUEST_HEADERS") {
+        return value.to_lowercase() == "true";
+    }
+    if let Ok(value) = std::env::var("SHARED_LOG_REQUEST_HEADERS") {
+        return value.to_lowercase() == "true";
+    }
+    false
 }
 
 /// Log slow requests (requests taking longer than threshold)

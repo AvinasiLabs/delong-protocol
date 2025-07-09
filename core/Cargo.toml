@@ -1,7 +1,8 @@
 [package]
-name = "core"
+name = "delong-core"
 version = { workspace = true }
 edition = { workspace = true }
+
 
 [dependencies]
 # HTTP framework and async runtime
@@ -13,17 +14,103 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 
 # UUID generation
-uuid = { version = "1.0", features = ["v4", "serde"] }
+uuid = { workspace = true, features = ["v4", "serde"] }
 
 # Time and date handling
 chrono = { workspace = true, features = ["serde"] }
 
 # Tracing and observability
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 
 # Error handling
-anyhow = "1.0"
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# Database operations
+sqlx = { workspace = true, features = [
+    "runtime-tokio-rustls",
+    "postgres",
+    "mysql",
+    "sqlite",
+    "chrono",
+    "uuid",
+    "json",
+    "migrate",
+    "bigdecimal",
+    "ipnetwork",
+] }
+
+# Password hashing and authentication
+argon2 = { workspace = true }
+bcrypt = { workspace = true }
+
+# JWT authentication
+jsonwebtoken = { workspace = true }
+
+# Cryptographic hashing
+sha2 = { workspace = true }
+
+# HTTP middleware and utilities
+tower = { workspace = true }
+tower-http = { workspace = true, features = [
+    "cors",
+    "trace",
+    "auth",
+    "fs",
+    "compression-gzip",
+    "timeout",
+] }
+
+# Redis caching
+redis = { workspace = true, features = ["tokio-comp", "connection-manager"] }
+
+# Email sending
+lettre = { workspace = true, default-features = false, features = [
+    "tokio1-rustls-tls",
+    "smtp-transport",
+    "pool",
+    "hostname",
+    "builder",
+] }
+
+# File upload handling
+multer = { workspace = true }
+mime = { workspace = true }
+
+# HTTP client
+reqwest = { workspace = true, features = ["json", "multipart", "stream"] }
+
+# URL encoding
+urlencoding = { workspace = true }
+
+# Data validation
+validator = { workspace = true, features = ["derive"] }
+
+# Configuration
+config = { workspace = true }
+
+# Environment variables
+dotenvy = { workspace = true }
 
 # Common utilities and middleware
 common = { path = "../common" }
+
+# API Documentation
+utoipa = { workspace = true }
+utoipa-swagger-ui = { workspace = true }
+utoipa-scalar = { workspace = true }
+
+# Regular expressions
+regex = { workspace = true }
+
+# Random number generation
+rand = { workspace = true }
+
+# Decimal number handling
+bigdecimal = { workspace = true }
+num-traits = { workspace = true }
+
+[dev-dependencies]
+tokio-test = "0.4"
+axum-test = "15.0"

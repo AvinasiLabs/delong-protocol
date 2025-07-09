@@ -7,18 +7,19 @@ pub mod cache;
 pub mod config;
 pub mod handlers;
 pub mod middleware;
+pub mod openapi;
 pub mod routes;
-pub mod utils;
+pub mod services;
 
 // Re-export commonly used items for convenience
 pub use config::GatewayConfig;
-pub use middleware::MiddlewareUtils;
+pub use openapi::{create_scalar_ui, create_swagger_ui, get_openapi_json, get_openapi_yaml};
 pub use routes::{create_auth_test_router, create_router, create_test_router};
-pub use utils::http_client::{BackendClient, HttpBackendClient};
+pub use services::http_client::{BackendClient, HttpBackendClient};
 
 // Re-export testing utilities
 // Note: Specific imports instead of glob to avoid naming conflicts
 #[cfg(test)]
 pub use handlers::{auth as handlers_auth, dataset, health};
 #[cfg(test)]
-pub use middleware::{auth as middleware_auth, logging_middleware, request_id_middleware};
+pub use middleware::auth as middleware_auth;

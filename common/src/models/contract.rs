@@ -4,9 +4,10 @@
 //! including contract information, deployment data, and contract operations.
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 /// Contract metadata data model
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct ContractData {
     /// Unique identifier for the contract
     pub id: u64,
@@ -19,7 +20,7 @@ pub struct ContractData {
 }
 
 /// Request for creating a new contract record
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct CreateContractRequest {
     /// Human-readable name of the contract
     pub name: String,
@@ -34,7 +35,7 @@ pub struct CreateContractRequest {
 }
 
 /// Request for updating contract metadata
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct UpdateContractRequest {
     /// Updated name of the contract
     pub name: Option<String>,
@@ -45,7 +46,7 @@ pub struct UpdateContractRequest {
 }
 
 /// Response for contract operations
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct ContractResponse {
     /// ID of the created or updated contract
     pub id: u64,
@@ -54,7 +55,7 @@ pub struct ContractResponse {
 }
 
 /// Extended contract data with additional metadata
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct ExtendedContractData {
     /// Basic contract information
     #[serde(flatten)]

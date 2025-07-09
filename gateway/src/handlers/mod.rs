@@ -24,7 +24,7 @@ pub mod websocket;
 // Common response types used across handlers
 
 // Use unified API response and pagination types from common crate
-pub use common::{
+pub use common::prelude::{
     ApiError, ApiResponse, ApiResult, PaginatedResponse, PaginationParams, ResponseCode,
 };
 
@@ -37,15 +37,15 @@ mod tests {
         let response = ApiResponse::success("test data");
         assert_eq!(response.code, ResponseCode::Success);
         assert_eq!(response.data, Some("test data"));
-        assert_eq!(response.message, "Operation completed successfully");
+        assert!(response.request_id.is_none());
     }
 
     #[test]
     fn test_api_response_error() {
-        let response: ApiResponse<()> = ApiResponse::bad_request("test error");
+        let response: ApiResponse<()> = ApiResponse::bad_request();
         assert_eq!(response.code, ResponseCode::BadRequest);
         assert!(response.data.is_none());
-        assert_eq!(response.message, "test error");
+        assert!(response.request_id.is_none());
     }
 
     #[test]

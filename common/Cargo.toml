@@ -8,6 +8,11 @@ description = "Common utilities and middleware for DeLong Protocol services"
 name = "common"
 path = "src/lib.rs"
 
+[features]
+default = ["database", "auth"]
+database = ["dep:sqlx"]
+auth = ["dep:bcrypt"]
+
 [dependencies]
 # HTTP framework types
 axum = { workspace = true }
@@ -35,22 +40,27 @@ uuid = { workspace = true, features = ["v4", "serde"] }
 # Authentication
 jsonwebtoken = "9.3"
 
-# Database
-sqlx = { workspace = true }
-
 # Async traits
 async-trait = { workspace = true }
+
+# API Documentation
+utoipa = { workspace = true }
+
+# Server utilities
+tracing-subscriber = { workspace = true }
+dotenvy = { workspace = true }
+
+# Database and authentication (optional)
+sqlx = { workspace = true, optional = true}
+bcrypt = { workspace = true, optional = true }
+
+# OpenTelemetry observability
+tracing-opentelemetry = { workspace = true }
+opentelemetry = { workspace = true }
+opentelemetry-otlp = { workspace = true }
+opentelemetry_sdk = { workspace = true }
 
 [dev-dependencies]
 # Testing utilities
 tokio-test = "0.4"
-# Benchmarking
-criterion = { version = "0.5", features = ["html_reports"] }
-
-[[bench]]
-name = "api_response_benchmarks"
-harness = false
-
-[[bench]]
-name = "models_benchmarks"
-harness = false
+serial_test = { workspace = true }

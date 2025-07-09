@@ -1,0 +1,84 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                    SELECT id, user_id, target_type, target_id, vote_type as \"vote_type: VoteType\",\n                           weight, created_at, updated_at, metadata\n                    FROM votes\n                    WHERE target_type = $1 AND target_id = $2\n                    ORDER BY created_at DESC\n                    LIMIT $3 OFFSET $4\n                    ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "user_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "target_type",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "target_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 4,
+        "name": "vote_type: VoteType",
+        "type_info": {
+          "Custom": {
+            "name": "vote_type",
+            "kind": {
+              "Enum": [
+                "upvote",
+                "downvote",
+                "abstain"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "weight",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 6,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "metadata",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "084bd4b217725374714864b0a783e37ef868c4312414e988cde88f8cba0f9d30"
+}

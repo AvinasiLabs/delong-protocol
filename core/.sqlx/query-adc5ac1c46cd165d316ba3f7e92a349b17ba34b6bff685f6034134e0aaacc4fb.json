@@ -1,0 +1,71 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, name, description, permission_type as \"permission_type: PermissionType\", resource, created_at, updated_at FROM permissions ORDER BY name",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "permission_type: PermissionType",
+        "type_info": {
+          "Custom": {
+            "name": "permission_type",
+            "kind": {
+              "Enum": [
+                "read",
+                "write",
+                "delete",
+                "admin",
+                "vote",
+                "create_dataset",
+                "view_audit"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "resource",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "adc5ac1c46cd165d316ba3f7e92a349b17ba34b6bff685f6034134e0aaacc4fb"
+}

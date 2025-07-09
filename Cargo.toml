@@ -21,19 +21,79 @@ categories = ["cryptography", "network-programming"]
 
 
 [workspace.dependencies]
+# HTTP framework and middleware
 axum = { version = "0.8.4" }
-tokio = { version = "1.45.1", features = ["full"] }
-serde = { version = "*" }
-serde_json = { version = "*" }
-tracing = { version = "0.1.40" }
-anyhow = { version = "*" }
-thiserror = { version = "*" }
 tower = { version = "0.5.2" }
 tower-http = { version = "0.6.6" }
+
+# Async runtime and utilities
+tokio = { version = "1.45.1", features = ["full"] }
+async-trait = { version = "0.1.88" }
+
+# Serialization
+serde = { version = "1.0.219" }
+serde_json = { version = "1.0.140" }
+serde_yaml = { version = "0.9" }
+
+# Error handling
+anyhow = { version = "1.0.98" }
+thiserror = { version = "2.0.12" }
+
+# Logging and observability
+tracing = { version = "0.1.40" }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Time and utilities
 chrono = { version = "0.4" }
-uuid = { version = "*" }
-async-trait = { version = "*" }
-sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid"] }
+uuid = { version = "1.17.0" }
+
+# Database and storage
+sqlx = { version = "0.8" }
+redis = { version = "0.31.0" }
+bigdecimal = { version = "0.4", features = ["serde"] }
+num-traits = { version = "0.2" }
+
+# Authentication and security
+argon2 = { version = "0.5" }
+bcrypt = { version = "0.15" }
+jsonwebtoken = { version = "9.3" }
+sha2 = { version = "0.10" }
+
+# HTTP client and networking
+reqwest = { version = "0.12" }
+urlencoding = { version = "2.1" }
+serde_urlencoded = { version = "0.7" }
+
+# File handling and MIME
+multer = { version = "3.0" }
+mime = { version = "0.3" }
+
+# Email services
+lettre = { version = "0.11", default-features = false }
+
+# Validation and configuration
+validator = { version = "0.18" }
+config = { version = "0.14" }
+
+# Environment and random utilities
+dotenvy = { version = "0.15" }
+rand = { version = "0.8" }
+regex = { version = "1.10" }
+futures-util = { version = "0.3" }
+
+# Testing utilities
+serial_test = { version = "3.0" }
+
+# OpenTelemetry observability
+tracing-opentelemetry = { version = "0.31.0" }
+opentelemetry = { version = "0.30" }
+opentelemetry-otlp = { version = "0.30" }
+opentelemetry_sdk = { version = "0.30.0" }
+
+# API Documentation
+utoipa = { version = "5.4.0", features = ["axum_extras", "chrono", "uuid"] }
+utoipa-swagger-ui = { version = "8.0.0", features = ["axum"] }
+utoipa-scalar = { version = "0.3.0", features = ["axum"] }
 
 [profile.dev]
 debug = true
