@@ -12,7 +12,7 @@ use secure::tee::KeyVault;
 #[tokio::test]
 async fn test_execution_queue_operations() {
     let config = SecureConfig::mock();
-    let key_vault = KeyVault::mock();
+    let key_vault = KeyVault::new_with_client_kind(secure::tee::ClientKind::Mock);
     let ipfs_client = ipfs_api_backend_hyper::IpfsClient::default();
     
     let scheduler = ExecutionScheduler::new(config, 2, key_vault, ipfs_client);
@@ -62,7 +62,7 @@ async fn test_execution_queue_operations() {
 #[tokio::test]
 async fn test_algorithm_execution() {
     let config = SecureConfig::mock();
-    let key_vault = KeyVault::mock();
+    let key_vault = KeyVault::new_with_client_kind(secure::tee::ClientKind::Mock);
     let ipfs_client = ipfs_api_backend_hyper::IpfsClient::default();
     
     let scheduler = ExecutionScheduler::new(config, 1, key_vault, ipfs_client);
@@ -101,7 +101,7 @@ async fn test_algorithm_execution() {
 #[tokio::test]
 async fn test_execution_cancellation() {
     let config = SecureConfig::mock();
-    let key_vault = KeyVault::mock();
+    let key_vault = KeyVault::new_with_client_kind(secure::tee::ClientKind::Mock);
     let ipfs_client = ipfs_api_backend_hyper::IpfsClient::default();
     
     let scheduler = ExecutionScheduler::new(config, 1, key_vault, ipfs_client);
@@ -138,7 +138,7 @@ async fn test_execution_cancellation() {
 #[tokio::test]
 async fn test_concurrent_execution_limits() {
     let config = SecureConfig::mock();
-    let key_vault = KeyVault::mock();
+    let key_vault = KeyVault::new_with_client_kind(secure::tee::ClientKind::Mock);
     let ipfs_client = ipfs_api_backend_hyper::IpfsClient::default();
     
     // Set max concurrent to 2
@@ -172,7 +172,7 @@ async fn test_concurrent_execution_limits() {
 #[tokio::test]
 async fn test_priority_ordering() {
     let config = SecureConfig::mock();
-    let key_vault = KeyVault::mock();
+    let key_vault = KeyVault::new_with_client_kind(secure::tee::ClientKind::Mock);
     let ipfs_client = ipfs_api_backend_hyper::IpfsClient::default();
     
     let scheduler = ExecutionScheduler::new(config, 1, key_vault, ipfs_client);
@@ -209,7 +209,7 @@ async fn test_priority_ordering() {
 #[tokio::test]
 async fn test_emergency_shutdown() {
     let config = SecureConfig::mock();
-    let key_vault = KeyVault::mock();
+    let key_vault = KeyVault::new_with_client_kind(secure::tee::ClientKind::Mock);
     let ipfs_client = ipfs_api_backend_hyper::IpfsClient::default();
     
     let scheduler = ExecutionScheduler::new(config, 2, key_vault, ipfs_client);

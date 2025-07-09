@@ -7,14 +7,12 @@ use axum::extract::{Path, Query, State};
 use axum::response::Json;
 use axum::http::StatusCode;
 use common::{
-    ApiResponse, ApiResult, ApiError, PaginationParams, PaginatedResponse,
+    ApiResponse, ApiResult, PaginationParams, PaginatedResponse,
     AlgoExeData, AlgoExeSubmissionRequest, AlgoExeSubmissionResponse,
-    AlgoExeStatus, AlgoReviewStatus, CreateTransactionRequest, 
-    BlockchainTransactionStatus, EntityType,
 };
 use std::sync::Arc;
 use tracing::{info, error, warn, instrument};
-use chrono::Utc;
+// use chrono::Utc; // Will be used when implementing actual time tracking
 
 use crate::AppState;
 
@@ -179,7 +177,7 @@ fn build_github_download_url(repo_url: &str, commit_hash: &str) -> Result<(Strin
     Ok((download_url, repo_name))
 }
 
-async fn check_or_create_algorithm(state: &AppState, algo_link: &str, repo_name: &str) -> ApiResult<i64> {
+async fn check_or_create_algorithm(_state: &AppState, algo_link: &str, _repo_name: &str) -> ApiResult<i64> {
     // TODO: Implement database check for existing algorithm
     // For now, generate a mock algorithm ID
     let algo_id = chrono::Utc::now().timestamp();
@@ -189,7 +187,7 @@ async fn check_or_create_algorithm(state: &AppState, algo_link: &str, repo_name:
 }
 
 async fn create_algorithm_execution(
-    state: &AppState, 
+    _state: &AppState, 
     algo_id: i64, 
     payload: &AlgoExeSubmissionRequest
 ) -> ApiResult<i64> {
@@ -209,9 +207,9 @@ async fn create_algorithm_execution(
 }
 
 async fn submit_to_blockchain(
-    state: &AppState,
+    _state: &AppState,
     execution_id: i64,
-    payload: &AlgoExeSubmissionRequest,
+    _payload: &AlgoExeSubmissionRequest,
 ) -> ApiResult<String> {
     // TODO: Implement actual blockchain submission
     // For now, return a mock transaction hash
@@ -227,7 +225,7 @@ async fn submit_to_blockchain(
 }
 
 async fn create_blockchain_transaction(
-    state: &AppState,
+    _state: &AppState,
     tx_hash: &str,
     entity_id: i64,
 ) -> ApiResult<()> {
@@ -243,7 +241,7 @@ async fn create_blockchain_transaction(
 }
 
 async fn get_algorithm_executions_with_info(
-    state: &AppState,
+    _state: &AppState,
     page: u32,
     limit: u32,
 ) -> ApiResult<PaginatedResponse<AlgoExeData>> {
@@ -254,8 +252,8 @@ async fn get_algorithm_executions_with_info(
 }
 
 async fn get_algorithm_execution_by_id(
-    state: &AppState,
-    id: i64,
+    _state: &AppState,
+    _id: i64,
 ) -> ApiResult<Option<AlgoExeData>> {
     // TODO: Implement database query
     // For now, return None

@@ -33,6 +33,7 @@ async fn test_blockchain_sync_service() {
             chain_id: 1,
             private_key: "0x0000000000000000000000000000000000000000000000000000000000000000".to_string(),
             sync_interval_seconds: 1, // Fast sync for testing
+            sync_enabled: true,
         },
         auth: secure::config::AuthConfig {
             use_jwt: false,
@@ -85,6 +86,7 @@ async fn test_blockchain_sync_service_lifecycle() {
             chain_id: 1,
             private_key: "0x0000000000000000000000000000000000000000000000000000000000000000".to_string(),
             sync_interval_seconds: 1,
+            sync_enabled: true,
         },
         auth: secure::config::AuthConfig {
             use_jwt: false,

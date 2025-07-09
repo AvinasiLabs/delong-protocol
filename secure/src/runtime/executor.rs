@@ -65,6 +65,7 @@ pub struct ResourceUsage {
 pub struct AlgorithmExecutor {
     config: SecureConfig,
     key_vault: KeyVault,
+    #[allow(dead_code)] // TODO: Use for IPFS dataset/result storage
     ipfs_client: ipfs_api_backend_hyper::IpfsClient,
 }
 
@@ -380,7 +381,7 @@ if __name__ == "__main__":
         );
 
         // Encrypt the results using TEE key vault
-        let mut key_vault = self.key_vault.clone();
+        let key_vault = self.key_vault.clone();
         let encrypted_result = key_vault.encrypt_data(&result_data, &request.dataset_id).await?;
         let encrypted_data = encrypted_result.encrypted_data;
 

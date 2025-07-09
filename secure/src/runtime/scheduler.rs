@@ -12,6 +12,7 @@ use crate::tee::KeyVault;
 
 /// Execution scheduler that manages the algorithm execution lifecycle
 pub struct ExecutionScheduler {
+    #[allow(dead_code)] // TODO: Use for configurable timeouts and limits
     config: SecureConfig,
     queue: Arc<ExecutionQueue>,
     executor: Arc<AlgorithmExecutor>,

@@ -94,7 +94,7 @@ fn bench_algo_exe_data_deserialization(c: &mut Criterion) {
 }
 
 fn bench_algo_exe_response_serialization(c: &mut Criterion) {
-    let response = AlgoExeSubmissionResponse { id: 12345 };
+    let response = AlgoExeSubmissionResponse { id: 12345, tx_hash: "0xabc123def456".to_string(), status: "submitted".to_string(), message: "Test submission".to_string() };
 
     c.bench_function("algo_exe_response_serialize", |b| {
         b.iter(|| serde_json::to_string(black_box(&response)).unwrap())
@@ -102,7 +102,7 @@ fn bench_algo_exe_response_serialization(c: &mut Criterion) {
 }
 
 fn bench_algo_exe_response_deserialization(c: &mut Criterion) {
-    let response = AlgoExeSubmissionResponse { id: 12345 };
+    let response = AlgoExeSubmissionResponse { id: 12345, tx_hash: "0xabc123def456".to_string(), status: "submitted".to_string(), message: "Test submission".to_string() };
     let json = serde_json::to_string(&response).unwrap();
 
     c.bench_function("algo_exe_response_deserialize", |b| {

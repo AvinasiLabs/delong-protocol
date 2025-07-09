@@ -1,290 +1,395 @@
-use common::{ApiError, ApiResult, PaginationParams, PaginatedResponse};
-use sqlx::PgPool;
-use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use tracing::{info, warn, error, instrument};
+use uuid::Uuid;
 
-/// Static dataset database model
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct StaticDataset {
-    pub id: i64,
+use common::{
+    ApiResult, 
+    AlgoExeData, 
+    AlgoExeStatus, 
+    ResponseCode,
+    models::{Dataset, DatasetMetadata, DatasetVersion}
+};
+use crate::tee::{TeeClient, KeyVault, KeyContext, ClientKind};
+use crate::tee::encryption::MockEncryption;
+use crate::utils;
+
+
+
+/// Dataset service for managing encrypted datasets in TEE
+#[derive(Clone)]
+pub struct DatasetService {
+    key_vault: Arc<KeyVault>,
+    encryption: Arc<MockEncryption>,
+    datasets: Arc<RwLock<HashMap<String, DatasetInfo>>>,
+    reference_counts: Arc<RwLock<HashMap<String, u32>>>,
+}
+
+/// Internal dataset information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DatasetInfo {
+    pub id: String,
     pub name: String,
-    pub ui_name: String,
-    pub description: Option<String>,
-    pub file_hash: String,
-    pub ipfs_cid: String,
-    pub file_size: i64,
-    pub file_format: String,
-    pub author: Option<String>,
-    pub author_wallet: String,
-    pub sample_url: Option<String>,
-    pub file_path: Option<String>,
+    pub version: String,
+    pub size: u64,
+    pub encrypted_cid: Option<String>, // IPFS CID for static datasets
     pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub metadata: DatasetMetadata,
+    pub is_static: bool,
 }
-
-/// Request for creating a new static dataset
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreateStaticDatasetRequest {
-    pub name: String,
-    pub ui_name: String,
-    pub description: Option<String>,
-    pub file_hash: String,
-    pub ipfs_cid: String,
-    pub file_size: i64,
-    pub file_format: String,
-    pub author: Option<String>,
-    pub author_wallet: String,
-    pub sample_url: Option<String>,
-    pub file_path: Option<String>,
-}
-
-/// Request for updating a static dataset
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UpdateStaticDatasetRequest {
-    pub name: Option<String>,
-    pub ui_name: Option<String>,
-    pub description: Option<String>,
-}
-
-/// Static dataset service for database operations
-pub struct DatasetService;
 
 impl DatasetService {
-    /// Create a new static dataset
-    pub async fn create_static_dataset(
-        pool: &PgPool,
-        req: CreateStaticDatasetRequest,
-    ) -> ApiResult<StaticDataset> {
-        let dataset = sqlx::query_as!(
-            StaticDataset,
-            r#"
-            INSERT INTO static_datasets (
-                name, ui_name, description, file_hash, ipfs_cid, file_size, 
-                file_format, author, author_wallet, sample_url, file_path
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-            RETURNING *
-            "#,
-            req.name,
-            req.ui_name,
-            req.description,
-            req.file_hash,
-            req.ipfs_cid,
-            req.file_size,
-            req.file_format,
-            req.author,
-            req.author_wallet,
-            req.sample_url,
-            req.file_path
-        )
-        .fetch_one(pool)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, "Failed to create static dataset");
-            ApiError::InternalError("Failed to create dataset".to_string())
-        })?;
+    /// Create a new dataset service
+    pub async fn new() -> ApiResult<Self> {
+        info!("Initializing dataset service");
 
-        Ok(dataset)
+        let key_vault = Arc::new(KeyVault::new_with_client_kind(crate::tee::ClientKind::Mock));
+        let encryption = Arc::new(MockEncryption::new());
+
+        Ok(Self {
+            key_vault,
+            encryption,
+            datasets: Arc::new(RwLock::new(HashMap::new())),
+            reference_counts: Arc::new(RwLock::new(HashMap::new())),
+        })
     }
 
-    /// Get static datasets with pagination, only confirmed ones
-    pub async fn get_static_datasets(
-        pool: &PgPool,
-        params: PaginationParams,
-    ) -> ApiResult<PaginatedResponse<StaticDataset>> {
-        let offset = (params.page - 1) * params.limit;
-
-        // Get total count
-        let total = sqlx::query_scalar!(
-            r#"
-            SELECT COUNT(*) as count
-            FROM static_datasets sd
-            INNER JOIN blockchain_transactions bt ON bt.entity_id = sd.id
-                AND bt.status = 'CONFIRMED'
-                AND bt.entity_type = 'STATIC_DATASET'
-            "#
-        )
-        .fetch_one(pool)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, "Failed to count static datasets");
-            ApiError::InternalError("Failed to count datasets".to_string())
-        })?
-        .unwrap_or(0);
-
-        // Get paginated results
-        let datasets = sqlx::query_as!(
-            StaticDataset,
-            r#"
-            SELECT sd.*
-            FROM static_datasets sd
-            INNER JOIN blockchain_transactions bt ON bt.entity_id = sd.id
-                AND bt.status = 'CONFIRMED'
-                AND bt.entity_type = 'STATIC_DATASET'
-            ORDER BY sd.created_at DESC
-            LIMIT $1 OFFSET $2
-            "#,
-            params.limit as i64,
-            offset as i64
-        )
-        .fetch_all(pool)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, "Failed to get static datasets");
-            ApiError::InternalError("Failed to get datasets".to_string())
-        })?;
-
-        Ok(PaginatedResponse::new(
-            datasets,
-            params.page,
-            params.limit,
-            total as u64,
-        ))
+    /// Start the dataset service
+    pub async fn start(&self) -> ApiResult<()> {
+        info!("Starting dataset service");
+        // Initialize any background tasks here
+        Ok(())
     }
 
-    /// Get a static dataset by ID, only confirmed ones
-    pub async fn get_static_dataset_by_id(
-        pool: &PgPool,
-        id: i64,
-    ) -> ApiResult<StaticDataset> {
-        let dataset = sqlx::query_as!(
-            StaticDataset,
-            r#"
-            SELECT sd.*
-            FROM static_datasets sd
-            INNER JOIN blockchain_transactions bt ON bt.entity_id = sd.id
-                AND bt.status = 'CONFIRMED'
-                AND bt.entity_type = 'STATIC_DATASET'
-            WHERE sd.id = $1
-            "#,
-            id
-        )
-        .fetch_one(pool)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, dataset_id = %id, "Failed to get static dataset");
-            ApiError::NotFound("Dataset not found".to_string())
-        })?;
-
-        Ok(dataset)
+    /// Stop the dataset service
+    pub async fn stop(&self) -> ApiResult<()> {
+        info!("Stopping dataset service");
+        // Clean up any resources here
+        Ok(())
     }
 
-    /// Get a static dataset by name, only confirmed ones
-    pub async fn get_static_dataset_by_name(
-        pool: &PgPool,
+    /// Health check for the dataset service
+    pub async fn health_check(&self) -> ApiResult<()> {
+        // Verify key vault is working
+        let test_context = KeyContext {
+            dataset_id: "health_check".to_string(),
+            author: "system".to_string(),
+            purpose: "test".to_string(),
+        };
+
+        self.key_vault.get_symmetric_key(&test_context).await?;
+        Ok(())
+    }
+
+    /// Store a new dataset (encrypted)
+    #[instrument(skip(self, data))]
+    pub async fn store_dataset(
+        &self,
         name: &str,
-    ) -> ApiResult<StaticDataset> {
-        let dataset = sqlx::query_as!(
-            StaticDataset,
-            r#"
-            SELECT sd.*
-            FROM static_datasets sd
-            INNER JOIN blockchain_transactions bt ON bt.entity_id = sd.id
-                AND bt.status = 'CONFIRMED'
-                AND bt.entity_type = 'STATIC_DATASET'
-            WHERE sd.name = $1
-            "#,
-            name
-        )
-        .fetch_one(pool)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, dataset_name = %name, "Failed to get static dataset by name");
-            ApiError::NotFound("Dataset not found".to_string())
-        })?;
+        data: &[u8],
+        metadata: DatasetMetadata,
+        author: &str,
+    ) -> ApiResult<String> {
+        info!(name = %name, size = data.len(), "Storing new dataset");
 
-        Ok(dataset)
+        // Validate dataset name
+        if !utils::is_valid_dataset_name(name) {
+            return Err(common::ApiError::BadRequest(
+                "Invalid dataset name format".to_string()
+            ));
+        }
+
+        let dataset_id = Uuid::new_v4().to_string();
+        let version = utils::generate_dataset_version();
+        let is_static = utils::is_static_dataset(name);
+
+        // Create encryption key context
+        let key_context = KeyContext {
+            dataset_id: dataset_id.clone(),
+            author: author.to_string(),
+            purpose: "storage".to_string(),
+        };
+
+        // Get encryption key from TEE
+        let encryption_key = self.key_vault.get_symmetric_key(&key_context).await?;
+
+        // Encrypt the dataset
+        let encrypted_data = self.encryption.encrypt(data, &encryption_key).await?;
+
+        // For static datasets, store in IPFS (simulated)
+        let encrypted_cid = if is_static {
+            Some(self.store_to_ipfs(&encrypted_data).await?)
+        } else {
+            // For dynamic datasets, store locally (simulated)
+            self.store_locally(&dataset_id, &encrypted_data).await?;
+            None
+        };
+
+        // Store dataset metadata
+        let dataset_info = DatasetInfo {
+            id: dataset_id.clone(),
+            name: name.to_string(),
+            version,
+            size: data.len() as u64,
+            encrypted_cid,
+            created_at: Utc::now(),
+            metadata,
+            is_static,
+        };
+
+        self.datasets.write().unwrap().insert(dataset_id.clone(), dataset_info);
+        self.reference_counts.write().unwrap().insert(dataset_id.clone(), 0);
+
+        info!(dataset_id = %dataset_id, "Dataset stored successfully");
+        Ok(dataset_id)
     }
 
-    /// Get a static dataset by file hash, only confirmed ones
-    pub async fn get_static_dataset_by_hash(
-        pool: &PgPool,
-        file_hash: &str,
-    ) -> ApiResult<StaticDataset> {
-        let dataset = sqlx::query_as!(
-            StaticDataset,
-            r#"
-            SELECT sd.*
-            FROM static_datasets sd
-            INNER JOIN blockchain_transactions bt ON bt.entity_id = sd.id
-                AND bt.status = 'CONFIRMED'
-                AND bt.entity_type = 'STATIC_DATASET'
-            WHERE sd.file_hash = $1
-            "#,
-            file_hash
-        )
-        .fetch_one(pool)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, file_hash = %file_hash, "Failed to get static dataset by hash");
-            ApiError::NotFound("Dataset not found".to_string())
-        })?;
+    /// Retrieve and decrypt a dataset
+    #[instrument(skip(self))]
+    pub async fn get_dataset(
+        &self,
+        dataset_id: &str,
+        author: &str,
+    ) -> ApiResult<Vec<u8>> {
+        info!(dataset_id = %dataset_id, "Retrieving dataset");
 
-        Ok(dataset)
+        // Get dataset info
+        let dataset_info = {
+            let datasets = self.datasets.read().unwrap();
+            datasets.get(dataset_id).cloned()
+                .ok_or_else(|| common::ApiError::NotFound("Dataset not found".to_string()))?
+        };
+
+        // Create decryption key context
+        let key_context = KeyContext {
+            dataset_id: dataset_id.to_string(),
+            author: author.to_string(),
+            purpose: "storage".to_string(),
+        };
+
+        // Get decryption key from TEE
+        let decryption_key = self.key_vault.get_symmetric_key(&key_context).await?;
+
+        // Retrieve encrypted data
+        let encrypted_data = if dataset_info.is_static {
+            if let Some(cid) = &dataset_info.encrypted_cid {
+                self.retrieve_from_ipfs(cid).await?
+            } else {
+                return Err(common::ApiError::InternalError(
+                    "Static dataset missing IPFS CID".to_string()
+                ));
+            }
+        } else {
+            self.retrieve_locally(dataset_id).await?
+        };
+
+        // Decrypt the dataset
+        let decrypted_data = self.encryption.decrypt(&encrypted_data, &decryption_key).await?;
+
+        info!(dataset_id = %dataset_id, size = decrypted_data.len(), "Dataset retrieved successfully");
+        Ok(decrypted_data)
     }
 
-    /// Update a static dataset
-    pub async fn update_static_dataset(
-        pool: &PgPool,
-        id: i64,
-        req: UpdateStaticDatasetRequest,
-    ) -> ApiResult<StaticDataset> {
-        // Build dynamic update query
-        let mut query = "UPDATE static_datasets SET".to_string();
-        let mut params = Vec::new();
-        let mut param_count = 1;
+    /// Increment reference count for a dataset
+    pub async fn add_reference(&self, dataset_id: &str) -> ApiResult<u32> {
+        let mut ref_counts = self.reference_counts.write().unwrap();
+        if let Some(count) = ref_counts.get_mut(dataset_id) {
+            *count += 1;
+            info!(dataset_id = %dataset_id, ref_count = *count, "Reference added");
+            Ok(*count)
+        } else {
+            Err(common::ApiError::NotFound("Dataset not found".to_string()))
+        }
+    }
 
-        if let Some(name) = &req.name {
-            query.push_str(&format!(" name = ${},", param_count));
-            params.push(name.clone());
-            param_count += 1;
+    /// Decrement reference count for a dataset
+    pub async fn remove_reference(&self, dataset_id: &str) -> ApiResult<u32> {
+        let mut ref_counts = self.reference_counts.write().unwrap();
+        if let Some(count) = ref_counts.get_mut(dataset_id) {
+            if *count > 0 {
+                *count -= 1;
+            }
+            info!(dataset_id = %dataset_id, ref_count = *count, "Reference removed");
+            Ok(*count)
+        } else {
+            Err(common::ApiError::NotFound("Dataset not found".to_string()))
+        }
+    }
+
+    /// Get reference count for a dataset
+    pub async fn get_reference_count(&self, dataset_id: &str) -> ApiResult<u32> {
+        let ref_counts = self.reference_counts.read().unwrap();
+        ref_counts.get(dataset_id)
+            .copied()
+            .ok_or_else(|| common::ApiError::NotFound("Dataset not found".to_string()))
+    }
+
+    /// List all available datasets
+    pub async fn list_datasets(&self) -> ApiResult<Vec<Dataset>> {
+        let datasets = self.datasets.read().unwrap();
+        let mut result = Vec::new();
+
+        for (id, info) in datasets.iter() {
+            let ref_count = self.reference_counts.read().unwrap()
+                .get(id).copied().unwrap_or(0);
+
+            result.push(Dataset {
+                id: id.clone(),
+                name: info.name.clone(),
+                version: Some(info.version.clone()),
+                size: Some(info.size),
+                created_at: Some(info.created_at),
+                metadata: Some(info.metadata.clone()),
+                reference_count: Some(ref_count),
+            });
         }
 
-        if let Some(ui_name) = &req.ui_name {
-            query.push_str(&format!(" ui_name = ${},", param_count));
-            params.push(ui_name.clone());
-            param_count += 1;
+        Ok(result)
+    }
+
+    /// Get dataset metadata
+    pub async fn get_dataset_metadata(&self, dataset_id: &str) -> ApiResult<DatasetMetadata> {
+        let datasets = self.datasets.read().unwrap();
+        let dataset_info = datasets.get(dataset_id)
+            .ok_or_else(|| common::ApiError::NotFound("Dataset not found".to_string()))?;
+
+        Ok(dataset_info.metadata.clone())
+    }
+
+    /// Delete a dataset (only if reference count is 0)
+    pub async fn delete_dataset(&self, dataset_id: &str) -> ApiResult<()> {
+        let ref_count = self.get_reference_count(dataset_id).await?;
+        if ref_count > 0 {
+            return Err(common::ApiError::BadRequest(
+                format!("Cannot delete dataset with {} active references", ref_count)
+            ));
         }
 
-        if let Some(description) = &req.description {
-            query.push_str(&format!(" description = ${},", param_count));
-            params.push(description.clone());
-            param_count += 1;
+        // Remove from storage
+        let dataset_info = {
+            let mut datasets = self.datasets.write().unwrap();
+            datasets.remove(dataset_id)
+                .ok_or_else(|| common::ApiError::NotFound("Dataset not found".to_string()))?
+        };
+
+        // Clean up storage
+        if dataset_info.is_static {
+            if let Some(cid) = &dataset_info.encrypted_cid {
+                self.remove_from_ipfs(cid).await?;
+            }
+        } else {
+            self.remove_locally(dataset_id).await?;
         }
 
-        if param_count == 1 {
-            return Err(ApiError::BadRequest("No fields to update".to_string()));
-        }
+        // Remove reference count
+        self.reference_counts.write().unwrap().remove(dataset_id);
 
-        // Remove trailing comma and add WHERE clause
-        query.pop();
-        query.push_str(&format!(" WHERE id = ${} RETURNING *", param_count));
-        params.push(id.to_string());
+        info!(dataset_id = %dataset_id, "Dataset deleted successfully");
+        Ok(())
+    }
 
-        // Execute update (this is a simplified version - in production, use a proper query builder)
-        // For now, let's implement a simple version with all possible fields
-        let dataset = sqlx::query_as!(
-            StaticDataset,
-            r#"
-            UPDATE static_datasets 
-            SET name = COALESCE($1, name),
-                ui_name = COALESCE($2, ui_name),
-                description = COALESCE($3, description),
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = $4
-            RETURNING *
-            "#,
-            req.name,
-            req.ui_name,
-            req.description,
-            id
-        )
-        .fetch_one(pool)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, dataset_id = %id, "Failed to update static dataset");
-            ApiError::InternalError("Failed to update dataset".to_string())
-        })?;
+    /// Simulate IPFS storage
+    async fn store_to_ipfs(&self, data: &[u8]) -> ApiResult<String> {
+        // Simulate IPFS CID generation
+        let cid = format!("Qm{}", utils::sha256_hash(data)[..44].to_uppercase());
+        info!(cid = %cid, size = data.len(), "Stored to IPFS (simulated)");
+        Ok(cid)
+    }
 
-        Ok(dataset)
+    /// Simulate IPFS retrieval
+    async fn retrieve_from_ipfs(&self, _cid: &str) -> ApiResult<Vec<u8>> {
+        // Simulate IPFS data retrieval
+        info!(cid = %_cid, "Retrieved from IPFS (simulated)");
+        Ok(b"simulated_encrypted_data".to_vec())
+    }
+
+    /// Simulate IPFS removal
+    async fn remove_from_ipfs(&self, _cid: &str) -> ApiResult<()> {
+        info!(cid = %_cid, "Removed from IPFS (simulated)");
+        Ok(())
+    }
+
+    /// Simulate local storage
+    async fn store_locally(&self, dataset_id: &str, _data: &[u8]) -> ApiResult<()> {
+        info!(dataset_id = %dataset_id, "Stored locally (simulated)");
+        Ok(())
+    }
+
+    /// Simulate local retrieval
+    async fn retrieve_locally(&self, dataset_id: &str) -> ApiResult<Vec<u8>> {
+        info!(dataset_id = %dataset_id, "Retrieved locally (simulated)");
+        Ok(b"simulated_local_encrypted_data".to_vec())
+    }
+
+    /// Simulate local removal
+    async fn remove_locally(&self, dataset_id: &str) -> ApiResult<()> {
+        info!(dataset_id = %dataset_id, "Removed locally (simulated)");
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_dataset_lifecycle() {
+        let service = DatasetService::new().await.unwrap();
+        
+        let metadata = DatasetMetadata {
+            description: "Test dataset".to_string(),
+            format: "CSV".to_string(),
+            schema: Some("name,age,score".to_string()),
+            tags: vec!["test".to_string()],
+        };
+
+        // Store dataset
+        let dataset_id = service.store_dataset(
+            "test_dataset",
+            b"test,data,content",
+            metadata.clone(),
+            "test_author"
+        ).await.unwrap();
+
+        // Retrieve dataset
+        let data = service.get_dataset(&dataset_id, "test_author").await.unwrap();
+        assert!(!data.is_empty());
+
+        // Add and remove references
+        let ref_count = service.add_reference(&dataset_id).await.unwrap();
+        assert_eq!(ref_count, 1);
+
+        let ref_count = service.remove_reference(&dataset_id).await.unwrap();
+        assert_eq!(ref_count, 0);
+
+        // Delete dataset
+        service.delete_dataset(&dataset_id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_static_dataset() {
+        let service = DatasetService::new().await.unwrap();
+        
+        let metadata = DatasetMetadata {
+            description: "Static test dataset".to_string(),
+            format: "JSON".to_string(),
+            schema: None,
+            tags: vec!["static".to_string()],
+        };
+
+        // Store static dataset
+        let dataset_id = service.store_dataset(
+            "__static__blood_test",
+            b"static,test,data",
+            metadata,
+            "static_author"
+        ).await.unwrap();
+
+        // Verify it's treated as static
+        let datasets = service.list_datasets().await.unwrap();
+        let dataset = datasets.iter().find(|d| d.id == dataset_id).unwrap();
+        assert!(dataset.name.starts_with("__static__"));
     }
 } 

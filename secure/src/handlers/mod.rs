@@ -2,6 +2,10 @@ pub mod health;
 pub mod dataset;
 pub mod algo_exe;
 pub mod runtime;
+pub mod committee;
+pub mod votes;
+pub mod contracts;
+pub mod reports;
 
 // Re-export commonly used handler functions
 pub use health::health_check;

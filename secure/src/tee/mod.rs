@@ -1,307 +1,477 @@
-// TEE (Trusted Execution Environment) integration module
-// TODO: Implement key derivation, encryption, and hardware attestation 
-
-use common::{ApiError, ApiResult};
-use hkdf::Hkdf;
-use sha2::Sha256;
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use tracing::{info, error};
-use rand::RngCore;
+use std::sync::{Arc, RwLock};
+use async_trait::async_trait;
+use sha2::{Sha256, Digest};
+use hkdf::Hkdf;
+use secp256k1::{SecretKey, PublicKey, Secp256k1};
+use serde::{Serialize, Deserialize};
+use tracing::{info, warn};
+use common::ApiResult;
 
-/// Result of encryption operation
-#[derive(Debug, Clone)]
-pub struct EncryptionResult {
-    pub encrypted_data: Vec<u8>,
-    pub nonce: Vec<u8>,
-    pub key_id: String,
+pub mod encryption;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClientKind {
+    Phala,
+    Mock,
 }
 
-/// Result of decryption operation
-#[derive(Debug, Clone)]
-pub struct DecryptionRequest {
-    pub encrypted_data: Vec<u8>,
-    pub nonce: Vec<u8>,
-    pub key_id: String,
+impl ClientKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ClientKind::Phala => "phala",
+            ClientKind::Mock => "mock",
+        }
+    }
 }
 
-/// KeyVault for managing encryption keys in TEE environment
 #[derive(Debug, Clone)]
+pub struct KeyContext {
+    pub dataset_hash: String,
+    pub author: String,
+    pub purpose: String,
+    pub salt: Vec<u8>,
+}
+
+impl KeyContext {
+    pub fn new(dataset_hash: String, author: String, purpose: String) -> Self {
+        let salt = format!("delong-{}-{}", author, purpose);
+        Self {
+            dataset_hash,
+            author,
+            purpose,
+            salt: salt.into_bytes(),
+        }
+    }
+
+    pub fn cache_key(&self) -> String {
+        format!("{}:{}:{}", self.dataset_hash, self.author, self.purpose)
+    }
+
+    pub fn info(&self) -> &[u8] {
+        b"delong-v1"
+    }
+
+    pub fn salt(&self) -> &[u8] {
+        &self.salt
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct EthereumAccount {
+    pub private_key: SecretKey,
+    pub address: String,
+}
+
+impl EthereumAccount {
+    pub fn from_secret_key(private_key: SecretKey) -> Self {
+        let secp = Secp256k1::new();
+        let public_key = PublicKey::from_secret_key(&secp, &private_key);
+        
+        // Convert public key to Ethereum address
+        let public_key_bytes = public_key.serialize_uncompressed();
+        let hash = Sha256::digest(&public_key_bytes[1..]);
+        let address = format!("0x{}", hex::encode(&hash[12..]));
+        
+        Self {
+            private_key,
+            address,
+        }
+    }
+}
+
+#[async_trait]
+pub trait TeeClient: Send + Sync {
+    async fn derive_key(&self, context: &KeyContext) -> ApiResult<Vec<u8>>;
+    async fn verify_attestation(&self) -> ApiResult<bool>;
+    fn client_kind(&self) -> ClientKind;
+}
+
+pub struct PhalaClient {
+    attestation_verified: RwLock<bool>,
+}
+
+impl PhalaClient {
+    pub fn new() -> Self {
+        Self {
+            attestation_verified: RwLock::new(false),
+        }
+    }
+}
+
+#[async_trait]
+impl TeeClient for PhalaClient {
+    async fn derive_key(&self, context: &KeyContext) -> ApiResult<Vec<u8>> {
+        let verified = *self.attestation_verified.read().unwrap();
+        if !verified {
+            return Err(common::ApiError::Forbidden(
+                "Attestation not verified".to_string()
+            ));
+        }
+
+        // In a real Phala implementation, this would call the Phala runtime
+        // For now, use a deterministic key derivation
+        let mut hasher = Sha256::new();
+        hasher.update(context.dataset_hash.as_bytes());
+        hasher.update(&context.salt);
+        hasher.update(context.info());
+        let result = hasher.finalize();
+        
+        info!(
+            dataset_hash = %context.dataset_hash,
+            author = %context.author,
+            purpose = %context.purpose,
+            "Derived key in TEE environment"
+        );
+        
+        Ok(result.to_vec())
+    }
+
+    async fn verify_attestation(&self) -> ApiResult<bool> {
+        // In a real implementation, this would verify hardware attestation
+        info!("Verifying TEE attestation");
+        *self.attestation_verified.write().unwrap() = true;
+        Ok(true)
+    }
+
+    fn client_kind(&self) -> ClientKind {
+        ClientKind::Phala
+    }
+}
+
+pub struct MockClient;
+
+impl MockClient {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[async_trait]
+impl TeeClient for MockClient {
+    async fn derive_key(&self, context: &KeyContext) -> ApiResult<Vec<u8>> {
+        // Mock implementation always succeeds
+        let mut hasher = Sha256::new();
+        hasher.update(b"mock_master_key");
+        hasher.update(context.dataset_hash.as_bytes());
+        hasher.update(&context.salt);
+        hasher.update(context.info());
+        let result = hasher.finalize();
+        
+        info!(
+            dataset_hash = %context.dataset_hash,
+            author = %context.author,
+            purpose = %context.purpose,
+            "Derived mock key"
+        );
+        
+        Ok(result.to_vec())
+    }
+
+    async fn verify_attestation(&self) -> ApiResult<bool> {
+        warn!("Using mock TEE client - attestation always succeeds");
+        Ok(true)
+    }
+
+    fn client_kind(&self) -> ClientKind {
+        ClientKind::Mock
+    }
+}
+
 pub struct KeyVault {
-    /// Master key for deriving dataset-specific keys
-    master_key: Arc<RwLock<Vec<u8>>>,
-    
-    /// Cache of derived keys for datasets
-    derived_keys: Arc<RwLock<HashMap<String, Vec<u8>>>>,
-    
-    /// TEE attestation status
-    attestation_verified: bool,
-    
-    /// Client type (mock or phala)
-    client_type: String,
+    client: Arc<dyn TeeClient>,
+    symmetric_key_cache: Arc<RwLock<HashMap<String, Vec<u8>>>>,
+    ethereum_cache: Arc<RwLock<HashMap<String, EthereumAccount>>>,
+    attestation_verified: Arc<RwLock<bool>>,
+}
+
+impl Clone for KeyVault {
+    fn clone(&self) -> Self {
+        Self {
+            client: Arc::clone(&self.client),
+            symmetric_key_cache: Arc::clone(&self.symmetric_key_cache),
+            ethereum_cache: Arc::clone(&self.ethereum_cache),
+            attestation_verified: Arc::clone(&self.attestation_verified),
+        }
+    }
 }
 
 impl KeyVault {
-    /// Create a new KeyVault instance
-    pub fn new(client_type: String) -> Self {
-        let master_key = match client_type.as_str() {
-            "mock" => {
-                // Generate a random master key for mock mode
-                let mut rng = rand::thread_rng();
-                let mut key = vec![0u8; 32];
-                rng.fill_bytes(&mut key);
-                key
-            }
-            "phala" => {
-                // In production, this would be derived from hardware
-                vec![0u8; 32] // Placeholder
-            }
-            _ => vec![0u8; 32],
-        };
-
-        let attestation_verified = client_type == "mock";
-
+    pub fn new(client: Arc<dyn TeeClient>) -> Self {
         Self {
-            master_key: Arc::new(RwLock::new(master_key)),
-            derived_keys: Arc::new(RwLock::new(HashMap::new())),
-            attestation_verified,
-            client_type,
+            client,
+            symmetric_key_cache: Arc::new(RwLock::new(HashMap::new())),
+            ethereum_cache: Arc::new(RwLock::new(HashMap::new())),
+            attestation_verified: Arc::new(RwLock::new(false)),
         }
     }
 
-    /// Create a mock KeyVault for testing
-    pub fn mock() -> Self {
-        Self::new("mock".to_string())
+    pub fn new_with_client_kind(client_kind: ClientKind) -> Self {
+        let client: Arc<dyn TeeClient> = match client_kind {
+            ClientKind::Phala => Arc::new(PhalaClient::new()),
+            ClientKind::Mock => Arc::new(MockClient::new()),
+        };
+        Self::new(client)
     }
 
-    /// Verify TEE attestation
-    pub async fn verify_attestation(&mut self) -> Result<(), ApiError> {
-        match self.client_type.as_str() {
-            "mock" => {
-                info!("Mock TEE attestation verified");
-                self.attestation_verified = true;
-                Ok(())
-            }
-            "phala" => {
-                // In production, this would verify hardware attestation
-                info!("Phala TEE attestation verification not yet implemented");
-                Ok(())
-            }
-            _ => Err(ApiError::InternalError("Unknown TEE client type".to_string())),
-        }
+    pub async fn verify_attestation(&self) -> ApiResult<bool> {
+        let verified = self.client.verify_attestation().await?;
+        *self.attestation_verified.write().unwrap() = verified;
+        Ok(verified)
     }
 
-    /// Check if attestation is verified
     pub fn is_attestation_verified(&self) -> bool {
-        self.attestation_verified
+        *self.attestation_verified.read().unwrap()
     }
 
-    /// Derive a dataset-specific key using HKDF
-    pub async fn derive_dataset_key(&self, dataset_hash: &str) -> Result<String, ApiError> {
-        let key_id = format!("dataset:{}", dataset_hash);
+    pub async fn derive_symmetric_key(&self, context: &KeyContext) -> ApiResult<Vec<u8>> {
+        let cache_key = context.cache_key();
         
         // Check cache first
         {
-            let cache = self.derived_keys.read().await;
-            if cache.contains_key(&key_id) {
-                return Ok(key_id);
+            let cache = self.symmetric_key_cache.read().unwrap();
+            if let Some(cached_key) = cache.get(&cache_key) {
+                return Ok(cached_key.clone());
             }
         }
 
         // Derive new key
-        let master_key = self.master_key.read().await;
-        let salt = dataset_hash.as_bytes();
+        let raw_key = self.client.derive_key(context).await?;
         
-        let hk = hkdf::Hkdf::<sha2::Sha256>::new(Some(salt), &master_key);
-        let mut derived_key = [0u8; 32]; // 256-bit key for AES-256-GCM
+        // Use HKDF to derive final key
+        let hkdf = Hkdf::<Sha256>::new(Some(context.salt()), &raw_key);
+        let mut key = vec![0u8; 32];
+        hkdf.expand(context.info(), &mut key)
+            .map_err(|e| common::ApiError::InternalError(format!("HKDF expand failed: {}", e)))?;
         
-        hk.expand(b"delong-dataset-key", &mut derived_key)
-            .map_err(|e| {
-                error!(error = %e, "HKDF key derivation failed");
-                ApiError::InternalError("Key derivation failed".to_string())
-            })?;
-
-        // Cache the derived key
+        // Cache the result
         {
-            let mut cache = self.derived_keys.write().await;
-            cache.insert(key_id.clone(), derived_key.to_vec());
+            let mut cache = self.symmetric_key_cache.write().unwrap();
+            cache.insert(cache_key, key.clone());
         }
         
-        info!(key_id = %key_id, "Derived dataset-specific key");
-        Ok(key_id)
-    }
-
-    /// Encrypt data using dataset-specific key
-    pub async fn encrypt_data(&mut self, data: &[u8], dataset_hash: &str) -> Result<EncryptionResult, ApiError> {
-        if !self.attestation_verified {
-            return Err(ApiError::InternalError("TEE attestation not verified".to_string()));
-        }
-
-        // First derive the key for the dataset
-        let key_id = self.derive_dataset_key(dataset_hash).await?;
+        info!(
+            dataset_hash = %context.dataset_hash,
+            "Derived and cached symmetric key"
+        );
         
-        // Get the derived key from cache
-        let derived_key = self.derived_keys.read().await.get(&key_id).cloned()
-            .ok_or_else(|| {
-                error!(key_id = %key_id, "Derived key not found after derivation");
-                ApiError::InternalError("Key not found".to_string())
-            })?;
-
-        // For now, use a simple mock encryption
-        match self.client_type.as_str() {
-            "mock" => {
-                // Simple XOR encryption with derived key
-                let mut encrypted = Vec::new();
-                
-                for (i, &byte) in data.iter().enumerate() {
-                    let key_byte = derived_key[i % derived_key.len()];
-                    encrypted.push(byte ^ key_byte);
-                }
-                
-                // Generate a mock nonce
-                let nonce = vec![0u8; 12];
-                
-                Ok(EncryptionResult {
-                    encrypted_data: encrypted,
-                    nonce,
-                    key_id,
-                })
-            }
-            "phala" => {
-                // Real AES-GCM encryption would go here
-                Err(ApiError::InternalError("Phala encryption not yet implemented".to_string()))
-            }
-            _ => Err(ApiError::InternalError("Unknown TEE client type".to_string())),
-        }
+        Ok(key)
     }
 
-    /// Decrypt data using dataset-specific key
-    pub async fn decrypt_data(&self, request: DecryptionRequest) -> Result<Vec<u8>, ApiError> {
-        if !self.attestation_verified {
-            return Err(ApiError::InternalError("TEE attestation not verified".to_string()));
-        }
-
-        let derived_key = self.derived_keys.read().await.get(&request.key_id).cloned()
-            .ok_or_else(|| {
-                error!(key_id = %request.key_id, "Derived key not found");
-                ApiError::InternalError("Key not found".to_string())
-            })?;
-
-        match self.client_type.as_str() {
-            "mock" => {
-                // Simple XOR decryption using derived key
-                let mut decrypted = Vec::new();
-                
-                for (i, &byte) in request.encrypted_data.iter().enumerate() {
-                    let key_byte = derived_key[i % derived_key.len()];
-                    decrypted.push(byte ^ key_byte);
-                }
-                
-                Ok(decrypted)
-            }
-            "phala" => {
-                // Real AES-GCM decryption would go here
-                Err(ApiError::InternalError("Phala decryption not yet implemented".to_string()))
-            }
-            _ => Err(ApiError::InternalError("Unknown TEE client type".to_string())),
-        }
-    }
-
-    /// Clear all derived keys (security measure)
-    pub async fn clear_derived_keys(&mut self) {
-        let cache = self.derived_keys.read().await;
-        let count = cache.len();
-        drop(cache);
+    pub async fn derive_ethereum_account(&self, context: &KeyContext) -> ApiResult<EthereumAccount> {
+        let cache_key = context.cache_key();
         
-        let mut cache = self.derived_keys.write().await;
-        cache.clear();
+        // Check cache first
+        {
+            let cache = self.ethereum_cache.read().unwrap();
+            if let Some(cached_account) = cache.get(&cache_key) {
+                return Ok(cached_account.clone());
+            }
+        }
+
+        // Derive new account
+        let raw_key = self.client.derive_key(context).await?;
         
-        info!(cleared_keys = count, "Cleared all derived keys");
+        let secret_key = SecretKey::from_slice(&raw_key[..32])
+            .map_err(|e| common::ApiError::InternalError(format!("Invalid secret key: {}", e)))?;
+        
+        let account = EthereumAccount::from_secret_key(secret_key);
+        
+        // Cache the result
+        {
+            let mut cache = self.ethereum_cache.write().unwrap();
+            cache.insert(cache_key, account.clone());
+        }
+        
+        info!(
+            dataset_hash = %context.dataset_hash,
+            address = %account.address,
+            "Derived and cached Ethereum account"
+        );
+        
+        Ok(account)
     }
 
-    /// Get number of cached derived keys
-    pub async fn cached_keys_count(&self) -> usize {
-        let cache = self.derived_keys.read().await;
-        cache.len()
+    pub fn clear_cache(&self) {
+        let mut sym_cache = self.symmetric_key_cache.write().unwrap();
+        let mut eth_cache = self.ethereum_cache.write().unwrap();
+        sym_cache.clear();
+        eth_cache.clear();
+        info!("Cleared key caches");
+    }
+
+    /// Get the number of cached symmetric keys
+    pub fn cached_symmetric_keys_count(&self) -> usize {
+        self.symmetric_key_cache.read().unwrap().len()
+    }
+
+    /// Get the number of cached Ethereum accounts
+    pub fn cached_ethereum_accounts_count(&self) -> usize {
+        self.ethereum_cache.read().unwrap().len()
+    }
+
+    /// Encrypt data using TEE-derived keys
+    pub async fn encrypt_data(&self, data: &[u8], dataset_id: &str) -> ApiResult<EncryptedData> {
+        let context = KeyContext::new(
+            dataset_id.to_string(),
+            "system".to_string(), // Default author for system operations
+            "encryption".to_string(),
+        );
+
+        let key = self.derive_symmetric_key(&context).await?;
+        
+        let (ciphertext, nonce) = crate::tee::encryption::MockEncryption::encrypt(data, &key)?;
+        
+        Ok(EncryptedData {
+            encrypted_data: ciphertext,
+            nonce,
+            dataset_id: dataset_id.to_string(),
+        })
+    }
+
+    /// Decrypt data using TEE-derived keys
+    pub async fn decrypt_data(&self, encrypted: &EncryptedData) -> ApiResult<Vec<u8>> {
+        let context = KeyContext::new(
+            encrypted.dataset_id.clone(),
+            "system".to_string(),
+            "encryption".to_string(),
+        );
+
+        let key = self.derive_symmetric_key(&context).await?;
+        
+        let plaintext = crate::tee::encryption::MockEncryption::decrypt(
+            &encrypted.encrypted_data,
+            &encrypted.nonce,
+            &key
+        )?;
+        
+        Ok(plaintext)
     }
 }
 
-/// Initialize TEE environment and verify security
-pub async fn initialize_tee(client_type: &str) -> ApiResult<KeyVault> {
-    tracing::info!(client_type = %client_type, "Initializing TEE environment");
-    
-    let mut key_vault = KeyVault::new(client_type.to_string());
-    
-    // Verify secure environment
-    key_vault.verify_attestation().await?;
-    
-    tracing::info!("TEE environment initialized successfully");
-    Ok(key_vault)
+/// Encrypted data structure for KeyVault operations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EncryptedData {
+    pub encrypted_data: Vec<u8>,
+    pub nonce: Vec<u8>,
+    pub dataset_id: String,
 }
 
-// Implementation of tests
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn test_key_context() {
+        let context = KeyContext::new(
+            "test_hash".to_string(),
+            "author123".to_string(),
+            "testing".to_string(),
+        );
+        
+        assert_eq!(context.dataset_hash, "test_hash");
+        assert_eq!(context.author, "author123");
+        assert_eq!(context.purpose, "testing");
+        assert_eq!(context.cache_key(), "test_hash:author123:testing");
+    }
+
+    #[tokio::test]
     async fn test_mock_key_vault() {
-        let mut vault = KeyVault::mock();
+        let vault = KeyVault::new_with_client_kind(ClientKind::Mock);
+        
+        let context = KeyContext::new(
+            "test_dataset".to_string(),
+            "test_author".to_string(),
+            "encryption".to_string(),
+        );
         
         // Test attestation
-        assert!(vault.is_attestation_verified());
+        let verified = vault.verify_attestation().await.unwrap();
+        assert!(verified);
         
-        // Test key derivation
-        let key1 = vault.derive_dataset_key("dataset1").await.unwrap();
-        let key2 = vault.derive_dataset_key("dataset1").await.unwrap(); // Should come from cache
-        assert_eq!(key1, key2);
+        // Test symmetric key derivation
+        let key1 = vault.derive_symmetric_key(&context).await.unwrap();
+        let key2 = vault.derive_symmetric_key(&context).await.unwrap();
+        assert_eq!(key1, key2); // Should be cached
+        assert_eq!(key1.len(), 32);
         
-        // Test different datasets have different keys
-        let key3 = vault.derive_dataset_key("dataset2").await.unwrap();
-        assert_ne!(key1, key3);
+        // Test Ethereum account derivation
+        let account1 = vault.derive_ethereum_account(&context).await.unwrap();
+        let account2 = vault.derive_ethereum_account(&context).await.unwrap();
+        assert_eq!(account1.address, account2.address); // Should be cached
+        assert!(account1.address.starts_with("0x"));
     }
 
     #[tokio::test]
-    async fn test_encryption_decryption() {
-        let mut vault = KeyVault::mock();
+    async fn test_phala_key_vault_requires_attestation() {
+        let vault = KeyVault::new_with_client_kind(ClientKind::Phala);
         
-        let data = b"Hello, TEE World!";
-        let dataset_hash = "test_dataset";
+        let context = KeyContext::new(
+            "test_dataset".to_string(),
+            "test_author".to_string(),
+            "encryption".to_string(),
+        );
         
-        // Encrypt
-        let encrypted = vault.encrypt_data(data, dataset_hash).await.unwrap();
-        assert_ne!(encrypted.encrypted_data, data);
+        // Should fail without attestation
+        let result = vault.derive_symmetric_key(&context).await;
+        assert!(result.is_err());
         
-        // Decrypt
-        let decrypt_request = DecryptionRequest {
-            encrypted_data: encrypted.encrypted_data,
-            nonce: encrypted.nonce,
-            key_id: encrypted.key_id,
-        };
-        
-        let decrypted = vault.decrypt_data(decrypt_request).await.unwrap();
-        assert_eq!(decrypted, data);
+        // Should succeed after attestation
+        vault.verify_attestation().await.unwrap();
+        let key = vault.derive_symmetric_key(&context).await.unwrap();
+        assert_eq!(key.len(), 32);
     }
 
     #[tokio::test]
-    async fn test_key_cache() {
-        let mut vault = KeyVault::mock();
+    async fn test_different_contexts_different_keys() {
+        let vault = KeyVault::new_with_client_kind(ClientKind::Mock);
+        vault.verify_attestation().await.unwrap();
         
-        // Initially empty
-        let count = vault.cached_keys_count().await;
-        assert_eq!(count, 0);
+        let context1 = KeyContext::new(
+            "dataset1".to_string(),
+            "author1".to_string(),
+            "encryption".to_string(),
+        );
         
-        // Add some keys
-        vault.derive_dataset_key("dataset1").await.unwrap();
-        vault.derive_dataset_key("dataset2").await.unwrap();
+        let context2 = KeyContext::new(
+            "dataset2".to_string(),
+            "author1".to_string(),
+            "encryption".to_string(),
+        );
         
-        let count = vault.cached_keys_count().await;
-        assert_eq!(count, 2);
+        let key1 = vault.derive_symmetric_key(&context1).await.unwrap();
+        let key2 = vault.derive_symmetric_key(&context2).await.unwrap();
+        
+        // Different contexts should produce different keys
+        assert_ne!(key1, key2);
+    }
+
+    #[tokio::test]
+    async fn test_cache_management() {
+        let vault = KeyVault::new_with_client_kind(ClientKind::Mock);
+        vault.verify_attestation().await.unwrap();
+        
+        let context = KeyContext::new(
+            "test_dataset".to_string(),
+            "test_author".to_string(),
+            "encryption".to_string(),
+        );
+        
+        // Initially no cached keys
+        assert_eq!(vault.cached_symmetric_keys_count(), 0);
+        assert_eq!(vault.cached_ethereum_accounts_count(), 0);
+        
+        // Derive keys
+        vault.derive_symmetric_key(&context).await.unwrap();
+        vault.derive_ethereum_account(&context).await.unwrap();
+        
+        // Should be cached
+        assert_eq!(vault.cached_symmetric_keys_count(), 1);
+        assert_eq!(vault.cached_ethereum_accounts_count(), 1);
         
         // Clear cache
-        vault.clear_derived_keys().await;
-        let count = vault.cached_keys_count().await;
-        assert_eq!(count, 0);
+        vault.clear_cache();
+        assert_eq!(vault.cached_symmetric_keys_count(), 0);
+        assert_eq!(vault.cached_ethereum_accounts_count(), 0);
     }
 } 

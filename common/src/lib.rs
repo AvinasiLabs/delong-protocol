@@ -22,8 +22,19 @@ pub use models::{
     // Authentication models
     ApiKeyInfo,
     ApiKeyListQuery,
+    AuthConfig,
     AuthContext,
-    AuthMethod,
+    // Blockchain models
+    BlockchainTransaction,
+    BlockchainTransactionStatus,
+    CreateTransactionRequest,
+    EntityType,
+    TransactionQuery,
+    TransactionResponse,
+    UpdateTransactionStatusRequest,
+    is_valid_tx_hash,
+    JOIN_CONFIRMED_TX,
+
     // WebSocket models
     BlockchainTransactionNotification,
     // Vote models
@@ -48,7 +59,8 @@ pub use models::{
     DynamicDatasetListQuery,
     ExtendedContractData,
     ExtendedVoteData,
-    JwtClaims,
+    Claims,
+    JwtUtils,
     // Pagination models
     MAX_LIMIT,
     MembershipCheckResponse,
@@ -82,7 +94,6 @@ pub use models::{
     UploadReportRequest,
     UploadReportResponse,
 
-    UserSession,
     ValidateApiKeyRequest,
     ValidateApiKeyResponse,
     VoteData,
@@ -95,7 +106,6 @@ pub use models::{
 
     WebSocketClient,
     generate_client_id,
-    is_valid_api_key_format,
 };
 
 pub use middleware::{

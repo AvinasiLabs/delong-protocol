@@ -13,6 +13,9 @@ use secure::AppState;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Load environment variables from .env file if it exists
+    dotenvy::dotenv().ok();
+    
     // Initialize tracing
     tracing_subscriber::fmt::init();
     
@@ -40,13 +43,14 @@ async fn main() -> Result<()> {
     info!("IPFS client initialized");
 
     // Initialize blockchain sync service
-    let blockchain_sync = BlockchainSyncService::new(config.clone());
+    let blockchain_sync = BlockchainSyncService::new(config.clone(), db_pool.clone());
     
     // Start blockchain sync in background
     let blockchain_sync_handle = {
         let config_clone = config.clone();
+        let db_pool_clone = db_pool.clone();
         tokio::spawn(async move {
-            let mut sync_service = BlockchainSyncService::new(config_clone);
+            let mut sync_service = BlockchainSyncService::new(config_clone, db_pool_clone);
             if let Err(e) = sync_service.start().await {
                 warn!(error = %e, "Blockchain sync service failed");
             }

@@ -13,6 +13,9 @@ target
 # Contains mutation testing data
 **/mutants.out*/
 
+# local log files
+*.log
+
 # RustRover
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
 #  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
@@ -60,3 +63,11 @@ Thumbs.db
 # Cursor configuration
 memory-bank/
 .cursorrules
+
+# Swagger/OpenAPI documentation (auto-generated)
+swagger/
+
+# Secure service ignore runtime data
+/secure/.sqlx/
+/secure/sqlx-data.json
+/secure/target/

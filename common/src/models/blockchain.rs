@@ -70,9 +70,9 @@ pub struct BlockchainTransaction {
     /// ID of the associated entity
     pub entity_id: i64,
     /// Type of the associated entity
-    pub entity_type: String,
+    pub entity_type: Option<String>,
     /// Transaction status
-    pub status: String,
+    pub status: Option<String>,
     /// Block number where transaction was confirmed
     pub block_number: Option<i64>,
     /// Timestamp of the block

@@ -178,6 +178,7 @@ impl EventHandler {
     }
 
     /// Check if an algorithm execution has enough votes to proceed
+    #[allow(dead_code)]
     async fn check_vote_completion(&self, execution_id: u64) -> Result<bool, ApiError> {
         info!(execution_id = %execution_id, "Checking vote completion");
 
@@ -192,6 +193,7 @@ impl EventHandler {
     }
 
     /// Calculate vote results and update execution status
+    #[allow(dead_code)]
     async fn finalize_vote_results(&self, execution_id: u64) -> Result<(), ApiError> {
         info!(execution_id = %execution_id, "Finalizing vote results");
 
@@ -206,6 +208,7 @@ impl EventHandler {
     }
 
     /// Queue an approved algorithm for execution
+    #[allow(dead_code)]
     async fn queue_for_execution(&self, execution_id: u64) -> Result<(), ApiError> {
         info!(execution_id = %execution_id, "Queueing algorithm for execution");
 

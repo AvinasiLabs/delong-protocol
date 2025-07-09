@@ -4,7 +4,9 @@
 //! API key management, and user session handling.
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use chrono::Utc;
+use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
+use crate::ApiError;
 
 /// Permission levels for API access control
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -163,74 +165,135 @@ pub struct ApiKeyListQuery {
     pub created_before: Option<String>,
 }
 
-/// JWT token claims structure
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct JwtClaims {
-    /// Subject (user ID)
+/// JWT Claims structure for authentication
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Claims {
+    /// User role (admin, user, etc.)
+    pub role: String,
+    /// Standard JWT subject claim
     pub sub: String,
-    /// Issuer
-    pub iss: String,
-    /// Audience
-    pub aud: String,
-    /// Expiration time (Unix timestamp)
-    pub exp: i64,
-    /// Issued at (Unix timestamp)
+    /// Standard JWT issued at claim
     pub iat: i64,
-    /// Not before (Unix timestamp)
-    pub nbf: i64,
-    /// JWT ID
-    pub jti: String,
-    /// User permissions
-    pub permissions: Vec<Permission>,
-    /// User rate limit tier
-    pub rate_limit_tier: RateLimitTier,
+    /// Standard JWT expiration claim
+    pub exp: i64,
+    /// Standard JWT issuer claim
+    pub iss: String,
 }
 
-/// User session information
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct UserSession {
-    /// Unique session ID
-    pub session_id: String,
-    /// User ID
-    pub user_id: String,
-    /// Session creation timestamp
-    pub created_at: String,
-    /// Last activity timestamp
-    pub last_activity: String,
-    /// Session expiration timestamp
-    pub expires_at: String,
-    /// Whether the session is active
-    pub is_active: bool,
-    /// User agent string
-    pub user_agent: Option<String>,
-    /// IP address
-    pub ip_address: Option<String>,
+impl Claims {
+    /// Create new JWT claims
+    pub fn new(role: String, subject: String, expires_in_seconds: i64) -> Self {
+        let now = Utc::now().timestamp();
+        
+        Self {
+            role,
+            sub: subject,
+            iat: now,
+            exp: now + expires_in_seconds,
+            iss: "delong-protocol".to_string(),
+        }
+    }
+    
+    /// Check if the token is expired
+    pub fn is_expired(&self) -> bool {
+        Utc::now().timestamp() > self.exp
+    }
+    
+    /// Check if the user has admin role
+    pub fn is_admin(&self) -> bool {
+        self.role == "admin"
+    }
 }
 
-/// Authentication context for request processing
-#[derive(Debug, Clone, PartialEq)]
+/// JWT token validation and generation utilities
+#[derive(Clone)]
+pub struct JwtUtils {
+    secret: String,
+    algorithm: Algorithm,
+}
+
+impl JwtUtils {
+    /// Create new JWT utilities with secret key
+    pub fn new(secret: String) -> Self {
+        Self {
+            secret,
+            algorithm: Algorithm::HS256,
+        }
+    }
+    
+    /// Generate JWT token from claims
+    pub fn generate_token(&self, claims: &Claims) -> Result<String, ApiError> {
+        let header = Header::new(self.algorithm);
+        let encoding_key = EncodingKey::from_secret(self.secret.as_bytes());
+        
+        encode(&header, claims, &encoding_key)
+            .map_err(|e| ApiError::InternalError(format!("JWT encoding failed: {}", e)))
+    }
+    
+    /// Validate and decode JWT token
+    pub fn validate_token(&self, token: &str) -> Result<Claims, ApiError> {
+        let decoding_key = DecodingKey::from_secret(self.secret.as_bytes());
+        let validation = Validation::new(self.algorithm);
+        
+        decode::<Claims>(token, &decoding_key, &validation)
+            .map(|token_data| token_data.claims)
+            .map_err(|e| ApiError::Unauthorized(format!("JWT validation failed: {}", e)))
+    }
+}
+
+/// User authentication context
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthContext {
     /// User ID
     pub user_id: String,
-    /// Authentication method used
-    pub auth_method: AuthMethod,
-    /// User permissions
-    pub permissions: HashSet<Permission>,
-    /// Rate limit tier
-    pub rate_limit_tier: RateLimitTier,
-    /// Request timestamp
-    pub authenticated_at: String,
+    /// User role
+    pub role: String,
+    /// JWT claims
+    pub claims: Claims,
 }
 
-/// Authentication method enumeration
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AuthMethod {
-    /// JWT token authentication
-    JwtToken,
-    /// API key authentication
-    ApiKey,
-    /// Session-based authentication
-    Session,
+impl AuthContext {
+    /// Create from JWT claims
+    pub fn from_claims(claims: Claims) -> Self {
+        Self {
+            user_id: claims.sub.clone(),
+            role: claims.role.clone(),
+            claims,
+        }
+    }
+    
+    /// Check if user has admin privileges
+    pub fn is_admin(&self) -> bool {
+        self.claims.is_admin()
+    }
+}
+
+/// Authentication configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthConfig {
+    /// Whether to use JWT authentication
+    pub use_jwt: bool,
+    /// JWT secret key
+    pub jwt_secret: String,
+    /// Token expiration time in seconds
+    pub token_expires_in: i64,
+}
+
+impl Default for AuthConfig {
+    fn default() -> Self {
+        Self {
+            use_jwt: true,
+            jwt_secret: "default_secret_change_in_production".to_string(),
+            token_expires_in: 3600, // 1 hour
+        }
+    }
+}
+
+impl AuthConfig {
+    /// Create JWT utilities instance
+    pub fn create_jwt_utils(&self) -> JwtUtils {
+        JwtUtils::new(self.jwt_secret.clone())
+    }
 }
 
 impl Permission {
@@ -452,40 +515,6 @@ impl Default for ApiKeyListQuery {
     }
 }
 
-impl AuthContext {
-    /// Create a new authentication context
-    pub fn new(
-        user_id: String,
-        auth_method: AuthMethod,
-        permissions: Vec<Permission>,
-        rate_limit_tier: RateLimitTier,
-    ) -> Self {
-        Self {
-            user_id,
-            auth_method,
-            permissions: permissions.into_iter().collect(),
-            rate_limit_tier,
-            authenticated_at: chrono::Utc::now().to_rfc3339(),
-        }
-    }
-
-    /// Check if the user has a specific permission
-    pub fn has_permission(&self, permission: &Permission) -> bool {
-        self.permissions.iter().any(|p| p.includes(permission))
-    }
-
-    /// Check if the user has admin privileges
-    pub fn is_admin(&self) -> bool {
-        self.has_permission(&Permission::Admin)
-    }
-}
-
-/// Validate API key format
-pub fn is_valid_api_key_format(api_key: &str) -> bool {
-    // API keys should be at least 16 characters and start with a prefix
-    api_key.len() >= 16 && (api_key.starts_with("dlk_") || api_key.starts_with("test-api-key"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -604,42 +633,21 @@ mod tests {
 
     #[test]
     fn test_auth_context() {
-        let context = AuthContext::new(
-            "user_123".to_string(),
-            AuthMethod::ApiKey,
-            vec![Permission::DataRead, Permission::DataWrite],
-            RateLimitTier::Premium,
-        );
+        let context = AuthContext::from_claims(Claims::new("admin".to_string(), "user_123".to_string(), 3600));
 
         assert_eq!(context.user_id, "user_123");
-        assert!(context.has_permission(&Permission::DataRead));
-        assert!(context.has_permission(&Permission::DataWrite));
-        assert!(!context.has_permission(&Permission::Admin));
-        assert!(!context.is_admin());
+        assert_eq!(context.role, "admin");
+        assert!(context.is_admin());
     }
 
     #[test]
     fn test_auth_context_admin() {
-        let admin_context = AuthContext::new(
-            "admin_user".to_string(),
-            AuthMethod::JwtToken,
-            vec![Permission::Admin],
-            RateLimitTier::Enterprise,
-        );
+        let admin_context = AuthContext::from_claims(Claims::new("admin".to_string(), "admin_user".to_string(), 3600));
 
         assert!(admin_context.is_admin());
-        assert!(admin_context.has_permission(&Permission::DataRead));
-        assert!(admin_context.has_permission(&Permission::CommitteeManage));
     }
 
-    #[test]
-    fn test_is_valid_api_key_format() {
-        assert!(is_valid_api_key_format("dlk_1234567890abcdef"));
-        assert!(is_valid_api_key_format("test-api-key-123456"));
-        assert!(!is_valid_api_key_format("invalid"));
-        assert!(!is_valid_api_key_format("short"));
-        assert!(!is_valid_api_key_format("wrong_prefix_123456"));
-    }
+
 
     #[test]
     fn test_serialization_deserialization() {
@@ -663,5 +671,36 @@ mod tests {
         let json = serde_json::to_string(&request).unwrap();
         let deserialized: CreateApiKeyRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(request, deserialized);
+    }
+
+    #[test]
+    fn test_claims_creation() {
+        let claims = Claims::new("admin".to_string(), "user123".to_string(), 3600);
+        assert_eq!(claims.role, "admin");
+        assert_eq!(claims.sub, "user123");
+        assert!(!claims.is_expired());
+        assert!(claims.is_admin());
+    }
+    
+    #[test]
+    fn test_jwt_generation_and_validation() {
+        let jwt_utils = JwtUtils::new("test_secret".to_string());
+        let claims = Claims::new("admin".to_string(), "user123".to_string(), 3600);
+        
+        let token = jwt_utils.generate_token(&claims).unwrap();
+        let decoded_claims = jwt_utils.validate_token(&token).unwrap();
+        
+        assert_eq!(decoded_claims.role, "admin");
+        assert_eq!(decoded_claims.sub, "user123");
+    }
+    
+    #[test]
+    fn test_auth_context_from_claims() {
+        let claims = Claims::new("admin".to_string(), "user123".to_string(), 3600);
+        let auth_context = AuthContext::from_claims(claims);
+        
+        assert_eq!(auth_context.user_id, "user123");
+        assert_eq!(auth_context.role, "admin");
+        assert!(auth_context.is_admin());
     }
 }

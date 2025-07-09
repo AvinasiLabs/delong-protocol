@@ -55,6 +55,7 @@ pub struct BlockchainConfig {
     pub chain_id: u64,
     pub private_key: String,
     pub sync_interval_seconds: u64,
+    pub sync_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,7 +90,8 @@ impl SecureConfig {
                 ws_url: "ws://localhost:8545".to_string(),
                 chain_id: 1337,
                 private_key: "0x0000000000000000000000000000000000000000000000000000000000000001".to_string(),
-                sync_interval_seconds: 1,
+                sync_interval_seconds: 60,
+                sync_enabled: false,
             },
             auth: AuthConfig {
                 use_jwt: false,
@@ -142,6 +144,10 @@ impl SecureConfig {
                     .unwrap_or_else(|_| "30".to_string())
                     .parse()
                     .unwrap_or(30),
+                sync_enabled: env::var("BLOCKCHAIN_SYNC_ENABLED")
+                    .unwrap_or_else(|_| "true".to_string())
+                    .parse()
+                    .unwrap_or(true),
             },
             auth: AuthConfig {
                 use_jwt: env::var("USE_JWT")

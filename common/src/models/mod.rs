@@ -64,10 +64,9 @@ pub use algo_exe::{
 
 // Authentication models
 pub use auth::{
-    ApiKeyInfo, ApiKeyListQuery, AuthContext, AuthMethod, CreateApiKeyRequest,
-    CreateApiKeyResponse, JwtClaims, Permission, RateLimitTier, RevokeApiKeyRequest,
-    RevokeApiKeyResponse, UserSession, ValidateApiKeyRequest, ValidateApiKeyResponse,
-    is_valid_api_key_format,
+    ApiKeyInfo, ApiKeyListQuery, AuthContext, AuthConfig, CreateApiKeyRequest,
+    CreateApiKeyResponse, Claims, JwtUtils, Permission, RateLimitTier, RevokeApiKeyRequest,
+    RevokeApiKeyResponse, ValidateApiKeyRequest, ValidateApiKeyResponse,
 };
 
 // Blockchain models

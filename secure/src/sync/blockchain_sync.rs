@@ -1,11 +1,13 @@
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::{interval, sleep};
-use tracing::{info, warn, error};
+use tracing::{info, warn, error, debug};
 use serde::{Deserialize, Serialize};
+use sqlx::PgPool;
 
 use common::ApiError;
 use crate::config::SecureConfig;
+use crate::services::{CommitteeService, VoteService};
 
 /// Blockchain event types that we monitor
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,20 +51,30 @@ pub struct BlockchainSyncService {
     config: SecureConfig,
     current_block: u64,
     is_running: Arc<tokio::sync::RwLock<bool>>,
+    db_pool: PgPool,
 }
 
 impl BlockchainSyncService {
     /// Create a new blockchain sync service
-    pub fn new(config: SecureConfig) -> Self {
+    pub fn new(
+        config: SecureConfig,
+        db_pool: PgPool,
+    ) -> Self {
         Self {
             config,
             current_block: 0,
             is_running: Arc::new(tokio::sync::RwLock::new(false)),
+            db_pool,
         }
     }
 
     /// Start the blockchain synchronization service
     pub async fn start(&mut self) -> Result<(), ApiError> {
+        if !self.config.blockchain.sync_enabled {
+            info!("Blockchain synchronization is disabled in configuration");
+            return Ok(());
+        }
+        
         info!("Starting blockchain synchronization service");
         
         // Set running flag
@@ -188,10 +200,10 @@ impl BlockchainSyncService {
     async fn process_mock_events(&self, from_block: u64, to_block: u64) -> Result<(), ApiError> {
         info!(from_block = %from_block, to_block = %to_block, "Processing mock blockchain events");
         
-        // Generate some mock events for demonstration
+        // Generate limited mock events for demonstration (much less frequent)
         for block_num in from_block..=to_block {
-            if block_num % 10 == 0 {
-                // Mock algorithm submission every 10 blocks
+            if block_num % 100 == 0 {
+                // Mock algorithm submission every 100 blocks (less frequent)
                 let event = BlockchainEvent::AlgorithmSubmitted {
                     execution_id: block_num,
                     scientist_wallet: format!("0x{:040x}", block_num),
@@ -202,8 +214,8 @@ impl BlockchainSyncService {
                 self.handle_blockchain_event(event, block_num).await?;
             }
             
-            if block_num % 15 == 0 {
-                // Mock transaction confirmation every 15 blocks
+            if block_num % 200 == 0 {
+                // Mock transaction confirmation every 200 blocks (less frequent)
                 let event = BlockchainEvent::TransactionConfirmed {
                     tx_hash: format!("0x{:064x}", block_num),
                     block_number: block_num,
@@ -270,11 +282,39 @@ impl BlockchainSyncService {
             "Handling algorithm submission"
         );
 
-        // TODO: Update database with confirmed algorithm submission
-        // This would involve:
-        // 1. Finding the corresponding algorithm execution record
-        // 2. Updating its status to confirmed
-        // 3. Starting the committee review process
+        // Update database with confirmed algorithm submission
+        // Record the blockchain-confirmed algorithm submission
+        let query = r#"
+            INSERT INTO blockchain_events (event_type, entity_type, entity_id, tx_hash, block_number, scientist_wallet, algorithm_cid, dataset, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+            ON CONFLICT (entity_type, entity_id, event_type) DO UPDATE SET
+                scientist_wallet = EXCLUDED.scientist_wallet,
+                algorithm_cid = EXCLUDED.algorithm_cid,
+                dataset = EXCLUDED.dataset,
+                updated_at = NOW()
+        "#;
+        
+        match sqlx::query(query)
+            .bind("algorithm_submitted")
+            .bind("algorithm")
+            .bind(execution_id as i64)
+            .bind(format!("algo_submit_{}", execution_id)) // tx_hash placeholder
+            .bind(0i64) // block_number placeholder  
+            .bind(scientist_wallet)
+            .bind(algorithm_cid)
+            .bind(dataset)
+            .execute(&self.db_pool)
+            .await
+        {
+            Ok(_) => {
+                info!(execution_id = %execution_id, "Algorithm submission recorded in database");
+            }
+            Err(e) => {
+                error!(error = %e, execution_id = %execution_id, "Failed to record algorithm submission");
+                // Don't fail the blockchain sync for database errors - log and continue
+                warn!("Continuing blockchain sync despite database error");
+            }
+        }
 
         Ok(())
     }
@@ -295,7 +335,39 @@ impl BlockchainSyncService {
             "Handling dataset registration"
         );
 
-        // TODO: Update database with confirmed dataset
+        // Update database with confirmed dataset registration
+        let query = r#"
+            INSERT INTO blockchain_events (event_type, entity_type, entity_id, tx_hash, block_number, author_wallet, ipfs_cid, file_hash, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+            ON CONFLICT (entity_type, entity_id, event_type) DO UPDATE SET
+                author_wallet = EXCLUDED.author_wallet,
+                ipfs_cid = EXCLUDED.ipfs_cid,
+                file_hash = EXCLUDED.file_hash,
+                updated_at = NOW()
+        "#;
+        
+        match sqlx::query(query)
+            .bind("dataset_registered")
+            .bind("dataset")
+            .bind(dataset_id as i64)
+            .bind(format!("dataset_reg_{}", dataset_id)) // tx_hash placeholder
+            .bind(0i64) // block_number placeholder
+            .bind(author_wallet)
+            .bind(ipfs_cid)
+            .bind(file_hash)
+            .execute(&self.db_pool)
+            .await
+        {
+            Ok(_) => {
+                info!(dataset_id = %dataset_id, "Dataset registration recorded in database");
+            }
+            Err(e) => {
+                error!(error = %e, dataset_id = %dataset_id, "Failed to record dataset registration");
+                // Don't fail blockchain sync for database errors
+                warn!("Continuing blockchain sync despite database error");
+            }
+        }
+
         Ok(())
     }
 
@@ -313,7 +385,47 @@ impl BlockchainSyncService {
             "Handling vote cast"
         );
 
-        // TODO: Record vote in database and check if voting is complete
+        // Record vote in database using the vote service
+        let vote_request = crate::services::vote::CastVoteRequest {
+            execution_id: execution_id as i64,
+            voter_wallet: voter_wallet.clone(),
+            decision: decision.clone(),
+        };
+        
+        match VoteService::cast_vote(&self.db_pool, vote_request).await {
+            Ok(_) => {
+                info!(execution_id = %execution_id, voter = %voter_wallet, "Vote recorded in database");
+                
+                // Check if voting is complete
+                match VoteService::is_voting_complete(&self.db_pool, execution_id as i64).await {
+                    Ok(true) => {
+                        info!(execution_id = %execution_id, "Voting completed for execution");
+                        
+                        // Trigger next phase of algorithm review process
+                        match self.trigger_algorithm_review_completion(execution_id as i32).await {
+                            Ok(_) => {
+                                info!(execution_id = %execution_id, "Algorithm review completion triggered successfully");
+                            }
+                            Err(e) => {
+                                error!(error = %e, execution_id = %execution_id, "Failed to trigger algorithm review completion");
+                            }
+                        }
+                    }
+                    Ok(false) => {
+                        debug!(execution_id = %execution_id, "Voting still in progress");
+                    }
+                    Err(e) => {
+                        warn!(error = %e, execution_id = %execution_id, "Failed to check voting completion");
+                    }
+                }
+            }
+            Err(e) => {
+                error!(error = %e, execution_id = %execution_id, voter = %voter_wallet, "Failed to record vote");
+                // Don't fail blockchain sync for database errors
+                warn!("Continuing blockchain sync despite vote recording error");
+            }
+        }
+
         Ok(())
     }
 
@@ -329,7 +441,30 @@ impl BlockchainSyncService {
             "Handling committee update"
         );
 
-        // TODO: Update committee member status in database
+        // Update committee member status in database using the committee service
+        match CommitteeService::update_member_status(
+            &self.db_pool,
+            &wallet_address,
+            is_active
+        ).await {
+            Ok(_) => {
+                info!(
+                    wallet = %wallet_address,
+                    active = %is_active,
+                    "Committee member status updated"
+                );
+            }
+            Err(e) => {
+                error!(
+                    error = %e,
+                    wallet = %wallet_address,
+                    "Failed to update committee member status"
+                );
+                // Don't fail blockchain sync for database errors
+                warn!("Continuing blockchain sync despite committee update error");
+            }
+        }
+
         Ok(())
     }
 
@@ -347,7 +482,65 @@ impl BlockchainSyncService {
             "Handling transaction confirmation"
         );
 
-        // TODO: Update blockchain transaction status in database
+        // Update blockchain transaction status in database
+        let query = r#"
+            UPDATE blockchain_transactions 
+            SET status = 'CONFIRMED', 
+                block_number = $1, 
+                block_timestamp = $2,
+                updated_at = NOW()
+            WHERE tx_hash = $3
+        "#;
+        
+        match sqlx::query(query)
+            .bind(block_number as i64)
+            .bind(block_timestamp)
+            .bind(&tx_hash)
+            .execute(&self.db_pool)
+            .await
+        {
+            Ok(result) => {
+                if result.rows_affected() > 0 {
+                    info!(tx_hash = %tx_hash, block = %block_number, "Transaction confirmed in database");
+                } else {
+                    warn!(tx_hash = %tx_hash, "Transaction not found in database for confirmation");
+                }
+            }
+            Err(e) => {
+                error!(error = %e, tx_hash = %tx_hash, "Failed to confirm transaction in database");
+                // Don't fail blockchain sync for database errors
+                warn!("Continuing blockchain sync despite database error");
+            }
+        }
+
+        // Also record this confirmation as an event for audit trail
+        let event_query = r#"
+            INSERT INTO blockchain_events (event_type, entity_type, entity_id, tx_hash, block_number, block_timestamp, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, NOW())
+            ON CONFLICT (tx_hash, event_type) DO UPDATE SET
+                block_number = EXCLUDED.block_number,
+                block_timestamp = EXCLUDED.block_timestamp,
+                updated_at = NOW()
+        "#;
+        
+        match sqlx::query(event_query)
+            .bind("transaction_confirmed")
+            .bind("transaction")
+            .bind(0i64) // entity_id for transaction confirmations
+            .bind(&tx_hash)
+            .bind(block_number as i64)
+            .bind(block_timestamp)
+            .execute(&self.db_pool)
+            .await
+        {
+            Ok(_) => {
+                debug!(tx_hash = %tx_hash, "Transaction confirmation event recorded");
+            }
+            Err(e) => {
+                warn!(error = %e, tx_hash = %tx_hash, "Failed to record transaction confirmation event");
+            }
+        }
+
         Ok(())
     }
 
@@ -355,12 +548,9 @@ impl BlockchainSyncService {
     async fn get_latest_block_number(&self) -> Result<u64, ApiError> {
         match self.config.blockchain.client_type.as_str() {
             "mock" => {
-                // Mock implementation - simulate growing block number
-                let start_time = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs();
-                Ok(start_time / 10) // New block every 10 seconds
+                // Mock implementation - simulate a slow-growing blockchain for testing
+                // Add only a few blocks beyond current to avoid endless syncing
+                Ok(self.current_block + 5)
             }
             "ethereum" => {
                 // TODO: Query actual Ethereum node
@@ -377,15 +567,157 @@ impl BlockchainSyncService {
 
     /// Get the last processed block number from persistent storage
     async fn get_last_processed_block(&self) -> Result<u64, ApiError> {
-        // TODO: Query from database or file storage
-        // For now, return 0 to start from the beginning
-        Ok(0)
+        // Query from database to get the last processed block
+        let query = r#"
+            SELECT block_number 
+            FROM blockchain_sync_state 
+            WHERE sync_key = 'last_processed_block'
+        "#;
+        
+        match sqlx::query_as::<_, (i64,)>(query)
+            .fetch_optional(&self.db_pool)
+            .await
+        {
+            Ok(Some((block_number,))) => {
+                debug!(block = %block_number, "Retrieved last processed block from database");
+                Ok(block_number as u64)
+            }
+            Ok(None) => {
+                info!("No previous sync state found, starting from block 0");
+                Ok(0)
+            }
+            Err(e) => {
+                warn!(error = %e, "Failed to query last processed block, starting from 0");
+                // Don't fail startup for database errors
+                Ok(0)
+            }
+        }
     }
 
     /// Update the last processed block number in persistent storage
     async fn update_last_processed_block(&self, block_number: u64) -> Result<(), ApiError> {
-        // TODO: Update database or file storage
-        info!(block = %block_number, "Updated last processed block");
+        // Update database with the last processed block
+        let query = r#"
+            INSERT INTO blockchain_sync_state (sync_key, block_number, updated_at)
+            VALUES ('last_processed_block', $1, NOW())
+            ON CONFLICT (sync_key) DO UPDATE SET
+                block_number = EXCLUDED.block_number,
+                updated_at = NOW()
+        "#;
+        
+        match sqlx::query(query)
+            .bind(block_number as i64)
+            .execute(&self.db_pool)
+            .await
+        {
+            Ok(_) => {
+                debug!(block = %block_number, "Updated last processed block in database");
+                Ok(())
+            }
+            Err(e) => {
+                error!(error = %e, block = %block_number, "Failed to update last processed block");
+                // Don't fail for database errors - log and continue
+                warn!("Continuing despite database update error");
+                Ok(())
+            }
+        }
+    }
+
+    /// Trigger the next phase of algorithm review process when voting is complete
+    async fn trigger_algorithm_review_completion(&self, execution_id: i32) -> Result<(), ApiError> {
+        info!(execution_id = %execution_id, "Triggering algorithm review completion process");
+        
+        // Check if the execution was approved
+        let is_approved = VoteService::is_execution_approved(&self.db_pool, execution_id as i64).await?;
+        
+        if is_approved {
+            info!(execution_id = %execution_id, "Algorithm execution approved by committee");
+            
+            // Update execution status to approved and ready for execution
+            let update_query = r#"
+                UPDATE algorithm_executions 
+                SET status = 'APPROVED', 
+                    approved_at = NOW(),
+                    updated_at = NOW()
+                WHERE id = $1
+            "#;
+            
+            match sqlx::query(update_query)
+                .bind(execution_id)
+                .execute(&self.db_pool)
+                .await
+            {
+                Ok(result) => {
+                    if result.rows_affected() > 0 {
+                        info!(execution_id = %execution_id, "Algorithm execution marked as approved");
+                        
+                        // Record approval event for audit trail
+                        let event_query = r#"
+                            INSERT INTO blockchain_events (event_type, entity_type, entity_id, created_at)
+                            VALUES ('algorithm_approved', 'algorithm', $1, NOW())
+                        "#;
+                        
+                        if let Err(e) = sqlx::query(event_query)
+                            .bind(execution_id as i64)
+                            .execute(&self.db_pool)
+                            .await
+                        {
+                            warn!(error = %e, execution_id = %execution_id, "Failed to record approval event");
+                        }
+                    } else {
+                        warn!(execution_id = %execution_id, "No algorithm execution found to approve");
+                    }
+                }
+                Err(e) => {
+                    error!(error = %e, execution_id = %execution_id, "Failed to update algorithm execution status");
+                    return Err(ApiError::InternalError(format!("Database error: {}", e)));
+                }
+            }
+        } else {
+            info!(execution_id = %execution_id, "Algorithm execution rejected by committee");
+            
+            // Update execution status to rejected
+            let update_query = r#"
+                UPDATE algorithm_executions 
+                SET status = 'REJECTED',
+                    rejected_at = NOW(),
+                    updated_at = NOW()
+                WHERE id = $1
+            "#;
+            
+            match sqlx::query(update_query)
+                .bind(execution_id)
+                .execute(&self.db_pool)
+                .await
+            {
+                Ok(result) => {
+                    if result.rows_affected() > 0 {
+                        info!(execution_id = %execution_id, "Algorithm execution marked as rejected");
+                        
+                        // Record rejection event for audit trail
+                        let event_query = r#"
+                            INSERT INTO blockchain_events (event_type, entity_type, entity_id, created_at)
+                            VALUES ('algorithm_rejected', 'algorithm', $1, NOW())
+                        "#;
+                        
+                        if let Err(e) = sqlx::query(event_query)
+                            .bind(execution_id as i64)
+                            .execute(&self.db_pool)
+                            .await
+                        {
+                            warn!(error = %e, execution_id = %execution_id, "Failed to record rejection event");
+                        }
+                    } else {
+                        warn!(execution_id = %execution_id, "No algorithm execution found to reject");
+                    }
+                }
+                Err(e) => {
+                    error!(error = %e, execution_id = %execution_id, "Failed to update algorithm execution status");
+                    return Err(ApiError::InternalError(format!("Database error: {}", e)));
+                }
+            }
+        }
+        
         Ok(())
     }
 } 

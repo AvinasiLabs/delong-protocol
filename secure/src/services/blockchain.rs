@@ -1,28 +1,14 @@
-use common::{ApiError, ApiResult};
+use common::{ApiError, ApiResult, models::BlockchainTransaction};
 use sqlx::PgPool;
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
-
-/// Blockchain transaction database model
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct BlockchainTransaction {
-    pub id: i64,
-    pub tx_hash: String,
-    pub entity_id: i64,
-    pub entity_type: String,
-    pub status: String,
-    pub block_number: Option<i64>,
-    pub block_timestamp: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
 
 /// Request for creating a new blockchain transaction
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateBlockchainTransactionRequest {
     pub tx_hash: String,
     pub entity_id: i64,
-    pub entity_type: String,
+    pub entity_type: Option<String>,
     pub status: Option<String>,
     pub block_number: Option<i64>,
     pub block_timestamp: Option<DateTime<Utc>>,
@@ -42,8 +28,9 @@ impl BlockchainService {
             r#"
             INSERT INTO blockchain_transactions (
                 tx_hash, entity_id, entity_type, status, block_number, block_timestamp
-            ) VALUES ($1, $2, $3, $4, $5, $6)
-            RETURNING *
+            ) VALUES ($1, $2, $3::text::entity_type, $4::text::transaction_status, $5, $6)
+            RETURNING id, tx_hash, entity_id, entity_type::text as entity_type, 
+                      status::text as status, block_number, block_timestamp, created_at, updated_at
             "#,
             req.tx_hash,
             req.entity_id,
@@ -69,7 +56,7 @@ impl BlockchainService {
     ) -> ApiResult<BlockchainTransaction> {
         let transaction = sqlx::query_as!(
             BlockchainTransaction,
-            "SELECT * FROM blockchain_transactions WHERE tx_hash = $1",
+            "SELECT id, tx_hash, entity_id, entity_type::text as entity_type, status::text as status, block_number, block_timestamp, created_at, updated_at FROM blockchain_transactions WHERE tx_hash = $1",
             tx_hash
         )
         .fetch_one(pool)
@@ -94,12 +81,13 @@ impl BlockchainService {
             BlockchainTransaction,
             r#"
             UPDATE blockchain_transactions
-            SET status = $1,
+            SET status = $1::text::transaction_status,
                 block_number = COALESCE($2, block_number),
                 block_timestamp = COALESCE($3, block_timestamp),
                 updated_at = CURRENT_TIMESTAMP
             WHERE tx_hash = $4
-            RETURNING *
+            RETURNING id, tx_hash, entity_id, entity_type::text as entity_type, 
+                      status::text as status, block_number, block_timestamp, created_at, updated_at
             "#,
             status,
             block_number,
@@ -122,7 +110,7 @@ impl BlockchainService {
     ) -> ApiResult<Vec<BlockchainTransaction>> {
         let transactions = sqlx::query_as!(
             BlockchainTransaction,
-            "SELECT * FROM blockchain_transactions WHERE status = 'PENDING'"
+            "SELECT id, tx_hash, entity_id, entity_type::text as entity_type, status::text as status, block_number, block_timestamp, created_at, updated_at FROM blockchain_transactions WHERE status = 'PENDING'"
         )
         .fetch_all(pool)
         .await
@@ -142,7 +130,7 @@ impl BlockchainService {
     ) -> ApiResult<Vec<BlockchainTransaction>> {
         let transactions = sqlx::query_as!(
             BlockchainTransaction,
-            "SELECT * FROM blockchain_transactions WHERE entity_id = $1 AND entity_type = $2",
+            "SELECT id, tx_hash, entity_id, entity_type::text as entity_type, status::text as status, block_number, block_timestamp, created_at, updated_at FROM blockchain_transactions WHERE entity_id = $1 AND entity_type = $2::text::entity_type",
             entity_id,
             entity_type
         )
@@ -166,7 +154,7 @@ impl BlockchainService {
             r#"
             SELECT COUNT(*) as count
             FROM blockchain_transactions
-            WHERE entity_id = $1 AND entity_type = $2 AND status = 'CONFIRMED'
+            WHERE entity_id = $1 AND entity_type = $2::text::entity_type AND status = 'CONFIRMED'
             "#,
             entity_id,
             entity_type

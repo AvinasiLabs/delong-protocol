@@ -32,6 +32,12 @@ anyhow = { workspace = true }
 # UUID generation
 uuid = { workspace = true, features = ["v4", "serde"] }
 
+# Authentication
+jsonwebtoken = "9.3"
+
+# Database
+sqlx = { workspace = true }
+
 # Async traits
 async-trait = { workspace = true }
 

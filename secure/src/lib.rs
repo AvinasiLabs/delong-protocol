@@ -10,7 +10,7 @@ pub mod handlers;
 pub mod middleware;
 pub mod routes;
 pub mod runtime;
-// pub mod services;  // TODO: Enable when database is configured
+pub mod services;
 pub mod sync;
 pub mod tee;
 pub mod utils;

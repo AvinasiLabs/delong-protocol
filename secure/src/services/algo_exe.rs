@@ -10,10 +10,10 @@ pub struct AlgorithmExecution {
     pub algo_id: i64,
     pub used_dataset: String,
     pub scientist_wallet: String,
-    pub review_status: String,
+    pub review_status: Option<String>,
     pub vote_start_time: Option<DateTime<Utc>>,
     pub vote_end_time: Option<DateTime<Utc>>,
-    pub status: String,
+    pub status: Option<String>,
     pub start_time: Option<DateTime<Utc>>,
     pub end_time: Option<DateTime<Utc>>,
     pub result: Option<String>,
@@ -29,10 +29,10 @@ pub struct AlgorithmExecutionWithAlgo {
     pub algo_id: i64,
     pub used_dataset: String,
     pub scientist_wallet: String,
-    pub review_status: String,
+    pub review_status: Option<String>,
     pub vote_start_time: Option<DateTime<Utc>>,
     pub vote_end_time: Option<DateTime<Utc>>,
-    pub status: String,
+    pub status: Option<String>,
     pub start_time: Option<DateTime<Utc>>,
     pub end_time: Option<DateTime<Utc>>,
     pub result: Option<String>,
@@ -151,7 +151,10 @@ impl AlgoExeService {
             r#"
             INSERT INTO algorithm_executions (algo_id, used_dataset, scientist_wallet)
             VALUES ($1, $2, $3)
-            RETURNING *
+            RETURNING id, algo_id, used_dataset, scientist_wallet,
+                      review_status::text as review_status, vote_start_time, vote_end_time,
+                      status::text as status, start_time, end_time, result, error_msg,
+                      created_at, updated_at
             "#,
             req.algo_id,
             req.used_dataset,
@@ -199,8 +202,8 @@ impl AlgoExeService {
             r#"
             SELECT 
                 ae.id, ae.algo_id, ae.used_dataset, ae.scientist_wallet,
-                ae.review_status, ae.vote_start_time, ae.vote_end_time,
-                ae.status, ae.start_time, ae.end_time, ae.result, ae.error_msg,
+                ae.review_status::text as review_status, ae.vote_start_time, ae.vote_end_time,
+                ae.status::text as status, ae.start_time, ae.end_time, ae.result, ae.error_msg,
                 ae.created_at, ae.updated_at,
                 a.name as algo_name, a.algo_link, a.cid
             FROM algorithm_executions ae
@@ -237,7 +240,10 @@ impl AlgoExeService {
         let execution = sqlx::query_as!(
             AlgorithmExecution,
             r#"
-            SELECT ae.*
+            SELECT ae.id, ae.algo_id, ae.used_dataset, ae.scientist_wallet,
+                   ae.review_status::text as review_status, ae.vote_start_time, ae.vote_end_time,
+                   ae.status::text as status, ae.start_time, ae.end_time, ae.result, ae.error_msg,
+                   ae.created_at, ae.updated_at
             FROM algorithm_executions ae
             INNER JOIN blockchain_transactions bt ON bt.entity_id = ae.id
                 AND bt.status = 'CONFIRMED'
@@ -263,7 +269,10 @@ impl AlgoExeService {
         let executions = sqlx::query_as!(
             AlgorithmExecution,
             r#"
-            SELECT ae.*
+            SELECT ae.id, ae.algo_id, ae.used_dataset, ae.scientist_wallet,
+                   ae.review_status::text as review_status, ae.vote_start_time, ae.vote_end_time,
+                   ae.status::text as status, ae.start_time, ae.end_time, ae.result, ae.error_msg,
+                   ae.created_at, ae.updated_at
             FROM algorithm_executions ae
             INNER JOIN blockchain_transactions bt ON bt.entity_id = ae.id
                 AND bt.status = 'CONFIRMED'
@@ -291,14 +300,17 @@ impl AlgoExeService {
             AlgorithmExecution,
             r#"
             UPDATE algorithm_executions
-            SET status = $1,
+            SET status = $1::text::exe_status,
                 end_time = CASE 
                     WHEN $1 IN ('COMPLETED', 'FAILED') THEN CURRENT_TIMESTAMP
                     ELSE end_time
                 END,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = $2
-            RETURNING *
+            RETURNING id, algo_id, used_dataset, scientist_wallet,
+                      review_status::text as review_status, vote_start_time, vote_end_time,
+                      status::text as status, start_time, end_time, result, error_msg,
+                      created_at, updated_at
             "#,
             status,
             execution_id
@@ -330,7 +342,10 @@ impl AlgoExeService {
                 end_time = CURRENT_TIMESTAMP,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = $3
-            RETURNING *
+            RETURNING id, algo_id, used_dataset, scientist_wallet,
+                      review_status::text as review_status, vote_start_time, vote_end_time,
+                      status::text as status, start_time, end_time, result, error_msg,
+                      created_at, updated_at
             "#,
             result,
             error_msg,
@@ -356,10 +371,13 @@ impl AlgoExeService {
             AlgorithmExecution,
             r#"
             UPDATE algorithm_executions
-            SET review_status = $1,
+            SET review_status = $1::text::algo_status,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = $2
-            RETURNING *
+            RETURNING id, algo_id, used_dataset, scientist_wallet,
+                      review_status::text as review_status, vote_start_time, vote_end_time,
+                      status::text as status, start_time, end_time, result, error_msg,
+                      created_at, updated_at
             "#,
             review_status,
             execution_id
@@ -389,7 +407,10 @@ impl AlgoExeService {
                 vote_end_time = COALESCE($2, vote_end_time),
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = $3
-            RETURNING *
+            RETURNING id, algo_id, used_dataset, scientist_wallet,
+                      review_status::text as review_status, vote_start_time, vote_end_time,
+                      status::text as status, start_time, end_time, result, error_msg,
+                      created_at, updated_at
             "#,
             start_time,
             end_time,
