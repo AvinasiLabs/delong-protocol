@@ -193,13 +193,9 @@ async fn test_encryption_without_attestation() {
     // Should fail without attestation for Phala client
     let result = key_vault.encrypt_data(test_data, dataset_id).await;
     assert!(result.is_err());
-    
-    if let Err(ApiError::Forbidden(msg)) = result {
-        assert!(msg.contains("Attestation not verified"));
-    } else {
-        panic!("Expected Forbidden error with attestation message");
-    }
-    
+
+    assert!(matches!(result, Err(ApiError::Forbidden)));
+
     println!("✅ Encryption without attestation test passed");
 }
 

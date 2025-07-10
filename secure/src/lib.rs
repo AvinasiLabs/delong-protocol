@@ -19,6 +19,7 @@ use axum::Router;
 use common::ApiResult;
 use sqlx::PgPool;
 use std::sync::Arc;
+use crate::services::blockchain_sync::BlockchainSyncService;
 
 use crate::config::SecureConfig;
 
@@ -26,11 +27,13 @@ use crate::config::SecureConfig;
 pub fn create_router(
     config: &SecureConfig,
     db_pool: PgPool,
+    blockchain_sync_service: Arc<BlockchainSyncService>,
 ) -> Router {
     let shared_state = Arc::new(AppState {
         config: config.clone(),
         db_pool,
         ipfs_client: ipfs_api_backend_hyper::IpfsClient::default(),
+        blockchain_sync_service,
     });
 
     routes::create_routes(shared_state)
@@ -42,6 +45,7 @@ pub struct AppState {
     pub config: SecureConfig,
     pub db_pool: PgPool,
     pub ipfs_client: ipfs_api_backend_hyper::IpfsClient,
+    pub blockchain_sync_service: Arc<BlockchainSyncService>,
 }
 
 /// Health check function for the secure service

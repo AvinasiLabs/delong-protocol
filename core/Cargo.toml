@@ -114,3 +114,9 @@ num-traits = { workspace = true }
 [dev-dependencies]
 tokio-test = "0.4"
 axum-test = "15.0"
+anyhow = { workspace = true }
+
+[[test]]
+name = "integration_tests"
+path = "tests/api_runner.rs"
+harness = true

@@ -95,6 +95,9 @@ utoipa = { version = "5.4.0", features = ["axum_extras", "chrono", "uuid"] }
 utoipa-swagger-ui = { version = "8.0.0", features = ["axum"] }
 utoipa-scalar = { version = "0.3.0", features = ["axum"] }
 
+# Blockchain
+ethers = { version = "2.0.14" }
+
 [profile.dev]
 debug = true
 opt-level = 0

@@ -157,7 +157,7 @@ impl ExecutionQueue {
             Ok(())
         } else {
             error!(execution_id = %execution_id, "Execution not found in running list");
-            Err(ApiError::NotFound(format!("Execution {} not found", execution_id)))
+            Err(ApiError::NotFound)
         }
     }
 
@@ -211,7 +211,7 @@ impl ExecutionQueue {
             }
         }
 
-        Err(ApiError::NotFound(format!("Execution {} not found", execution_id)))
+        Err(ApiError::NotFound)
     }
 
     /// Clear all queued requests (emergency stop)

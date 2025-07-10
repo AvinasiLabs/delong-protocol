@@ -21,7 +21,7 @@ use crate::services::ai_audit::AuditFileResult;
 use crate::{AiAuditService, AppState};
 
 /// AI audit request
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Serialize, Validate)]
 pub struct AiAuditRequest {
     #[validate(url)]
     pub github_url: String,

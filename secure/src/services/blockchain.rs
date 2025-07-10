@@ -43,7 +43,7 @@ impl BlockchainService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to create blockchain transaction");
-            ApiError::InternalError("Failed to create blockchain transaction".to_string())
+            ApiError::DatabaseError("Failed to create blockchain transaction".to_string())
         })?;
 
         Ok(transaction)
@@ -63,7 +63,7 @@ impl BlockchainService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, tx_hash = %tx_hash, "Failed to get blockchain transaction");
-            ApiError::NotFound("Blockchain transaction not found".to_string())
+            ApiError::NotFound
         })?;
 
         Ok(transaction)
@@ -98,7 +98,7 @@ impl BlockchainService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, tx_hash = %tx_hash, "Failed to update blockchain transaction");
-            ApiError::InternalError("Failed to update blockchain transaction".to_string())
+            ApiError::DatabaseError("Failed to update blockchain transaction".to_string())
         })?;
 
         Ok(transaction)
@@ -116,7 +116,7 @@ impl BlockchainService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to get pending blockchain transactions");
-            ApiError::InternalError("Failed to get pending transactions".to_string())
+            ApiError::DatabaseError("Failed to get pending transactions".to_string())
         })?;
 
         Ok(transactions)
@@ -138,7 +138,7 @@ impl BlockchainService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, entity_id = %entity_id, entity_type = %entity_type, "Failed to get transactions by entity");
-            ApiError::InternalError("Failed to get transactions".to_string())
+            ApiError::DatabaseError("Failed to get transactions by entity".to_string())
         })?;
 
         Ok(transactions)
@@ -163,7 +163,7 @@ impl BlockchainService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, entity_id = %entity_id, entity_type = %entity_type, "Failed to check entity confirmation");
-            ApiError::InternalError("Failed to check entity confirmation".to_string())
+            ApiError::DatabaseError("Failed to check entity confirmation".to_string())
         })?
         .unwrap_or(0);
 

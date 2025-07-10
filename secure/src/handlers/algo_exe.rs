@@ -5,14 +5,14 @@
 
 use axum::extract::{Path, Query, State};
 use axum::response::Json;
-use axum::http::StatusCode;
 use common::{
-    ApiResponse, ApiResult, PaginationParams, PaginatedResponse,
-    AlgoExeData, AlgoExeSubmissionRequest, AlgoExeSubmissionResponse,
+    ApiError, ApiResponse, ApiResult, PaginationParams, PaginatedResponse,
+    models::{
+        algo_exe::{AlgoExeData, AlgoExeSubmissionRequest, AlgoExeSubmissionResponse},
+    }
 };
 use std::sync::Arc;
-use tracing::{info, error, warn, instrument};
-// use chrono::Utc; // Will be used when implementing actual time tracking
+use tracing::{info, error, instrument};
 
 use crate::AppState;
 
@@ -25,57 +25,20 @@ use crate::AppState;
 pub async fn submit_algorithm_execution(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<AlgoExeSubmissionRequest>,
-) -> Result<Json<ApiResponse<AlgoExeSubmissionResponse>>, StatusCode> {
+) -> ApiResult<Json<ApiResponse<AlgoExeSubmissionResponse>>> {
     info!("Processing algorithm execution submission");
 
-    // Validate input parameters
-    if let Err(e) = validate_submission_request(&payload) {
-        error!("Invalid submission request: {}", e);
-        return Err(StatusCode::BAD_REQUEST);
-    }
+    validate_submission_request(&payload)?;
 
-    // Build GitHub download URL
-    let (algo_link, repo_name) = match build_github_download_url(&payload.github_repo, &payload.commit_hash) {
-        Ok(urls) => urls,
-        Err(e) => {
-            error!("Failed to build GitHub download URL: {}", e);
-            return Err(StatusCode::BAD_REQUEST);
-        }
-    };
+    let (algo_link, repo_name) = build_github_download_url(&payload.github_repo, &payload.commit_hash)?;
 
-    // Check if algorithm already exists
-    let algo_result = check_or_create_algorithm(&state, &algo_link, &repo_name).await;
-    let algo_id = match algo_result {
-        Ok(id) => id,
-        Err(e) => {
-            error!("Failed to process algorithm: {}", e);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
-        }
-    };
+    let algo_id = check_or_create_algorithm(&state, &algo_link, &repo_name).await?;
 
-    // Create algorithm execution record
-    let execution_id = match create_algorithm_execution(&state, algo_id, &payload).await {
-        Ok(id) => id,
-        Err(e) => {
-            error!("Failed to create algorithm execution: {}", e);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
-        }
-    };
+    let execution_id = create_algorithm_execution(&state, algo_id, &payload).await?;
 
-    // Submit to blockchain (mock implementation for now)
-    let tx_hash = match submit_to_blockchain(&state, execution_id, &payload).await {
-        Ok(hash) => hash,
-        Err(e) => {
-            error!("Failed to submit to blockchain: {}", e);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
-        }
-    };
+    let tx_hash = submit_to_blockchain(&state, execution_id, &payload).await?;
 
-    // Create blockchain transaction record
-    if let Err(e) = create_blockchain_transaction(&state, &tx_hash, execution_id).await {
-        error!("Failed to create blockchain transaction record: {}", e);
-        return Err(StatusCode::INTERNAL_SERVER_ERROR);
-    }
+    create_blockchain_transaction(&state, &tx_hash, execution_id).await?;
 
     info!(execution_id = execution_id, tx_hash = %tx_hash, "Algorithm execution submitted successfully");
 
@@ -83,7 +46,6 @@ pub async fn submit_algorithm_execution(
         id: execution_id as u64,
         tx_hash,
         status: "submitted".to_string(),
-        message: "Algorithm execution submitted successfully".to_string(),
     })))
 }
 
@@ -92,19 +54,12 @@ pub async fn submit_algorithm_execution(
 pub async fn list_executions(
     State(state): State<Arc<AppState>>,
     Query(params): Query<PaginationParams>,
-) -> Result<Json<ApiResponse<PaginatedResponse<AlgoExeData>>>, StatusCode> {
+) -> ApiResult<Json<ApiResponse<PaginatedResponse<AlgoExeData>>>> {
     info!("Listing algorithm executions");
 
-    match get_algorithm_executions_with_info(&state, params.page, params.limit).await {
-        Ok(result) => {
-            info!(total_items = result.total_items, "Algorithm executions retrieved successfully");
-            Ok(Json(ApiResponse::success(result)))
-        }
-        Err(e) => {
-            error!("Failed to list algorithm executions: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
-        }
-    }
+    let result = get_algorithm_executions_with_info(&state, params.page, params.limit).await?;
+    info!(total_items = result.total_items, "Algorithm executions retrieved successfully");
+    Ok(Json(ApiResponse::success(result)))
 }
 
 /// Get a specific execution by ID
@@ -112,66 +67,57 @@ pub async fn list_executions(
 pub async fn get_execution(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i64>,
-) -> Result<Json<ApiResponse<AlgoExeData>>, StatusCode> {
+) -> ApiResult<Json<ApiResponse<AlgoExeData>>> {
     info!("Getting algorithm execution by ID");
 
-    match get_algorithm_execution_by_id(&state, id).await {
-        Ok(Some(execution)) => {
-            info!("Algorithm execution retrieved successfully");
-            Ok(Json(ApiResponse::success(execution)))
-        }
-        Ok(None) => {
-            warn!("Algorithm execution not found");
-            Err(StatusCode::NOT_FOUND)
-        }
-        Err(e) => {
-            error!("Failed to get algorithm execution: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
-        }
-    }
+    let execution = get_algorithm_execution_by_id(&state, id).await?
+        .ok_or_else(|| {
+            error!("Algorithm execution not found");
+            ApiError::NotFound
+        })?;
+    
+    info!("Algorithm execution retrieved successfully");
+    Ok(Json(ApiResponse::success(execution)))
 }
 
 // Helper functions
 
-fn validate_submission_request(payload: &AlgoExeSubmissionRequest) -> Result<(), String> {
+fn validate_submission_request(payload: &AlgoExeSubmissionRequest) -> ApiResult<()> {
     if payload.github_repo.is_empty() {
-        return Err("GitHub repository URL is required".to_string());
+        return Err(ApiError::InvalidInput("GitHub repository URL is required".to_string()));
     }
     
     if payload.commit_hash.is_empty() {
-        return Err("Commit hash is required".to_string());
+        return Err(ApiError::InvalidInput("Commit hash is required".to_string()));
     }
     
     if payload.scientist_wallet.is_empty() {
-        return Err("Scientist wallet address is required".to_string());
+        return Err(ApiError::InvalidInput("Scientist wallet address is required".to_string()));
     }
     
     if payload.dataset.is_empty() {
-        return Err("Dataset identifier is required".to_string());
+        return Err(ApiError::InvalidInput("Dataset identifier is required".to_string()));
     }
 
-    // Validate Ethereum address format
     if !payload.scientist_wallet.starts_with("0x") || payload.scientist_wallet.len() != 42 {
-        return Err("Invalid Ethereum wallet address format".to_string());
+        return Err(ApiError::InvalidInput("Invalid Ethereum wallet address format".to_string()));
     }
 
     Ok(())
 }
 
-fn build_github_download_url(repo_url: &str, commit_hash: &str) -> Result<(String, String), String> {
-    // Extract repository name from URL
+fn build_github_download_url(repo_url: &str, commit_hash: &str) -> ApiResult<(String, String)> {
     let repo_name = repo_url
         .trim_end_matches('/')
         .split('/')
         .last()
-        .ok_or("Invalid repository URL")?
+        .ok_or_else(|| ApiError::InvalidInput("Invalid repository URL".to_string()))?
         .replace(".git", "");
 
-    // Build download URL for the specific commit
     let download_url = if repo_url.contains("github.com") {
         format!("{}/archive/{}.zip", repo_url.trim_end_matches(".git"), commit_hash)
     } else {
-        return Err("Only GitHub repositories are supported".to_string());
+        return Err(ApiError::InvalidInput("Only GitHub repositories are supported".to_string()));
     };
 
     Ok((download_url, repo_name))
@@ -179,7 +125,6 @@ fn build_github_download_url(repo_url: &str, commit_hash: &str) -> Result<(Strin
 
 async fn check_or_create_algorithm(_state: &AppState, algo_link: &str, _repo_name: &str) -> ApiResult<i64> {
     // TODO: Implement database check for existing algorithm
-    // For now, generate a mock algorithm ID
     let algo_id = chrono::Utc::now().timestamp();
     
     info!(algo_id = algo_id, algo_link = %algo_link, "Algorithm processed");
@@ -192,7 +137,6 @@ async fn create_algorithm_execution(
     payload: &AlgoExeSubmissionRequest
 ) -> ApiResult<i64> {
     // TODO: Implement database insertion
-    // For now, generate a mock execution ID
     let execution_id = chrono::Utc::now().timestamp();
     
     info!(
@@ -212,7 +156,6 @@ async fn submit_to_blockchain(
     _payload: &AlgoExeSubmissionRequest,
 ) -> ApiResult<String> {
     // TODO: Implement actual blockchain submission
-    // For now, return a mock transaction hash
     let tx_hash = format!("0x{:x}", chrono::Utc::now().timestamp());
     
     info!(
@@ -246,7 +189,6 @@ async fn get_algorithm_executions_with_info(
     limit: u32,
 ) -> ApiResult<PaginatedResponse<AlgoExeData>> {
     // TODO: Implement database query
-    // For now, return empty result
     let result = PaginatedResponse::new(vec![], page, limit, 0);
     Ok(result)
 }
@@ -256,7 +198,6 @@ async fn get_algorithm_execution_by_id(
     _id: i64,
 ) -> ApiResult<Option<AlgoExeData>> {
     // TODO: Implement database query
-    // For now, return None
     Ok(None)
 }
 

@@ -183,6 +183,51 @@ pub fn is_valid_tx_hash(hash: &str) -> bool {
     hash.len() == 66 && hash.starts_with("0x") && hash[2..].chars().all(|c| c.is_ascii_hexdigit())
 }
 
+/// Request to submit a blockchain transaction
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubmitTransactionRequest {
+    pub transaction_type: String,
+    pub data: serde_json::Value,
+    pub from_address: String,
+}
+
+/// Response with blockchain synchronization status
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncStatusResponse {
+    pub is_connected: bool,
+    pub last_sync_block: u64,
+    pub current_block: u64,
+    pub blocks_behind: u64,
+    pub transactions_pending: u32,
+    pub events_pending: u32,
+}
+
+/// Response with blockchain contract statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContractStatsResponse {
+    pub total_transactions: u32,
+    pub pending_transactions: u32,
+    pub confirmed_transactions: u32,
+    pub failed_transactions: u32,
+}
+
+/// Query parameters for blockchain events
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EventsQuery {
+    pub event_type: Option<String>,
+    pub from_block: Option<u64>,
+    pub to_block: Option<u64>,
+}
+
+/// Response for a single blockchain event
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlockchainEventResponse {
+    pub event_type: String,
+    pub timestamp: DateTime<Utc>,
+    pub data: serde_json::Value,
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;

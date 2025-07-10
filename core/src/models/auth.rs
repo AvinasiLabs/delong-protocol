@@ -245,7 +245,7 @@ pub struct RefreshTokenRequest {
 }
 
 /// Send verification code request
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Serialize, Validate)]
 pub struct SendVerificationCodeRequest {
     #[validate(email)]
     pub email: String,

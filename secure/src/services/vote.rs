@@ -54,17 +54,17 @@ impl VoteService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to check existing vote");
-            ApiError::InternalError("Failed to check vote".to_string())
+            ApiError::DatabaseError("Failed to check vote".to_string())
         })?
         .unwrap_or(0);
 
         if existing_vote > 0 {
-            return Err(ApiError::BadRequest("Voter has already voted for this execution".to_string()));
+            return Err(ApiError::AlreadyExists("Voter has already voted for this execution".to_string()));
         }
 
         // Validate decision
         if req.decision != "APPROVE" && req.decision != "REJECT" {
-            return Err(ApiError::BadRequest("Decision must be APPROVE or REJECT".to_string()));
+            return Err(ApiError::InvalidInput("Decision must be APPROVE or REJECT".to_string()));
         }
 
         let vote = sqlx::query_as!(
@@ -82,7 +82,7 @@ impl VoteService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to cast vote");
-            ApiError::InternalError("Failed to cast vote".to_string())
+            ApiError::DatabaseError("Failed to cast vote".to_string())
         })?;
 
         Ok(vote)
@@ -105,7 +105,7 @@ impl VoteService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, execution_id = %execution_id, "Failed to count votes");
-            ApiError::InternalError("Failed to count votes".to_string())
+            ApiError::DatabaseError("Failed to count votes".to_string())
         })?
         .unwrap_or(0);
 
@@ -126,7 +126,7 @@ impl VoteService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, execution_id = %execution_id, "Failed to get votes");
-            ApiError::InternalError("Failed to get votes".to_string())
+            ApiError::DatabaseError("Failed to get votes".to_string())
         })?;
 
         Ok(PaginatedResponse::new(
@@ -152,7 +152,7 @@ impl VoteService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to count votes");
-            ApiError::InternalError("Failed to count votes".to_string())
+            ApiError::DatabaseError("Failed to count votes".to_string())
         })?
         .unwrap_or(0);
 
@@ -171,7 +171,7 @@ impl VoteService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to get votes");
-            ApiError::InternalError("Failed to get votes".to_string())
+            ApiError::DatabaseError("Failed to get votes".to_string())
         })?;
 
         Ok(PaginatedResponse::new(
@@ -203,7 +203,7 @@ impl VoteService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, execution_id = %execution_id, "Failed to get vote counts");
-            ApiError::InternalError("Failed to get vote counts".to_string())
+            ApiError::DatabaseError("Failed to get vote counts".to_string())
         })?;
 
         // Get total committee members count
@@ -214,7 +214,7 @@ impl VoteService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to get committee member count");
-            ApiError::InternalError("Failed to get member count".to_string())
+            ApiError::DatabaseError("Failed to get member count".to_string())
         })?
         .unwrap_or(0);
 
@@ -271,7 +271,7 @@ impl VoteService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, execution_id = %execution_id, voter = %voter_wallet, "Failed to get vote");
-            ApiError::InternalError("Failed to get vote".to_string())
+            ApiError::DatabaseError("Failed to get vote".to_string())
         })?;
 
         Ok(vote)
@@ -295,7 +295,7 @@ impl VoteService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to get executions needing vote check");
-            ApiError::InternalError("Failed to get executions".to_string())
+            ApiError::DatabaseError("Failed to get executions".to_string())
         })?;
 
         Ok(execution_ids)
@@ -328,7 +328,7 @@ impl VoteService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, execution_id = %execution_id, "Failed to get votes for execution");
-            ApiError::InternalError("Failed to get votes".to_string())
+            ApiError::DatabaseError("Failed to get votes".to_string())
         })?;
 
         Ok(votes)
@@ -359,7 +359,7 @@ impl VoteService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, voter = %voter_wallet, "Failed to get votes by voter");
-            ApiError::InternalError("Failed to get votes".to_string())
+            ApiError::DatabaseError("Failed to get votes".to_string())
         })?;
 
         Ok(votes)
@@ -380,7 +380,7 @@ impl VoteService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, execution_id = %execution_id, voter = %voter_wallet, "Failed to check if voter has voted");
-            ApiError::InternalError("Failed to check vote status".to_string())
+            ApiError::DatabaseError("Failed to check vote status".to_string())
         })?
         .unwrap_or(0);
 

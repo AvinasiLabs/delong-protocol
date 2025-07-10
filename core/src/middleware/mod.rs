@@ -6,7 +6,7 @@
 use crate::{
     AppState,
     config::AppConfig,
-    models::api_key::ApiKey,
+    models::{api_key::ApiKey, user::User},
     utils::jwt::{Claims, verify_token},
 };
 use axum::{
@@ -60,11 +60,23 @@ pub async fn auth_middleware(
         StatusCode::UNAUTHORIZED
     })?;
 
-    // Add user information to request extensions
-    request.extensions_mut().insert(claims);
-
-    // Continue with the request
-    Ok(next.run(request).await)
+    // Check if the user from the token exists in the database
+    match User::find_by_id(&state.db, claims.sub.parse().unwrap_or(0)).await {
+        Ok(Some(_)) => {
+            // Add user information to request extensions
+            request.extensions_mut().insert(claims);
+            // Continue with the request
+            Ok(next.run(request).await)
+        },
+        Ok(None) => {
+            warn!("User from token not found in DB: {}", claims.sub);
+            Err(StatusCode::UNAUTHORIZED)
+        },
+        Err(e) => {
+            warn!("Database error during auth: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
 }
 
 /// Admin middleware for admin-only routes

@@ -51,6 +51,7 @@ pub mod contract;
 pub mod dataset;
 pub mod pagination;
 pub mod report;
+pub mod runtime;
 pub mod vote;
 pub mod websocket;
 

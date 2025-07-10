@@ -104,9 +104,7 @@ impl TeeClient for PhalaClient {
     async fn derive_key(&self, context: &KeyContext) -> ApiResult<Vec<u8>> {
         let verified = *self.attestation_verified.read().unwrap();
         if !verified {
-            return Err(common::ApiError::Forbidden(
-                "Attestation not verified".to_string()
-            ));
+            return Err(common::ApiError::Forbidden);
         }
 
         // In a real Phala implementation, this would call the Phala runtime
@@ -242,7 +240,7 @@ impl KeyVault {
         let hkdf = Hkdf::<Sha256>::new(Some(context.salt()), &raw_key);
         let mut key = vec![0u8; 32];
         hkdf.expand(context.info(), &mut key)
-            .map_err(|e| common::ApiError::InternalError(format!("HKDF expand failed: {}", e)))?;
+            .map_err(|_e| common::ApiError::InternalError)?;
         
         // Cache the result
         {
@@ -269,14 +267,14 @@ impl KeyVault {
             }
         }
 
-        // Derive new account
+        // Derive new key for Ethereum account
         let raw_key = self.client.derive_key(context).await?;
-        
-        let secret_key = SecretKey::from_slice(&raw_key[..32])
-            .map_err(|e| common::ApiError::InternalError(format!("Invalid secret key: {}", e)))?;
+
+        let secret_key = SecretKey::from_slice(&raw_key)
+            .map_err(|e| common::ApiError::InternalError)?;
         
         let account = EthereumAccount::from_secret_key(secret_key);
-        
+
         // Cache the result
         {
             let mut cache = self.ethereum_cache.write().unwrap();

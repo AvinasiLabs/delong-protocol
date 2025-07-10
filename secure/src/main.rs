@@ -4,12 +4,11 @@ use std::sync::Arc;
 use tokio::signal;
 use tower::ServiceBuilder;
 use tower_http::trace::TraceLayer;
-use tracing::{info, warn};
+use tracing::{info};
 
 use secure::config::SecureConfig;
-use secure::routes::create_routes;
-use secure::sync::BlockchainSyncService;
-use secure::AppState;
+use secure::create_router;
+use secure::services::blockchain_sync::BlockchainSyncService;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -32,40 +31,15 @@ async fn main() -> Result<()> {
     
     info!("Database connection established");
 
-    // Run database migrations (TODO: Uncomment when database is properly configured)
-    // sqlx::migrate!("./migrations")
-    //     .run(&db_pool)
-    //     .await?;
-    info!("Database migrations completed");
-
-    // Initialize IPFS client
-    let ipfs_client = create_ipfs_client(&config.ipfs).await?;
-    info!("IPFS client initialized");
-
     // Initialize blockchain sync service
-    let blockchain_sync = BlockchainSyncService::new(config.clone(), db_pool.clone());
+    let blockchain_sync_service = Arc::new(BlockchainSyncService::new().await?);
     
     // Start blockchain sync in background
-    let blockchain_sync_handle = {
-        let config_clone = config.clone();
-        let db_pool_clone = db_pool.clone();
-        tokio::spawn(async move {
-            let mut sync_service = BlockchainSyncService::new(config_clone, db_pool_clone);
-            if let Err(e) = sync_service.start().await {
-                warn!(error = %e, "Blockchain sync service failed");
-            }
-        })
-    };
-
-    // Create application state
-    let app_state = Arc::new(AppState {
-        config: config.clone(),
-        db_pool,
-        ipfs_client,
-    });
+    blockchain_sync_service.start().await?;
+    info!("Blockchain sync service started");
 
     // Create routes
-    let app = create_routes(app_state)
+    let app = create_router(&config, db_pool, blockchain_sync_service.clone())
         .layer(
             ServiceBuilder::new()
                 .layer(TraceLayer::new_for_http())
@@ -86,13 +60,8 @@ async fn main() -> Result<()> {
         .expect("Server failed to start");
 
     // Stop blockchain sync service
-    blockchain_sync.stop().await;
+    blockchain_sync_service.stop().await?;
     
-    // Wait for blockchain sync to complete
-    if let Err(e) = blockchain_sync_handle.await {
-        warn!(error = %e, "Failed to wait for blockchain sync completion");
-    }
-
     info!("Secure service shutdown complete");
     Ok(())
 }
@@ -121,16 +90,4 @@ async fn shutdown_signal() {
     }
 
     info!("Signal received, starting graceful shutdown");
-}
-
-// Helper function to create IPFS client
-async fn create_ipfs_client(config: &secure::config::IpfsConfig) -> Result<ipfs_api_backend_hyper::IpfsClient> {
-    // For now, just create a default client
-    // In production, this would connect to the configured IPFS endpoint
-    info!(endpoint = %config.api_url, "Connecting to IPFS HTTP API");
-    
-    // Use the default client for now
-    let client = ipfs_api_backend_hyper::IpfsClient::default();
-    
-    Ok(client)
 }

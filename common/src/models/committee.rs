@@ -44,6 +44,17 @@ pub struct MembershipCheckResponse {
     pub is_member: bool,
 }
 
+/// Response for committee statistics
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct CommitteeStatsResponse {
+    /// Total number of committee members
+    pub total_members: i64,
+    /// Number of active committee members
+    pub active_members: i64,
+    /// Number of inactive committee members
+    pub inactive_members: i64,
+}
+
 impl SetCommitteeMemberRequest {
     /// Create a new committee member request
     pub fn new(member_wallet: String, is_approved: bool) -> Self {

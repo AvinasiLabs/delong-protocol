@@ -32,7 +32,7 @@ impl MockEncryption {
     /// Encrypt data using XOR with key
     pub fn encrypt(plaintext: &[u8], key: &[u8]) -> ApiResult<(Vec<u8>, Vec<u8>)> {
         if key.is_empty() {
-            return Err(common::ApiError::InternalError("Key cannot be empty".to_string()));
+            return Err(common::ApiError::InternalError);
         }
 
         // Generate random nonce
@@ -58,7 +58,7 @@ impl MockEncryption {
     /// Decrypt data using XOR with key
     pub fn decrypt(ciphertext: &[u8], _nonce: &[u8], key: &[u8]) -> ApiResult<Vec<u8>> {
         if key.is_empty() {
-            return Err(common::ApiError::InternalError("Key cannot be empty".to_string()));
+            return Err(common::ApiError::InternalError);
         }
 
         // XOR decryption (same as encryption for XOR)

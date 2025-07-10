@@ -13,6 +13,8 @@ pub mod utils;
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
+use axum::response::{IntoResponse, Response};
+use axum::Json;
 
 // Conditional imports for error conversion
 #[cfg(feature = "database")]
@@ -635,6 +637,13 @@ impl From<bcrypt::BcryptError> for ApiError {
 impl From<serde_json::Error> for ApiError {
     fn from(_: serde_json::Error) -> Self {
         ApiError::SerializationError
+    }
+}
+
+impl IntoResponse for ApiError {
+    fn into_response(self) -> Response {
+        let response = self.to_response();
+        (axum::http::StatusCode::OK, Json(response)).into_response()
     }
 }
 

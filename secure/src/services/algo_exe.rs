@@ -95,7 +95,7 @@ impl AlgoExeService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to create algorithm");
-            ApiError::InternalError("Failed to create algorithm".to_string())
+            ApiError::DatabaseError("Failed to create algorithm".to_string())
         })?;
 
         Ok(algorithm)
@@ -115,7 +115,7 @@ impl AlgoExeService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, algorithm_id = %id, "Failed to get algorithm");
-            ApiError::NotFound("Algorithm not found".to_string())
+            ApiError::NotFound
         })?;
 
         Ok(algorithm)
@@ -135,7 +135,7 @@ impl AlgoExeService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, algo_link = %algo_link, "Failed to get algorithm by link");
-            ApiError::InternalError("Failed to get algorithm".to_string())
+            ApiError::DatabaseError("Failed to get algorithm by link".to_string())
         })?;
 
         Ok(algorithm)
@@ -164,7 +164,7 @@ impl AlgoExeService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to create algorithm execution");
-            ApiError::InternalError("Failed to create algorithm execution".to_string())
+            ApiError::DatabaseError("Failed to create algorithm execution".to_string())
         })?;
 
         Ok(execution)
@@ -192,7 +192,7 @@ impl AlgoExeService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to count algorithm executions");
-            ApiError::InternalError("Failed to count executions".to_string())
+            ApiError::DatabaseError("Failed to count algorithm executions".to_string())
         })?
         .unwrap_or(0);
 
@@ -221,7 +221,7 @@ impl AlgoExeService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to get algorithm executions");
-            ApiError::InternalError("Failed to get executions".to_string())
+            ApiError::DatabaseError("Failed to get algorithm executions".to_string())
         })?;
 
         Ok(PaginatedResponse::new(
@@ -255,8 +255,8 @@ impl AlgoExeService {
         .fetch_one(pool)
         .await
         .map_err(|e| {
-            tracing::error!(error = %e, execution_id = %id, "Failed to get algorithm execution");
-            ApiError::NotFound("Algorithm execution not found".to_string())
+            tracing::error!(error = %e, "Failed to get algorithm execution by id");
+            ApiError::NotFound
         })?;
 
         Ok(execution)
@@ -284,7 +284,7 @@ impl AlgoExeService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to get pending algorithm executions");
-            ApiError::InternalError("Failed to get pending executions".to_string())
+            ApiError::DatabaseError("Failed to get pending executions".to_string())
         })?;
 
         Ok(executions)
@@ -319,7 +319,7 @@ impl AlgoExeService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, execution_id = %execution_id, "Failed to update execution status");
-            ApiError::InternalError("Failed to update execution status".to_string())
+            ApiError::DatabaseError("Failed to update execution status".to_string())
         })?;
 
         Ok(execution)
@@ -355,7 +355,7 @@ impl AlgoExeService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, execution_id = %execution_id, "Failed to update execution completed");
-            ApiError::InternalError("Failed to update execution".to_string())
+            ApiError::DatabaseError("Failed to update execution".to_string())
         })?;
 
         Ok(execution)
@@ -386,7 +386,7 @@ impl AlgoExeService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, execution_id = %execution_id, "Failed to update review status");
-            ApiError::InternalError("Failed to update review status".to_string())
+            ApiError::DatabaseError("Failed to update review status".to_string())
         })?;
 
         Ok(execution)
@@ -420,7 +420,7 @@ impl AlgoExeService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, execution_id = %execution_id, "Failed to update vote duration");
-            ApiError::InternalError("Failed to update vote duration".to_string())
+            ApiError::DatabaseError("Failed to update vote duration".to_string())
         })?;
 
         Ok(execution)

@@ -158,7 +158,7 @@ pub fn get_env_or_default(key: &str, default: &str) -> String {
 
 pub fn get_env_or_error(key: &str) -> ApiResult<String> {
     std::env::var(key).map_err(|_| {
-        common::ApiError::InternalError(format!("Environment variable {} not set", key))
+        common::ApiError::ConfigurationError(format!("Environment variable {} not set", key))
     })
 }
 
@@ -184,7 +184,7 @@ where
 {
     serde_json::from_str(json_str).map_err(|e| {
         error!(error = %e, json = %json_str, "JSON parsing failed");
-        common::ApiError::BadRequest(format!("Invalid JSON: {}", e))
+        common::ApiError::InvalidInput(format!("Invalid JSON: {}", e))
     })
 }
 
@@ -195,7 +195,7 @@ where
 {
     serde_json::to_string(value).map_err(|e| {
         error!(error = %e, "JSON serialization failed");
-        common::ApiError::InternalError(format!("Serialization failed: {}", e))
+        common::ApiError::SerializationError
     })
 }
 

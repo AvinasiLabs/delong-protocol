@@ -1,3 +1,6 @@
+-- Create enum type for rate limit tiers
+CREATE TYPE rate_limit_tier AS ENUM ('basic', 'premium', 'enterprise');
+
 -- Create API keys table for third-party developer authentication
 CREATE TABLE api_keys (
     id SERIAL PRIMARY KEY,
@@ -5,7 +8,7 @@ CREATE TABLE api_keys (
     name VARCHAR(255) NOT NULL,
     user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
     permissions JSONB DEFAULT '[]'::jsonb,
-    rate_limit_tier VARCHAR(50) DEFAULT 'basic',
+    rate_limit_tier rate_limit_tier DEFAULT 'basic',
     is_active BOOLEAN DEFAULT TRUE,
     expires_at TIMESTAMP WITH TIME ZONE,
     last_used_at TIMESTAMP WITH TIME ZONE,
@@ -23,12 +26,6 @@ CREATE INDEX idx_api_keys_last_used_at ON api_keys(last_used_at);
 -- Create trigger to update updated_at column
 CREATE TRIGGER update_api_keys_updated_at BEFORE UPDATE ON api_keys
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
--- Create enum type for rate limit tiers
-CREATE TYPE rate_limit_tier AS ENUM ('basic', 'premium', 'enterprise');
-
--- Update api_keys table to use the enum
-ALTER TABLE api_keys ALTER COLUMN rate_limit_tier TYPE rate_limit_tier USING rate_limit_tier::rate_limit_tier;
 
 -- Insert some default permissions for reference
 INSERT INTO permissions (name, display_name, description, resource, action) VALUES

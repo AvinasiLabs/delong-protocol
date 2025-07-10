@@ -82,13 +82,11 @@ impl JwtMiddleware {
 }
 
 /// Create a standardized authentication error response
-fn create_auth_error_response(message: &str) -> Response {
+fn create_auth_error_response(_message: &str) -> Response {
     let error_response = ApiResponse::<()> {
         code: ResponseCode::Unauthorized,
         data: None,
-        message: message.to_string(),
         request_id: None,
-        timestamp: chrono::Utc::now().to_rfc3339(),
     };
     
     (StatusCode::UNAUTHORIZED, Json(error_response)).into_response()
@@ -104,7 +102,7 @@ pub fn extract_auth_context(headers: &HeaderMap) -> Option<AuthContext> {
 /// Check if user has admin role
 pub fn require_admin(auth_context: &AuthContext) -> ApiResult<()> {
     if !auth_context.is_admin() {
-        return Err(ApiError::Forbidden("Admin privileges required".to_string()));
+        return Err(ApiError::Forbidden);
     }
     Ok(())
 }
@@ -130,14 +128,13 @@ mod tests {
     use axum::{
         body::Body,
         http::{Request, Method},
-        Extension,
     };
     use common::Claims;
     
     #[tokio::test]
     async fn test_jwt_middleware_disabled() {
-        let middleware = JwtMiddleware::new("test_secret".to_string(), false);
-        let request = Request::builder()
+        let _middleware = JwtMiddleware::new("test_secret".to_string(), false);
+        let _request = Request::builder()
             .method(Method::GET)
             .uri("/test")
             .body(Body::empty())
@@ -149,8 +146,8 @@ mod tests {
     
     #[tokio::test]
     async fn test_jwt_middleware_enabled_missing_header() {
-        let middleware = JwtMiddleware::new("test_secret".to_string(), true);
-        let request = Request::builder()
+        let _middleware = JwtMiddleware::new("test_secret".to_string(), true);
+        let _request = Request::builder()
             .method(Method::GET)
             .uri("/test")
             .body(Body::empty())

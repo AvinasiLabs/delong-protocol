@@ -150,6 +150,88 @@ pub struct ReportSummary {
     pub file_size: u64,
 }
 
+/// Query parameters for reports
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ActivityReportQuery {
+    pub from_date: Option<String>, // ISO 8601 format
+    pub to_date: Option<String>,   // ISO 8601 format
+    pub execution_id: Option<i32>,
+}
+
+/// Committee activity report
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct CommitteeActivityReport {
+    pub total_members: i32,
+    pub active_members: i32,
+    pub period_votes_cast: i32,
+    pub period_approvals: i32,
+    pub period_rejections: i32,
+    pub member_stats: Vec<MemberActivityStats>,
+}
+
+/// Individual member activity statistics
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct MemberActivityStats {
+    pub wallet_address: String,
+    pub name: Option<String>,
+    pub is_active: bool,
+    pub votes_cast: i32,
+    pub approvals: i32,
+    pub rejections: i32,
+    pub participation_rate: f64, // Percentage of votes they participated in
+}
+
+/// Voting report
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct VotingReport {
+    pub total_executions: i32,
+    pub completed_votes: i32,
+    pub pending_votes: i32,
+    pub approved_executions: i32,
+    pub rejected_executions: i32,
+    pub average_voting_time_hours: f64,
+    pub execution_details: Vec<ExecutionVotingDetail>,
+}
+
+/// Execution voting detail
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ExecutionVotingDetail {
+    pub execution_id: i32,
+    pub total_votes: i32,
+    pub approve_votes: i32,
+    pub reject_votes: i32,
+    pub is_complete: bool,
+    pub is_approved: bool,
+    pub voting_start_time: Option<String>,
+    pub voting_end_time: Option<String>,
+}
+
+/// System activity report
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SystemActivityReport {
+    pub blockchain_transactions: i32,
+    pub pending_transactions: i32,
+    pub confirmed_transactions: i32,
+    pub algorithm_executions: i32,
+    pub dataset_registrations: i32,
+    pub committee_changes: i32,
+    pub votes_cast: i32,
+}
+
+/// Governance summary report
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct GovernanceSummary {
+    pub committee_size: i32,
+    pub total_registered_members: i32,
+    pub blockchain_sync_status: String,
+    pub blocks_behind: u64,
+    pub pending_votes: i32,
+    pub recent_approvals: i32,
+    pub recent_rejections: i32,
+    pub system_health: String,
+}
+
+
 impl ReportType {
     /// Get all available report types
     pub fn all() -> Vec<ReportType> {

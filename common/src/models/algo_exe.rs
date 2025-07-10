@@ -91,9 +91,6 @@ pub struct AlgoExeSubmissionResponse {
     
     /// Submission status
     pub status: String,
-    
-    /// Response message
-    pub message: String,
 }
 
 /// Algorithm execution status enumeration
@@ -208,7 +205,6 @@ mod tests {
             id: 123,
             tx_hash: "0xabc123def456".to_string(),
             status: "submitted".to_string(),
-            message: "Algorithm execution submitted successfully".to_string(),
         };
 
         let json = serde_json::to_string(&response).unwrap();

@@ -187,7 +187,7 @@ impl BlockchainSyncService {
                 self.process_ethereum_events(from_block, to_block).await?;
             }
             _ => {
-                return Err(ApiError::InternalError(
+                return Err(ApiError::ConfigurationError(
                     format!("Unsupported blockchain client type: {}", self.config.blockchain.client_type)
                 ));
             }
@@ -546,26 +546,22 @@ impl BlockchainSyncService {
 
     /// Get the latest block number from the blockchain
     async fn get_latest_block_number(&self) -> Result<u64, ApiError> {
+        // In production, this would make an RPC call to an Ethereum node
+        // For mock, we'll just return a slightly advanced block number
         match self.config.blockchain.client_type.as_str() {
-            "mock" => {
-                // Mock implementation - simulate a slow-growing blockchain for testing
-                // Add only a few blocks beyond current to avoid endless syncing
-                Ok(self.current_block + 5)
-            }
+            "mock" => Ok(self.current_block + 10), // Simulate new blocks
             "ethereum" => {
-                // TODO: Query actual Ethereum node
-                warn!("Ethereum blockchain integration not yet implemented");
-                Ok(self.current_block)
+                // TODO: Implement actual RPC call
+                warn!("Ethereum get_latest_block_number not yet implemented, returning mock data");
+                Ok(self.current_block + 10)
             }
-            _ => {
-                Err(ApiError::InternalError(
-                    format!("Unsupported blockchain client type: {}", self.config.blockchain.client_type)
-                ))
-            }
+            _ => Err(ApiError::ConfigurationError(
+                format!("Unsupported blockchain client type: {}", self.config.blockchain.client_type)
+            )),
         }
     }
 
-    /// Get the last processed block number from persistent storage
+    /// Get the last processed block number from the database
     async fn get_last_processed_block(&self) -> Result<u64, ApiError> {
         // Query from database to get the last processed block
         let query = r#"
@@ -594,7 +590,7 @@ impl BlockchainSyncService {
         }
     }
 
-    /// Update the last processed block number in persistent storage
+    /// Update the last processed block number in the database
     async fn update_last_processed_block(&self, block_number: u64) -> Result<(), ApiError> {
         // Update database with the last processed block
         let query = r#"
@@ -615,10 +611,8 @@ impl BlockchainSyncService {
                 Ok(())
             }
             Err(e) => {
-                error!(error = %e, block = %block_number, "Failed to update last processed block");
-                // Don't fail for database errors - log and continue
-                warn!("Continuing despite database update error");
-                Ok(())
+                error!(error = %e, block = %block_number, "Failed to update last processed block in database");
+                Err(ApiError::DatabaseError(format!("Database error: {}", e)))
             }
         }
     }
@@ -670,7 +664,7 @@ impl BlockchainSyncService {
                 }
                 Err(e) => {
                     error!(error = %e, execution_id = %execution_id, "Failed to update algorithm execution status");
-                    return Err(ApiError::InternalError(format!("Database error: {}", e)));
+                    return Err(ApiError::DatabaseError(format!("Database error: {}", e)));
                 }
             }
         } else {
@@ -713,7 +707,7 @@ impl BlockchainSyncService {
                 }
                 Err(e) => {
                     error!(error = %e, execution_id = %execution_id, "Failed to update algorithm execution status");
-                    return Err(ApiError::InternalError(format!("Database error: {}", e)));
+                    return Err(ApiError::DatabaseError(format!("Database error: {}", e)));
                 }
             }
         }

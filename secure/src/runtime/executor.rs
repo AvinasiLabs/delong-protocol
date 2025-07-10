@@ -190,7 +190,7 @@ impl AlgorithmExecutor {
                 // Create mock dataset content
                 let mock_data = "id,feature1,feature2,target\n1,0.5,0.3,1\n2,0.8,0.2,0\n3,0.1,0.9,1\n";
                 tokio::fs::write(&dataset_path, mock_data).await
-                    .map_err(|e| ApiError::InternalError(format!("Failed to create mock dataset: {}", e)))?;
+                    .map_err(|_e| ApiError::FileProcessingError)?;
                 
                 info!(dataset_path = %dataset_path, "Created mock dataset");
                 Ok(dataset_path)
@@ -217,11 +217,11 @@ impl AlgorithmExecutor {
                 let dataset_path = format!("/tmp/dataset_{}.csv", mock_request.execution_id);
                 let mock_data = "id,feature1,feature2,target\n1,0.5,0.3,1\n2,0.8,0.2,0\n3,0.1,0.9,1\n";
                 tokio::fs::write(&dataset_path, mock_data).await
-                    .map_err(|e| ApiError::InternalError(format!("Failed to create mock dataset: {}", e)))?;
+                    .map_err(|_e| ApiError::FileProcessingError)?;
                 Ok(dataset_path)
             }
             _ => {
-                Err(ApiError::InternalError(
+                Err(ApiError::ConfigurationError(
                     format!("Unsupported TEE client type: {}", self.config.tee.client_type)
                 ))
             }
@@ -284,18 +284,18 @@ if __name__ == "__main__":
 "#;
 
         tokio::fs::write(&algorithm_path, mock_algorithm).await
-            .map_err(|e| ApiError::InternalError(format!("Failed to create algorithm file: {}", e)))?;
+            .map_err(|_e| ApiError::FileProcessingError)?;
 
         // Make executable
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mut perms = tokio::fs::metadata(&algorithm_path).await
-                .map_err(|e| ApiError::InternalError(format!("Failed to get file metadata: {}", e)))?
-                .permissions();
-            perms.set_mode(0o755);
+            let metadata = tokio::fs::metadata(&algorithm_path).await
+                .map_err(|_e| ApiError::FileProcessingError)?;
+            let mut perms = metadata.permissions();
+            perms.set_mode(0o755); // rwxr-xr-x
             tokio::fs::set_permissions(&algorithm_path, perms).await
-                .map_err(|e| ApiError::InternalError(format!("Failed to set file permissions: {}", e)))?;
+                .map_err(|_e| ApiError::FileProcessingError)?;
         }
 
         info!(algorithm_path = %algorithm_path, "Algorithm downloaded and prepared");
@@ -304,17 +304,13 @@ if __name__ == "__main__":
 
     /// Set up execution environment
     async fn setup_execution_environment(&self, request: &ExecutionRequest) -> Result<String, ApiError> {
-        let env_dir = format!("/tmp/execution_env_{}", request.execution_id);
+        let env_dir = format!("/tmp/execution_{}", request.execution_id);
         
         tokio::fs::create_dir_all(&env_dir).await
-            .map_err(|e| ApiError::InternalError(format!("Failed to create execution environment: {}", e)))?;
-
-        info!(
-            execution_id = %request.execution_id,
-            env_dir = %env_dir,
-            "Execution environment set up"
-        );
-
+            .map_err(|_e| ApiError::FileProcessingError)?;
+            
+        info!(env_dir = %env_dir, "Created execution environment directory");
+        
         Ok(env_dir)
     }
 
@@ -351,16 +347,17 @@ if __name__ == "__main__":
             // cmd.env("MAX_MEMORY", "1G");
 
             let output = cmd.output().await
-                .map_err(|e| ApiError::InternalError(format!("Failed to execute algorithm: {}", e)))?;
+                .map_err(|_e| ApiError::InternalError)?;
 
             if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                return Err(ApiError::InternalError(format!("Algorithm execution failed: {}", stderr)));
+                let _stderr = String::from_utf8_lossy(&output.stderr);
+                error!(stderr = %_stderr, "Algorithm execution failed");
+                return Err(ApiError::BusinessLogicError);
             }
 
             // Read the results
             let results = tokio::fs::read(&output_path).await
-                .map_err(|e| ApiError::InternalError(format!("Failed to read results: {}", e)))?;
+                .map_err(|_e| ApiError::InternalError)?;
 
             Ok(results)
         }).await;
@@ -368,11 +365,11 @@ if __name__ == "__main__":
         match result {
             Ok(Ok(data)) => Ok(data),
             Ok(Err(e)) => Err(e),
-            Err(_) => Err(ApiError::InternalError("Algorithm execution timed out".to_string())),
+            Err(_) => Err(ApiError::Timeout),
         }
     }
 
-    /// Encrypt and store execution results in IPFS
+    /// Encrypt and store result in IPFS
     async fn store_encrypted_result(&self, request: &ExecutionRequest, result_data: Vec<u8>) -> Result<String, ApiError> {
         info!(
             execution_id = %request.execution_id,
@@ -386,32 +383,32 @@ if __name__ == "__main__":
         let encrypted_data = encrypted_result.encrypted_data;
 
         // Store in IPFS (mock implementation)
-        let mock_cid = format!("QmResult{:x}", md5::compute(&encrypted_data));
+        let result_cid = format!("QmResult{:x}", md5::compute(&encrypted_data));
         
         info!(
             execution_id = %request.execution_id,
-            result_cid = %mock_cid,
+            result_cid = %result_cid,
             "Execution results encrypted and stored"
         );
 
-        Ok(mock_cid)
+        Ok(result_cid)
     }
 
     /// Clean up temporary files and execution environment
     async fn cleanup_execution_files(&self, algorithm_path: &str, dataset_path: &str, env_dir: &str) {
         // Clean up algorithm file
         if let Err(e) = tokio::fs::remove_file(algorithm_path).await {
-            warn!(path = %algorithm_path, error = %e, "Failed to remove algorithm file");
+            warn!(error = %e, path = %algorithm_path, "Failed to remove algorithm file");
         }
 
         // Clean up dataset file
         if let Err(e) = tokio::fs::remove_file(dataset_path).await {
-            warn!(path = %dataset_path, error = %e, "Failed to remove dataset file");
+            warn!(error = %e, path = %dataset_path, "Failed to remove dataset file");
         }
 
         // Clean up execution environment
         if let Err(e) = tokio::fs::remove_dir_all(env_dir).await {
-            warn!(path = %env_dir, error = %e, "Failed to remove execution environment");
+            warn!(error = %e, path = %env_dir, "Failed to remove execution environment directory");
         }
 
         info!("Execution cleanup completed");

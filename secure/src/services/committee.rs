@@ -47,7 +47,7 @@ impl CommitteeService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to set committee member");
-            ApiError::InternalError("Failed to set committee member".to_string())
+            ApiError::DatabaseError("Failed to set committee member".to_string())
         })?;
 
         Ok(member)
@@ -67,7 +67,7 @@ impl CommitteeService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, member_id = %id, "Failed to get committee member");
-            ApiError::NotFound("Committee member not found".to_string())
+            ApiError::NotFound
         })?;
 
         Ok(member)
@@ -87,7 +87,7 @@ impl CommitteeService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, wallet = %wallet_address, "Failed to get committee member by wallet");
-            ApiError::InternalError("Failed to get committee member".to_string())
+            ApiError::DatabaseError("Failed to get committee member".to_string())
         })?;
 
         Ok(member)
@@ -110,7 +110,7 @@ impl CommitteeService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, wallet = %wallet_address, "Failed to check committee membership");
-            ApiError::InternalError("Failed to check membership".to_string())
+            ApiError::DatabaseError("Failed to check membership".to_string())
         })?
         .unwrap_or(0);
 
@@ -132,7 +132,7 @@ impl CommitteeService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to count committee members");
-            ApiError::InternalError("Failed to count members".to_string())
+            ApiError::DatabaseError("Failed to count members".to_string())
         })?
         .unwrap_or(0);
 
@@ -151,7 +151,7 @@ impl CommitteeService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to get committee members");
-            ApiError::InternalError("Failed to get members".to_string())
+            ApiError::DatabaseError("Failed to get members".to_string())
         })?;
 
         Ok(PaginatedResponse::new(
@@ -174,7 +174,7 @@ impl CommitteeService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to get active committee members");
-            ApiError::InternalError("Failed to get active members".to_string())
+            ApiError::DatabaseError("Failed to get active members".to_string())
         })?;
 
         Ok(members)
@@ -202,7 +202,7 @@ impl CommitteeService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, wallet = %wallet_address, "Failed to update committee member status");
-            ApiError::InternalError("Failed to update member status".to_string())
+            ApiError::DatabaseError("Failed to update member status".to_string())
         })?;
 
         Ok(member)
@@ -219,7 +219,7 @@ impl CommitteeService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to get active member count");
-            ApiError::InternalError("Failed to get member count".to_string())
+            ApiError::DatabaseError("Failed to get member count".to_string())
         })?
         .unwrap_or(0);
 
@@ -249,7 +249,7 @@ impl CommitteeService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to get active committee members");
-            ApiError::InternalError("Failed to get active members".to_string())
+            ApiError::DatabaseError("Failed to get active members".to_string())
         })?;
 
         Ok(members)
@@ -277,7 +277,7 @@ impl CommitteeService {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to get all committee members");
-            ApiError::InternalError("Failed to get all members".to_string())
+            ApiError::DatabaseError("Failed to get all members".to_string())
         })?;
 
         Ok(members)
@@ -296,8 +296,8 @@ impl CommitteeService {
         .fetch_one(pool)
         .await
         .map_err(|e| {
-            tracing::error!(error = %e, wallet = %wallet_address, "Failed to get committee member by wallet");
-            ApiError::NotFound("Committee member not found".to_string())
+            tracing::error!(error = %e, wallet = %wallet_address, "Failed to get committee member");
+            ApiError::NotFound
         })?;
 
         Ok(member)

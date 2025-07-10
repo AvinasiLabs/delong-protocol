@@ -114,7 +114,7 @@ impl AppState {
         info!("Initializing services...");
         let config_arc = Arc::new(config);
         let verification_store = Arc::new(VerificationStore::new());
-        let jwt_config = Arc::new(create_jwt_config());
+        let jwt_config = Arc::new(create_jwt_config(&config_arc));
 
         // Initialize AI audit service
         let ai_service_url = std::env::var("AI_AUDIT_SERVICE_URL").ok();
@@ -149,7 +149,7 @@ impl AppState {
 
         let config_arc = Arc::new(config);
         let verification_store = Arc::new(VerificationStore::new());
-        let jwt_config = Arc::new(create_jwt_config());
+        let jwt_config = Arc::new(create_jwt_config(&config_arc));
 
         // Initialize AI audit service for testing
         let ai_audit_service = Arc::new(AiAuditService::new(None).map_err(|e| {

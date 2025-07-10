@@ -88,21 +88,21 @@ fn create_admin_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         // User management routes
         .route("/users", get(admin::get_users))
         .route("/users", post(admin::create_user_admin))
-        .route("/users/:id", get(admin::get_user_by_id))
-        .route("/users/:id", put(admin::update_user))
-        .route("/users/:id", delete(admin::delete_user))
+        .route("/users/{id}", get(admin::get_user_by_id))
+        .route("/users/{id}", put(admin::update_user))
+        .route("/users/{id}", delete(admin::delete_user))
         // Role and permission management routes
         .route("/roles", get(admin::get_roles))
         .route("/permissions", get(admin::get_permissions))
         .route(
-            "/permissions/:user_id/:permission",
+            "/permissions/{user_id}/{permission}",
             get(admin::check_permission),
         )
         // API key management routes
         .route("/api-keys", get(admin::list_api_keys))
         .route("/api-keys", post(admin::create_api_key))
         .route("/api-keys/stats", get(admin::get_api_key_stats))
-        .route("/api-keys/:id", delete(admin::revoke_api_key))
+        .route("/api-keys/{id}", delete(admin::revoke_api_key))
         // Apply authentication and admin middleware
         .layer(middleware::from_fn(admin_middleware))
         .layer(middleware::from_fn_with_state(state, auth_middleware))

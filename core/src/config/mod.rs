@@ -22,6 +22,8 @@ pub struct CoreConfig {
     pub api: ApiConfig,
     /// JWT secret for authentication
     pub jwt_secret: String,
+    /// JWT expiration in hours
+    pub jwt_expiration: i64,
     /// Database URL (for direct access)
     pub database_url: String,
     /// Development mode flag
@@ -96,6 +98,7 @@ impl Default for CoreConfig {
             database: DatabaseConfig::default(),
             api: ApiConfig::default(),
             jwt_secret: "delong_default_secret_change_in_production".to_string(),
+            jwt_expiration: 24,
             database_url: "sqlite://core.db".to_string(),
             development_mode: true,
         }
@@ -169,6 +172,7 @@ impl CoreConfig {
             api: ApiConfig::from_env()?,
             jwt_secret: loader
                 .get_string_or_default("JWT_SECRET", "delong_default_secret_change_in_production"),
+            jwt_expiration: loader.get_string_or_default("JWT_EXPIRATION_HOURS", "24").parse().unwrap_or(24),
             database_url: database_url.clone(),
             development_mode: loader.get_bool_or_default("DEVELOPMENT_MODE", true),
         })

@@ -129,21 +129,18 @@ pub fn refresh_token(old_token: &str, config: &JwtConfig) -> ApiResult<String> {
         .map_err(|e| ApiError::ConfigurationError(format!("JWT encoding error: {}", e)))
 }
 
-/// Create JWT config from environment or default values
-pub fn create_jwt_config() -> JwtConfig {
+/// Create JWT config from an AppConfig
+pub fn create_jwt_config(config: &crate::config::AppConfig) -> JwtConfig {
     JwtConfig {
-        secret: std::env::var("JWT_SECRET")
-            .unwrap_or_else(|_| "default_secret_change_in_production".to_string()),
-        expiration_hours: std::env::var("JWT_EXPIRATION_HOURS")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(24),
+        secret: config.jwt_secret.clone(),
+        expiration_hours: config.jwt_expiration,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::AppConfig;
     use chrono::Utc;
 
     fn create_test_user() -> User {
@@ -169,9 +166,18 @@ mod tests {
         }
     }
 
+    fn create_test_jwt_config() -> JwtConfig {
+        let config = AppConfig {
+            jwt_secret: "test_secret".to_string(),
+            jwt_expiration: 1,
+            ..Default::default()
+        };
+        create_jwt_config(&config)
+    }
+
     #[test]
     fn test_generate_and_verify_token() {
-        let config = JwtConfig::default();
+        let config = create_test_jwt_config();
         let user = create_test_user();
 
         let token = generate_token(&user, &config).unwrap();
@@ -184,7 +190,7 @@ mod tests {
 
     #[test]
     fn test_extract_user_info() {
-        let config = JwtConfig::default();
+        let config = create_test_jwt_config();
         let user = create_test_user();
 
         let token = generate_token(&user, &config).unwrap();
@@ -199,7 +205,7 @@ mod tests {
 
     #[test]
     fn test_refresh_token() {
-        let config = JwtConfig::default();
+        let config = create_test_jwt_config();
         let user = create_test_user();
 
         let original_token = generate_token(&user, &config).unwrap();
@@ -219,7 +225,7 @@ mod tests {
 
     #[test]
     fn test_invalid_token() {
-        let config = JwtConfig::default();
+        let config = create_test_jwt_config();
 
         assert!(verify_token("invalid.token.here", &config).is_err());
         assert!(extract_user_id("invalid.token.here", &config).is_err());
@@ -227,7 +233,7 @@ mod tests {
 
     #[test]
     fn test_is_token_expired() {
-        let config = JwtConfig::default();
+        let config = create_test_jwt_config();
         let user = create_test_user();
 
         let token = generate_token(&user, &config).unwrap();
