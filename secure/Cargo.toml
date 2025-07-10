@@ -5,60 +5,42 @@ edition = { workspace = true }
 description = "Secure service for privacy-preserving computation in TEE environment"
 
 [dependencies]
-# Workspace dependencies
-axum = { workspace = true }
-tokio = { workspace = true, features = ["full"] }
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
-tracing = { workspace = true }
-tracing-subscriber = "0.3"
 anyhow = { workspace = true }
+axum = { workspace = true }
+axum-extra = { workspace = true }
+chrono = { workspace = true }
+dotenvy = { workspace = true }
+ethers = { workspace = true }
+futures = { workspace = true }
+hex = { workspace = true }
+hkdf = { workspace = true }
+hyper = { workspace = true }
+jsonwebtoken = { workspace = true }
+k256 = { workspace = true, features = ["ecdsa"] }
+lazy_static = { workspace = true }
+opentelemetry = { workspace = true }
+opentelemetry_sdk = { workspace = true }
+rand = { workspace = true }
+redis = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+sqlx = { workspace = true }
+strum = { workspace = true }
+strum_macros = { workspace = true }
 thiserror = { workspace = true }
-tower = { workspace = true }
-tower-http = { workspace = true, features = ["cors", "trace"] }
-chrono = { workspace = true, features = ["serde"] }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+tower-http = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+utoipa = { workspace = true }
+utoipa-scalar = { workspace = true }
+utoipa-swagger-ui = { workspace = true }
 uuid = { workspace = true }
 
-# Database operations
-sqlx = { workspace = true, features = [
-    "runtime-tokio-rustls",
-    "postgres",
-    "mysql",
-    "sqlite",
-    "chrono",
-    "uuid",
-    "json",
-    "migrate",
-    "bigdecimal",
-    "ipnetwork",
-] }
-
-# Authentication
-jsonwebtoken = "9.3"
-
-# Internal dependencies
 common = { path = "../common" }
-
-# TEE and cryptography specific
-sha2 = "0.10"
-aes-gcm = "0.10"
-hkdf = "0.12"
-rand = "0.8"
-md5 = "0.7"
-
-# IPFS client
-ipfs-api-backend-hyper = "0.6"
-
-# Ethereum integration
-ethers = { workspace = true }
-
-# Environment variables
-dotenvy = "0.15"
-
-# Additional dependencies
-async-trait = "0.1"
-secp256k1 = "0.29"
-hex = "0.4"
 
 [dev-dependencies]
 serial_test = { workspace = true }

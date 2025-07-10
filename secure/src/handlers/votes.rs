@@ -1,132 +1,128 @@
+use crate::{
+    models::{
+        vote::{CastVoteRequest, Vote, VoteQuery},
+        AppState, BlockchainTransaction, CommitteeMember, ENTITY_TYPE_VOTE,
+    },
+    services::key_ctx::{KeyContext, KeyKind},
+};
 use axum::{
     extract::{Path, Query, State},
-    Json,
+    response::Json,
 };
+use common::{ApiError, ApiResult, ApiResponse, PaginatedResponse, PaginationParams};
+use serde_json::json;
 use std::sync::Arc;
-use tracing::info;
+use tracing::{error, info, instrument};
 
-use common::{
-    ApiResult,
-    ApiResponse,
-    models::vote::{CastVoteRequest, VoteData, VoteSummary, VoteQuery, VoteDecision},
-};
-use crate::AppState;
-use crate::services::vote::{VoteService, Vote as DbVote};
-
-fn to_vote_data(vote: DbVote) -> VoteData {
-    VoteData {
-        id: vote.id as u64,
-        algo_cid: vote.execution_id.to_string(), // This needs to be fetched from algo table
-        voter: vote.voter_wallet,
-        approve: vote.decision == "APPROVE",
-        voted_at: vote.created_at.to_rfc3339(),
-        created_at: vote.created_at.to_rfc3339(),
-        updated_at: vote.created_at.to_rfc3339(), // No updated_at in db model
-    }
-}
-
-/// List votes with optional filtering
-pub async fn list_votes(
-    State(state): State<Arc<AppState>>,
-    Query(query): Query<VoteQuery>,
-) -> ApiResult<Json<ApiResponse<Vec<VoteData>>>> {
-    info!("Listing votes");
-
-    let page = query.page;
-    let page_size = query.limit;
-
-    // The service layer needs to be updated to take VoteQuery
-    let votes = if let Some(voter) = query.voter {
-        VoteService::get_votes_by_voter(&state.db_pool, &voter, page as i32, page_size as i32).await?
-    } else {
-        vec![]
-    };
-
-    let response_votes = votes.into_iter().map(to_vote_data).collect();
-    Ok(Json(ApiResponse::success(response_votes)))
-}
-
-/// Cast a vote for an algorithm execution
+/// Cast a new vote, requires committee member approval
+#[instrument(skip_all, fields(execution_id = %req.execution_id, voter = %req.voter_wallet, decision = %req.decision))]
 pub async fn cast_vote(
     State(state): State<Arc<AppState>>,
-    Path(execution_id): Path<i64>,
-    Json(request): Json<CastVoteRequest>,
-) -> ApiResult<Json<ApiResponse<VoteData>>> {
-    info!(execution_id = %execution_id, voter = %request.signature.as_deref().unwrap_or(""), decision = ?request.decision, "Casting vote");
+    Json(req): Json<CastVoteRequest>,
+) -> ApiResult<Json<ApiResponse<Vote>>> {
+    info!("Starting vote casting process");
 
-    let decision_str = match request.decision {
-        VoteDecision::Approve => "APPROVE",
-        VoteDecision::Reject => "REJECT",
-        VoteDecision::Abstain => "ABSTAIN",
+    // In a real app, voter_wallet would come from JWT. Here we trust the request.
+    let voter_wallet = &req.voter_wallet;
+
+    // 1. Check if the voter is an approved committee member
+    let is_approved = CommitteeMember::is_approved_member(&state.db, voter_wallet).await?;
+    if !is_approved {
+        error!(
+            "Permission denied: Wallet {} is not an approved committee member.",
+            voter_wallet
+        );
+        return Err(ApiError::Forbidden);
+    }
+
+    // 2. Start transaction
+    let mut tx = state.db.begin().await?;
+
+    // 3. Orchestrate vote creation within the transaction
+    let new_vote = match async {
+        // 3a. Check if the member has already voted for this execution
+        if Vote::has_voted(&mut tx, req.execution_id, voter_wallet).await? {
+            error!(
+                "Vote rejected: Wallet {} has already voted on execution {}",
+                voter_wallet, req.execution_id
+            );
+            return Err(ApiError::AlreadyExists(
+                "You have already voted on this execution".to_string(),
+            ));
+        }
+
+        // 3b. (Simulated) Call smart contract to cast the vote
+        info!("Casting vote on blockchain...");
+        let key_context =
+            KeyContext::new(KeyKind::EthAccount, voter_wallet, "Casting a vote");
+        let tx_hash = state
+            .ctr_caller_service
+            .cast_vote(req.execution_id, voter_wallet, &req.decision, &key_context)
+            .await?;
+
+        // 3c. Create the vote record in the database
+        info!("Creating vote record in database...");
+        let vote = Vote::create_in_tx(&mut tx, &req).await?;
+
+        // 3d. Create the corresponding blockchain transaction record
+        info!("Logging blockchain transaction...");
+        let args = json!({
+            "execution_id": req.execution_id,
+            "voter_wallet": voter_wallet,
+            "decision": req.decision,
+        });
+        BlockchainTransaction::create(&mut tx, &tx_hash, vote.id, ENTITY_TYPE_VOTE, &args).await?;
+
+        Ok(vote)
+    }
+    .await
+    {
+        Ok(vote) => vote,
+        Err(e) => {
+            error!("Error during vote casting, rolling back: {}", e);
+            tx.rollback().await?;
+            return Err(e.into());
+        }
     };
 
-    let vote_request = crate::services::vote::CastVoteRequest {
-        execution_id,
-        voter_wallet: "0x...".to_string(), // This should come from auth context
-        decision: decision_str.to_string(),
-    };
-    
-    let vote = VoteService::cast_vote(&state.db_pool, vote_request).await?;
-    Ok(Json(ApiResponse::success(to_vote_data(vote))))
+    // 4. Commit transaction
+    tx.commit().await?;
+
+    info!("Successfully cast vote with ID: {}", new_vote.id);
+    Ok(Json(ApiResponse::success(new_vote)))
 }
 
-/// Get vote tally for an execution
-pub async fn get_vote_tally(
+/// Get a vote by its ID
+#[instrument(skip(state), fields(id = %id))]
+pub async fn get_vote(
     State(state): State<Arc<AppState>>,
-    Path(execution_id): Path<i64>,
-) -> ApiResult<Json<ApiResponse<VoteSummary>>> {
-    info!(execution_id = %execution_id, "Getting vote tally");
+    Path(id): Path<i64>,
+) -> ApiResult<Json<ApiResponse<Vote>>> {
+    info!("Getting vote by ID");
 
-    let tally = VoteService::get_vote_tally(&state.db_pool, execution_id).await?;
-    let is_complete = VoteService::is_voting_complete(&state.db_pool, execution_id).await?;
-    let is_approved = if is_complete {
-        VoteService::is_execution_approved(&state.db_pool, execution_id).await?
-    } else {
-        false
-    };
+    let vote = Vote::get_by_id(&state.db, id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
 
-    let summary = VoteSummary {
-        algo_cid: execution_id.to_string(),
-        total_votes: tally.total_votes as u32,
-        approve_votes: tally.approve_votes as u32,
-        reject_votes: tally.reject_votes as u32,
-        abstain_votes: 0, // Not supported in service yet
-        approval_percentage: if tally.total_votes > 0 {
-            (tally.approve_votes as f64 / tally.total_votes as f64) * 100.0
-        } else {
-            0.0
-        },
-        passed: is_approved,
-    };
-
-    Ok(Json(ApiResponse::success(summary)))
+    Ok(Json(ApiResponse::success(vote)))
 }
 
-/// Get votes for a specific execution
-pub async fn get_execution_votes(
+/// List votes with optional filtering and pagination
+#[instrument(skip(state))]
+pub async fn list_votes(
     State(state): State<Arc<AppState>>,
-    Path(execution_id): Path<i64>,
-    Query(query): Query<VoteQuery>,
-) -> ApiResult<Json<ApiResponse<Vec<VoteData>>>> {
-    info!(execution_id = %execution_id, "Getting votes for execution");
+    Query(params): Query<PaginationParams>,
+    Query(vote_query): Query<VoteQuery>,
+) -> ApiResult<Json<ApiResponse<PaginatedResponse<Vote>>>> {
+    info!(
+        voter_wallet = ?vote_query.voter_wallet,
+        execution_id = ?vote_query.execution_id,
+        "Listing votes"
+    );
 
-    let page = query.page;
-    let page_size = query.limit;
+    let (votes, total) =
+        Vote::list(&state.db, params.page as i64, params.limit as i64, vote_query).await?;
 
-    let votes = VoteService::get_votes_for_execution(&state.db_pool, execution_id as i32, page as i32, page_size as i32).await?;
-
-    let response_votes = votes.into_iter().map(to_vote_data).collect();
-
-    Ok(Json(ApiResponse::success(response_votes)))
+    let response = PaginatedResponse::new(votes, params.page, params.limit, total as u64);
+    Ok(Json(ApiResponse::success(response)))
 }
-
-/// Check if a specific voter has voted on an execution
-pub async fn check_voter_voted(
-    State(state): State<Arc<AppState>>,
-    Path((execution_id, voter_wallet)): Path<(i64, String)>,
-) -> ApiResult<Json<ApiResponse<bool>>> {
-    info!(execution_id = %execution_id, voter = %voter_wallet, "Checking if voter has voted");
-
-    let has_voted = VoteService::has_voter_voted(&state.db_pool, execution_id as i32, &voter_wallet).await?;
-    Ok(Json(ApiResponse::success(has_voted)))
-} 

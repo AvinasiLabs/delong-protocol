@@ -248,11 +248,6 @@ impl KeyVault {
             cache.insert(cache_key, key.clone());
         }
         
-        info!(
-            dataset_hash = %context.dataset_hash,
-            "Derived and cached symmetric key"
-        );
-        
         Ok(key)
     }
 
@@ -267,11 +262,18 @@ impl KeyVault {
             }
         }
 
-        // Derive new key for Ethereum account
+        // Derive new key
         let raw_key = self.client.derive_key(context).await?;
 
-        let secret_key = SecretKey::from_slice(&raw_key)
-            .map_err(|e| common::ApiError::InternalError)?;
+        // Use HKDF to derive final key
+        let hkdf = Hkdf::<Sha256>::new(Some(context.salt()), &raw_key);
+        let mut key_bytes = [0u8; 32];
+        hkdf.expand(context.info(), &mut key_bytes)
+            .map_err(|_e| common::ApiError::InternalError)?;
+
+        // Create Secp256k1 key from bytes
+        let secret_key = SecretKey::from_slice(&key_bytes)
+            .map_err(|_e| common::ApiError::InternalError)?;
         
         let account = EthereumAccount::from_secret_key(secret_key);
 
@@ -281,74 +283,47 @@ impl KeyVault {
             cache.insert(cache_key, account.clone());
         }
         
-        info!(
-            dataset_hash = %context.dataset_hash,
-            address = %account.address,
-            "Derived and cached Ethereum account"
-        );
-        
         Ok(account)
     }
 
     pub fn clear_cache(&self) {
-        let mut sym_cache = self.symmetric_key_cache.write().unwrap();
-        let mut eth_cache = self.ethereum_cache.write().unwrap();
-        sym_cache.clear();
-        eth_cache.clear();
-        info!("Cleared key caches");
+        self.symmetric_key_cache.write().unwrap().clear();
+        self.ethereum_cache.write().unwrap().clear();
+        info!("KeyVault cache cleared");
     }
 
-    /// Get the number of cached symmetric keys
     pub fn cached_symmetric_keys_count(&self) -> usize {
         self.symmetric_key_cache.read().unwrap().len()
     }
 
-    /// Get the number of cached Ethereum accounts
     pub fn cached_ethereum_accounts_count(&self) -> usize {
         self.ethereum_cache.read().unwrap().len()
     }
 
-    /// Encrypt data using TEE-derived keys
     pub async fn encrypt_data(&self, data: &[u8], dataset_id: &str) -> ApiResult<EncryptedData> {
-        let context = KeyContext::new(
-            dataset_id.to_string(),
-            "system".to_string(), // Default author for system operations
-            "encryption".to_string(),
-        );
-
+        let context = KeyContext::new(dataset_id.to_string(), "system".to_string(), "encryption".to_string());
         let key = self.derive_symmetric_key(&context).await?;
         
-        let (ciphertext, nonce) = crate::tee::encryption::MockEncryption::encrypt(data, &key)?;
+        let nonce = encryption::generate_nonce();
+        let encrypted_data = encryption::aes_gcm_encrypt(data, &key, &nonce)?;
         
         Ok(EncryptedData {
-            encrypted_data: ciphertext,
+            encrypted_data,
             nonce,
             dataset_id: dataset_id.to_string(),
         })
     }
 
-    /// Decrypt data using TEE-derived keys
     pub async fn decrypt_data(&self, encrypted: &EncryptedData) -> ApiResult<Vec<u8>> {
-        let context = KeyContext::new(
-            encrypted.dataset_id.clone(),
-            "system".to_string(),
-            "encryption".to_string(),
-        );
-
+        let context = KeyContext::new(encrypted.dataset_id.clone(), "system".to_string(), "encryption".to_string());
         let key = self.derive_symmetric_key(&context).await?;
         
-        let plaintext = crate::tee::encryption::MockEncryption::decrypt(
-            &encrypted.encrypted_data,
-            &encrypted.nonce,
-            &key
-        )?;
-        
-        Ok(plaintext)
+        encryption::aes_gcm_decrypt(&encrypted.encrypted_data, &key, &encrypted.nonce)
     }
 }
 
-/// Encrypted data structure for KeyVault operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+
+#[derive(Serialize, Deserialize)]
 pub struct EncryptedData {
     pub encrypted_data: Vec<u8>,
     pub nonce: Vec<u8>,
@@ -361,56 +336,40 @@ mod tests {
 
     #[tokio::test]
     async fn test_key_context() {
-        let context = KeyContext::new(
-            "test_hash".to_string(),
-            "author123".to_string(),
-            "testing".to_string(),
-        );
-        
-        assert_eq!(context.dataset_hash, "test_hash");
+        let context = KeyContext::new("hash123".to_string(), "author123".to_string(), "purpose123".to_string());
+        assert_eq!(context.dataset_hash, "hash123");
         assert_eq!(context.author, "author123");
-        assert_eq!(context.purpose, "testing");
-        assert_eq!(context.cache_key(), "test_hash:author123:testing");
+        assert_eq!(context.purpose, "purpose123");
+        assert_eq!(context.cache_key(), "hash123:author123:purpose123");
+        assert_eq!(context.info(), b"delong-v1");
+        assert_eq!(context.salt(), b"delong-author123-purpose123");
     }
 
     #[tokio::test]
     async fn test_mock_key_vault() {
         let vault = KeyVault::new_with_client_kind(ClientKind::Mock);
+        assert_eq!(vault.client.client_kind(), ClientKind::Mock);
         
-        let context = KeyContext::new(
-            "test_dataset".to_string(),
-            "test_author".to_string(),
-            "encryption".to_string(),
-        );
+        let attestation = vault.verify_attestation().await.unwrap();
+        assert!(attestation);
+        assert!(vault.is_attestation_verified());
+
+        let context = KeyContext::new("hash1".to_string(), "author1".to_string(), "purpose1".to_string());
+        let key = vault.derive_symmetric_key(&context).await.unwrap();
+        assert_eq!(key.len(), 32);
         
-        // Test attestation
-        let verified = vault.verify_attestation().await.unwrap();
-        assert!(verified);
-        
-        // Test symmetric key derivation
-        let key1 = vault.derive_symmetric_key(&context).await.unwrap();
-        let key2 = vault.derive_symmetric_key(&context).await.unwrap();
-        assert_eq!(key1, key2); // Should be cached
-        assert_eq!(key1.len(), 32);
-        
-        // Test Ethereum account derivation
-        let account1 = vault.derive_ethereum_account(&context).await.unwrap();
-        let account2 = vault.derive_ethereum_account(&context).await.unwrap();
-        assert_eq!(account1.address, account2.address); // Should be cached
-        assert!(account1.address.starts_with("0x"));
+        let account = vault.derive_ethereum_account(&context).await.unwrap();
+        assert!(account.address.starts_with("0x"));
     }
 
     #[tokio::test]
     async fn test_phala_key_vault_requires_attestation() {
         let vault = KeyVault::new_with_client_kind(ClientKind::Phala);
+        assert_eq!(vault.client.client_kind(), ClientKind::Phala);
         
-        let context = KeyContext::new(
-            "test_dataset".to_string(),
-            "test_author".to_string(),
-            "encryption".to_string(),
-        );
+        let context = KeyContext::new("hash1".to_string(), "author1".to_string(), "purpose1".to_string());
         
-        // Should fail without attestation
+        // Should fail before attestation
         let result = vault.derive_symmetric_key(&context).await;
         assert!(result.is_err());
         
@@ -425,23 +384,16 @@ mod tests {
         let vault = KeyVault::new_with_client_kind(ClientKind::Mock);
         vault.verify_attestation().await.unwrap();
         
-        let context1 = KeyContext::new(
-            "dataset1".to_string(),
-            "author1".to_string(),
-            "encryption".to_string(),
-        );
-        
-        let context2 = KeyContext::new(
-            "dataset2".to_string(),
-            "author1".to_string(),
-            "encryption".to_string(),
-        );
-        
+        let context1 = KeyContext::new("hash1".to_string(), "author1".to_string(), "purpose1".to_string());
         let key1 = vault.derive_symmetric_key(&context1).await.unwrap();
+        let account1 = vault.derive_ethereum_account(&context1).await.unwrap();
+
+        let context2 = KeyContext::new("hash2".to_string(), "author1".to_string(), "purpose1".to_string());
         let key2 = vault.derive_symmetric_key(&context2).await.unwrap();
+        let account2 = vault.derive_ethereum_account(&context2).await.unwrap();
         
-        // Different contexts should produce different keys
         assert_ne!(key1, key2);
+        assert_ne!(account1.address, account2.address);
     }
 
     #[tokio::test]
@@ -449,21 +401,22 @@ mod tests {
         let vault = KeyVault::new_with_client_kind(ClientKind::Mock);
         vault.verify_attestation().await.unwrap();
         
-        let context = KeyContext::new(
-            "test_dataset".to_string(),
-            "test_author".to_string(),
-            "encryption".to_string(),
-        );
-        
-        // Initially no cached keys
         assert_eq!(vault.cached_symmetric_keys_count(), 0);
         assert_eq!(vault.cached_ethereum_accounts_count(), 0);
         
-        // Derive keys
-        vault.derive_symmetric_key(&context).await.unwrap();
-        vault.derive_ethereum_account(&context).await.unwrap();
+        let context = KeyContext::new("hash1".to_string(), "author1".to_string(), "purpose1".to_string());
         
-        // Should be cached
+        // First derivation should populate cache
+        let _ = vault.derive_symmetric_key(&context).await.unwrap();
+        let _ = vault.derive_ethereum_account(&context).await.unwrap();
+        
+        assert_eq!(vault.cached_symmetric_keys_count(), 1);
+        assert_eq!(vault.cached_ethereum_accounts_count(), 1);
+
+        // Second derivation should use cache (not easily testable without mocks, but counts should not change)
+        let _ = vault.derive_symmetric_key(&context).await.unwrap();
+        let _ = vault.derive_ethereum_account(&context).await.unwrap();
+
         assert_eq!(vault.cached_symmetric_keys_count(), 1);
         assert_eq!(vault.cached_ethereum_accounts_count(), 1);
         

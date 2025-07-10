@@ -1,93 +1,51 @@
-use anyhow::Result;
-use sqlx::PgPool;
-use std::sync::Arc;
-use tokio::signal;
-use tower::ServiceBuilder;
-use tower_http::trace::TraceLayer;
-use tracing::{info};
+//! DeLong Protocol Secure Service
+//!
+//! The secure service provides TEE-enabled functionality for the DeLong Protocol,
+//! including private data handling and secure algorithm execution.
 
-use secure::config::SecureConfig;
-use secure::create_router;
-use secure::services::blockchain_sync::BlockchainSyncService;
+use tracing::{error, info};
+use secure::{create_app, init, shutdown};
+use common::server::start_server;
 
 #[tokio::main]
-async fn main() -> Result<()> {
-    // Load environment variables from .env file if it exists
-    dotenvy::dotenv().ok();
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // init() in lib.rs handles env loading, config, and logging
+    let state = init().await?;
+    info!("Secure service initialized successfully");
     
-    // Initialize tracing
-    tracing_subscriber::fmt::init();
-    
-    info!("Starting DeLong Protocol Secure Service");
+    // Create the application router from the library
+    let app = create_app(state.clone());
+    info!("Router created successfully");
 
-    // Load configuration
-    let config = SecureConfig::from_env()
-        .expect("Failed to load configuration");
+    // Get server address from configuration
+    let addr = state.config.server.socket_addr()?;
+    info!("Secure service will listen on {}", addr);
 
-    // Initialize database connection
-    let db_pool = PgPool::connect(&config.database.url)
-        .await
-        .expect("Failed to connect to database");
-    
-    info!("Database connection established");
-
-    // Initialize blockchain sync service
-    let blockchain_sync_service = Arc::new(BlockchainSyncService::new().await?);
-    
-    // Start blockchain sync in background
-    blockchain_sync_service.start().await?;
-    info!("Blockchain sync service started");
-
-    // Create routes
-    let app = create_router(&config, db_pool, blockchain_sync_service.clone())
-        .layer(
-            ServiceBuilder::new()
-                .layer(TraceLayer::new_for_http())
-        );
-
-    // Start server
-    let listen_addr = format!("{}:{}", config.server.host, config.server.port);
-    info!("Starting server on {}", listen_addr);
-    
-    let listener = tokio::net::TcpListener::bind(&listen_addr)
-        .await
-        .expect("Failed to bind to address");
-
-    // Run the server with graceful shutdown
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .expect("Server failed to start");
-
-    // Stop blockchain sync service
-    blockchain_sync_service.stop().await?;
-    
-    info!("Secure service shutdown complete");
-    Ok(())
-}
-
-async fn shutdown_signal() {
-    let ctrl_c = async {
-        signal::ctrl_c()
+    // Set up graceful shutdown handler
+    let shutdown_state = state.clone();
+    let shutdown_handle = tokio::spawn(async move {
+        tokio::signal::ctrl_c()
             .await
-            .expect("failed to install Ctrl+C handler");
-    };
+            .expect("Failed to listen for shutdown signal");
 
-    #[cfg(unix)]
-    let terminate = async {
-        signal::unix::signal(signal::unix::SignalKind::terminate())
-            .expect("failed to install signal handler")
-            .recv()
-            .await;
-    };
+        info!("Shutdown signal received, performing graceful shutdown...");
 
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
+        if let Err(e) = shutdown(shutdown_state).await {
+            error!("Error during shutdown: {}", e);
+        }
+    });
 
+    // Start the server using the common utility
     tokio::select! {
-        _ = ctrl_c => {},
-        _ = terminate => {},
+        result = start_server(app, addr, "DeLong Secure") => {
+            if let Err(e) = result {
+                error!("Server failed: {}", e);
+            }
+        }
+        _ = shutdown_handle => {
+            info!("Shutdown completed");
+        }
     }
 
-    info!("Signal received, starting graceful shutdown");
+    Ok(())
 }

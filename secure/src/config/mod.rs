@@ -40,6 +40,7 @@ pub struct TeeConfig {
     pub client_type: String,
     pub master_key_path: String,
     pub attestation_required: bool,
+    pub key_vault_master_key_path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,6 +57,8 @@ pub struct BlockchainConfig {
     pub private_key: String,
     pub sync_interval_seconds: u64,
     pub sync_enabled: bool,
+    pub data_contribution_address: String,
+    pub algorithm_review_address: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -80,6 +83,7 @@ impl SecureConfig {
                 client_type: "mock".to_string(),
                 master_key_path: "/tmp/mock_master.key".to_string(),
                 attestation_required: false,
+                key_vault_master_key_path: "/tmp/key_vault_master.key".to_string(),
             },
             ipfs: IpfsConfig {
                 api_url: "http://localhost:5001".to_string(),
@@ -92,6 +96,8 @@ impl SecureConfig {
                 private_key: "0x0000000000000000000000000000000000000000000000000000000000000001".to_string(),
                 sync_interval_seconds: 60,
                 sync_enabled: false,
+                data_contribution_address: "0x5FbDB2315678afecb367f032d93F642f64180aa3".to_string(),
+                algorithm_review_address: "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512".to_string(),
             },
             auth: AuthConfig {
                 use_jwt: false,
@@ -125,6 +131,8 @@ impl SecureConfig {
                     .unwrap_or_else(|_| "true".to_string())
                     .parse()
                     .unwrap_or(true),
+                key_vault_master_key_path: env::var("KEY_VAULT_MASTER_KEY_PATH")
+                    .unwrap_or_else(|_| "/secure/key_vault.key".to_string()),
             },
             ipfs: IpfsConfig {
                 api_url: env::var("IPFS_API_URL")
@@ -148,6 +156,10 @@ impl SecureConfig {
                     .unwrap_or_else(|_| "true".to_string())
                     .parse()
                     .unwrap_or(true),
+                data_contribution_address: env::var("DATA_CONTRIBUTION_ADDRESS")
+                    .map_err(|_| ConfigError::MissingDataContributionAddress)?,
+                algorithm_review_address: env::var("ALGORITHM_REVIEW_ADDRESS")
+                    .map_err(|_| ConfigError::MissingAlgorithmReviewAddress)?,
             },
             auth: AuthConfig {
                 use_jwt: env::var("USE_JWT")
@@ -185,4 +197,8 @@ pub enum ConfigError {
     MissingPrivateKey,
     #[error("Invalid address format")]
     InvalidAddress,
+    #[error("Missing DATA_CONTRIBUTION_ADDRESS environment variable")]
+    MissingDataContributionAddress,
+    #[error("Missing ALGORITHM_REVIEW_ADDRESS environment variable")]
+    MissingAlgorithmReviewAddress,
 } 

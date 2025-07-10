@@ -1,106 +1,85 @@
-use axum::{
-    extract::{Path, Query, State},
-    Json,
-    Extension,
-};
-use std::sync::Arc;
-use tracing::info;
+//! Handlers for committee-related operations.
 
-use common::{
-    ApiResult, 
-    ApiResponse, 
-    AuthContext,
+use crate::{
+    app_state::AppState,
+    auth::check_admin,
     models::{
-        committee::{CommitteeMemberData, SetCommitteeMemberRequest, CommitteeStatsResponse},
-        pagination::{PaginatedResponse, PaginationParams},
-    }
+        blockchain::ENTITY_TYPE_COMMITTEE,
+        committee::{CommitteeMember, UpsertCommitteeMemberRequest},
+        BlockchainTransaction,
+    },
+    services::key_ctx::{KeyContext, KeyKind, KEY_CTX_TEE_CONTRACT_OWNER},
 };
-use crate::AppState;
-use crate::services::committee::{CommitteeService, CommitteeMember};
-use crate::middleware::jwt::require_admin;
+use axum::{
+    extract::{Query, State},
+    Json,
+};
+use common::{ApiResult, ApiResponse, PaginatedResponse, PaginationParams};
+use std::sync::Arc;
+use tracing::{error, info};
+use tracing::instrument;
 
-// Helper to convert service model to common model
-fn to_committee_member_data(member: CommitteeMember) -> CommitteeMemberData {
-    CommitteeMemberData {
-        id: member.id as u64,
-        member_wallet: member.wallet_address,
-        is_approved: member.is_active,
-        created_at: member.created_at.to_rfc3339(),
-        updated_at: member.updated_at.to_rfc3339(),
-    }
-}
-
-/// List all committee members
+/// List committee members with pagination and filtering
 pub async fn list_committee_members(
     State(state): State<Arc<AppState>>,
     Query(params): Query<PaginationParams>,
-) -> ApiResult<Json<ApiResponse<PaginatedResponse<CommitteeMemberData>>>> {
-    info!(page = %params.page, limit = %params.limit, "Listing committee members");
-
-    let paginated_result = CommitteeService::get_committee_members(&state.db_pool, params).await?;
-    
-    let items = paginated_result.items.into_iter().map(to_committee_member_data).collect();
-
-    let response = PaginatedResponse::new(
-        items,
-        paginated_result.page,
-        paginated_result.limit,
-        paginated_result.total_items,
+) -> ApiResult<Json<ApiResponse<PaginatedResponse<CommitteeMemberInfo>>>> {
+    info!(
+        page = params.page,
+        limit = params.limit,
+        "Listing committee members"
     );
-    
+
+    let (members, total) =
+        CommitteeMember::get_confirmed_paginated(&state.db, params.page as i64, params.limit as i64)
+            .await?;
+
+    let member_infos = members.into_iter().map(CommitteeMemberInfo::from).collect();
+    let response = PaginatedResponse::new(member_infos, params.page, params.limit, total as u64);
+
     Ok(Json(ApiResponse::success(response)))
 }
 
-/// Get a specific committee member by wallet address
-pub async fn get_committee_member(
-    State(state): State<Arc<AppState>>,
-    Path(wallet_address): Path<String>,
-) -> ApiResult<Json<ApiResponse<Option<CommitteeMemberData>>>> {
-    info!(wallet = %wallet_address, "Getting committee member");
-
-    let member_option = CommitteeService::get_committee_member_by_wallet(&state.db_pool, &wallet_address).await?;
-
-    Ok(Json(ApiResponse::success(member_option.map(to_committee_member_data))))
-}
-
-/// Add or update a committee member (requires admin privileges)
+#[instrument(skip(state, req), fields(member_wallet = %req.member_wallet, is_approved = %req.is_approved))]
 pub async fn upsert_committee_member(
     State(state): State<Arc<AppState>>,
-    Extension(auth_context): Extension<AuthContext>,
-    Json(request): Json<SetCommitteeMemberRequest>,
-) -> ApiResult<Json<ApiResponse<CommitteeMemberData>>> {
-    info!(wallet = %request.member_wallet, "Adding/updating committee member");
+    Json(req): Json<UpsertCommitteeMemberRequest>,
+) -> ApiResult<Json<ApiResponse<String>>> {
+    info!("Upserting committee member, aligning with Go logic");
 
-    require_admin(&auth_context)?;
+    // Perform authorization check
+    check_admin().await?;
 
-    let service_req = crate::services::committee::SetCommitteeMemberRequest {
-        wallet_address: request.member_wallet,
-        is_active: request.is_approved,
-    };
+    // The entire operation is a single logical unit, so we use a transaction.
+    let mut tx = state.db.begin().await?;
 
-    let member = CommitteeService::set_committee_member(&state.db_pool, service_req).await?;
-    
-    Ok(Json(ApiResponse::success(to_committee_member_data(member))))
-}
+    let member = CommitteeMember::upsert(&mut tx, &req.member_wallet, req.is_approved).await?;
 
-/// Get committee statistics
-pub async fn get_committee_stats(
-    State(state): State<Arc<AppState>>,
-) -> ApiResult<Json<ApiResponse<CommitteeStatsResponse>>> {
-    info!("Getting committee statistics");
+    // Call the smart contract
+    let key_context = KeyContext::new(
+        KeyKind::EthAccount,
+        KEY_CTX_TEE_CONTRACT_OWNER,
+        "Upserting a committee member",
+    );
+    let tx_hash = state
+        .ctr_caller_service
+        .upsert_committee_member(&req.member_wallet, req.is_approved, &key_context)
+        .await
+        .map_err(|e| {
+            tracing::error!("Contract caller error: {}", e);
+            common::ApiError::InternalError
+        })?;
 
-    let active_count = CommitteeService::get_active_member_count(&state.db_pool).await?;
-    let all_members = CommitteeService::get_committee_members(
-        &state.db_pool, 
-        PaginationParams { page: 1, limit: 10000 } // A bit of a hack to get all members
-    ).await?;
-    let total_count = all_members.total_items;
+    let args = serde_json::json!({
+        "member_wallet": req.member_wallet,
+        "is_approved": req.is_approved
+    });
 
-    let stats = CommitteeStatsResponse {
-        total_members: total_count as i64,
-        active_members: active_count,
-        inactive_members: total_count as i64 - active_count,
-    };
+    BlockchainTransaction::create(&mut tx, &tx_hash, member.id, ENTITY_TYPE_COMMITTEE, &args)
+        .await?;
 
-    Ok(Json(ApiResponse::success(stats)))
+    tx.commit().await?;
+
+    info!(tx_hash = %tx_hash, "Successfully upserted committee member");
+    Ok(Json(ApiResponse::success(tx_hash)))
 } 

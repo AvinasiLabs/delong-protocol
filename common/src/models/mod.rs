@@ -68,6 +68,7 @@ pub use auth::{
     ApiKeyInfo, ApiKeyListQuery, AuthContext, AuthConfig, AuthMethod, Claims, CreateApiKeyRequest,
     CreateApiKeyResponse, JwtClaims, JwtUtils, Permission, RateLimitTier, RevokeApiKeyRequest,
     RevokeApiKeyResponse, UserSession, ValidateApiKeyRequest, ValidateApiKeyResponse,
+    is_valid_api_key_format,
 };
 
 // Blockchain models

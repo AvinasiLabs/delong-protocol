@@ -132,6 +132,10 @@ pub enum CommonError {
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
 
+    #[cfg(feature = "database")]
+    #[error("Database error: {0}")]
+    Database(#[from] sqlx::Error),
+
     #[error("Time error: {0}")]
     Time(String),
 
@@ -140,6 +144,12 @@ pub enum CommonError {
 
     #[error("Internal error: {0}")]
     Internal(String),
+}
+
+impl From<ApiError> for CommonError {
+    fn from(err: ApiError) -> Self {
+        CommonError::Internal(err.to_string())
+    }
 }
 
 /// Standard API response codes following the project design
@@ -624,6 +634,12 @@ impl From<sqlx::Error> for ApiError {
             }
             _ => ApiError::DatabaseError("Database operation failed".to_string()),
         }
+    }
+}
+
+impl From<CommonError> for ApiError {
+    fn from(err: CommonError) -> Self {
+        ApiError::InternalError
     }
 }
 

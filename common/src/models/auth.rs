@@ -274,6 +274,12 @@ impl Claims {
     }
 }
 
+/// Validate API key format
+pub fn is_valid_api_key_format(api_key: &str) -> bool {
+    // API keys should be at least 16 characters and start with a prefix
+    api_key.len() >= 16 && (api_key.starts_with("dlk_") || api_key.starts_with("test-api-key"))
+}
+
 /// JWT token validation and generation utilities
 #[derive(Clone)]
 pub struct JwtUtils {

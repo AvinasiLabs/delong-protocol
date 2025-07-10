@@ -3,47 +3,114 @@
 //! This module handles algorithm execution requests, including submission to blockchain,
 //! tracking execution status, and managing algorithm metadata within the TEE environment.
 
-use axum::extract::{Path, Query, State};
-use axum::response::Json;
-use common::{
-    ApiError, ApiResponse, ApiResult, PaginationParams, PaginatedResponse,
+use crate::{
+    app_state::AppState,
     models::{
-        algo_exe::{AlgoExeData, AlgoExeSubmissionRequest, AlgoExeSubmissionResponse},
-    }
+        algo_exe::{
+            AlgoExe, AlgoExeWithAlgo, CreateAlgoExeRequest, SubmitAlgoExeRequest,
+            SubmitAlgoExeResponse,
+        },
+        algorithm::{Algorithm, CreateAlgorithmRequest},
+        blockchain::{BlockchainTransaction, ENTITY_TYPE_EXECUTION},
+    },
+    services::key_ctx::{KeyContext, KeyKind, KEY_CTX_TEE_CONTRACT_OWNER},
 };
+use axum::extract::{Path, Query, State};
+use axum::Json;
+use common::{ApiError, ApiResponse, ApiResult, PaginatedResponse, PaginationParams};
 use std::sync::Arc;
-use tracing::{info, error, instrument};
-
-use crate::AppState;
+use tracing::{error, info, instrument};
 
 /// Submit algorithm execution request
-/// 
+///
 /// This handler processes algorithm submission requests in the TEE environment.
 /// It validates the GitHub repository, uploads algorithm to IPFS, creates database records,
 /// and submits the transaction to the blockchain.
 #[instrument(skip(state, payload), fields(github_repo = %payload.github_repo, scientist_wallet = %payload.scientist_wallet))]
 pub async fn submit_algorithm_execution(
     State(state): State<Arc<AppState>>,
-    Json(payload): Json<AlgoExeSubmissionRequest>,
-) -> ApiResult<Json<ApiResponse<AlgoExeSubmissionResponse>>> {
-    info!("Processing algorithm execution submission");
+    Json(payload): Json<SubmitAlgoExeRequest>,
+) -> ApiResult<Json<ApiResponse<SubmitAlgoExeResponse>>> {
+    info!("Processing algorithm execution submission, aligning with Go logic");
 
-    validate_submission_request(&payload)?;
+    let (algo_link, repo_name) =
+        build_github_download_url(&payload.github_repo, &payload.commit_hash)
+            .map_err(|_| ApiError::BadRequest)?;
 
-    let (algo_link, repo_name) = build_github_download_url(&payload.github_repo, &payload.commit_hash)?;
+    // Step 1 & 2: Check if algorithm exists and determine its CID.
+    let (algorithm, algo_cid) = match Algorithm::get_by_link(&state.db, &algo_link).await? {
+        Some(existing_algo) => {
+            info!(algo_id = %existing_algo.id, "Found existing algorithm");
+            (existing_algo, existing_algo.cid.clone())
+        }
+        None => {
+            info!("Algorithm not found, creating a new one");
 
-    let algo_id = check_or_create_algorithm(&state, &algo_link, &repo_name).await?;
+            // In the Go reference, the code is downloaded and uploaded to IPFS.
+            // We simulate this process here.
+            let new_algo_cid = state.ipfs_service.upload_stream().await.map_err(|e| {
+                error!("IPFS service error: {}", e);
+                ApiError::InternalError
+            })?;
 
-    let execution_id = create_algorithm_execution(&state, algo_id, &payload).await?;
+            let create_algo_req = CreateAlgorithmRequest {
+                name: repo_name,
+                algo_link: algo_link.clone(),
+                cid: new_algo_cid.clone(),
+            };
+            let new_algo = Algorithm::create(&state.db, create_algo_req).await?;
+            info!(algo_id = %new_algo.id, "Created new algorithm record");
+            (new_algo, new_algo_cid)
+        }
+    };
 
-    let tx_hash = submit_to_blockchain(&state, execution_id, &payload).await?;
+    // Step 3: Start a transaction to create the execution and blockchain records.
+    let mut tx = state.db.begin().await?;
 
-    create_blockchain_transaction(&state, &tx_hash, execution_id).await?;
+    let create_exe_req = CreateAlgoExeRequest {
+        algo_id: algorithm.id,
+        used_dataset: payload.dataset.clone(),
+        scientist_wallet: payload.scientist_wallet.clone(),
+    };
 
-    info!(execution_id = execution_id, tx_hash = %tx_hash, "Algorithm execution submitted successfully");
+    let algo_exe = AlgoExe::create(&mut tx, create_exe_req).await?;
 
-    Ok(Json(ApiResponse::success(AlgoExeSubmissionResponse {
-        id: execution_id as u64,
+    // Step 4: Call the smart contract.
+    let key_context = KeyContext::new(
+        KeyKind::EthAccount,
+        KEY_CTX_TEE_CONTRACT_OWNER,
+        "Submitting an algorithm execution",
+    );
+    let tx_hash = state
+        .ctr_caller_service
+        .submit_algorithm_execution(
+            algo_exe.id,
+            &payload.scientist_wallet,
+            &algo_cid,
+            &payload.dataset,
+            &key_context,
+        )
+        .await
+        .map_err(|e| {
+            error!("Contract caller error: {}", e);
+            ApiError::InternalError
+        })?;
+
+    // Step 5: Create the blockchain transaction record.
+    let args = serde_json::json!({
+        "algo_id": algorithm.id,
+        "algo_cid": algo_cid,
+        "dataset": payload.dataset
+    });
+    BlockchainTransaction::create(&mut tx, &tx_hash, algo_exe.id, ENTITY_TYPE_EXECUTION, &args)
+        .await?;
+
+    // Step 6: Commit the transaction.
+    tx.commit().await?;
+
+    info!(tx_hash = %tx_hash, "Successfully submitted algorithm execution");
+    Ok(Json(ApiResponse::success(SubmitAlgoExeResponse {
+        id: algo_exe.id,
         tx_hash,
         status: "submitted".to_string(),
     })))
@@ -54,12 +121,12 @@ pub async fn submit_algorithm_execution(
 pub async fn list_executions(
     State(state): State<Arc<AppState>>,
     Query(params): Query<PaginationParams>,
-) -> ApiResult<Json<ApiResponse<PaginatedResponse<AlgoExeData>>>> {
+) -> ApiResult<Json<ApiResponse<PaginatedResponse<AlgoExeWithAlgo>>>> {
     info!("Listing algorithm executions");
-
-    let result = get_algorithm_executions_with_info(&state, params.page, params.limit).await?;
-    info!(total_items = result.total_items, "Algorithm executions retrieved successfully");
-    Ok(Json(ApiResponse::success(result)))
+    let (executions, total) =
+        AlgoExe::get_paginated(&state.db, params.page as i64, params.limit as i64).await?;
+    let response = PaginatedResponse::new(executions, params.page, params.limit, total as u64);
+    Ok(Json(ApiResponse::success(response)))
 }
 
 /// Get a specific execution by ID
@@ -67,138 +134,34 @@ pub async fn list_executions(
 pub async fn get_execution(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i64>,
-) -> ApiResult<Json<ApiResponse<AlgoExeData>>> {
+) -> ApiResult<Json<ApiResponse<AlgoExe>>> {
     info!("Getting algorithm execution by ID");
 
-    let execution = get_algorithm_execution_by_id(&state, id).await?
-        .ok_or_else(|| {
-            error!("Algorithm execution not found");
-            ApiError::NotFound
-        })?;
-    
+    let execution = AlgoExe::get_by_id(&state.db, id).await?.ok_or(ApiError::NotFound)?;
+
     info!("Algorithm execution retrieved successfully");
     Ok(Json(ApiResponse::success(execution)))
 }
 
-// Helper functions
-
-fn validate_submission_request(payload: &AlgoExeSubmissionRequest) -> ApiResult<()> {
-    if payload.github_repo.is_empty() {
-        return Err(ApiError::InvalidInput("GitHub repository URL is required".to_string()));
-    }
-    
-    if payload.commit_hash.is_empty() {
-        return Err(ApiError::InvalidInput("Commit hash is required".to_string()));
-    }
-    
-    if payload.scientist_wallet.is_empty() {
-        return Err(ApiError::InvalidInput("Scientist wallet address is required".to_string()));
-    }
-    
-    if payload.dataset.is_empty() {
-        return Err(ApiError::InvalidInput("Dataset identifier is required".to_string()));
-    }
-
-    if !payload.scientist_wallet.starts_with("0x") || payload.scientist_wallet.len() != 42 {
-        return Err(ApiError::InvalidInput("Invalid Ethereum wallet address format".to_string()));
-    }
-
-    Ok(())
-}
-
-fn build_github_download_url(repo_url: &str, commit_hash: &str) -> ApiResult<(String, String)> {
+fn build_github_download_url(repo_url: &str, commit_hash: &str) -> Result<(String, String), ()> {
     let repo_name = repo_url
         .trim_end_matches('/')
         .split('/')
         .last()
-        .ok_or_else(|| ApiError::InvalidInput("Invalid repository URL".to_string()))?
+        .ok_or(())?
         .replace(".git", "");
 
     let download_url = if repo_url.contains("github.com") {
-        format!("{}/archive/{}.zip", repo_url.trim_end_matches(".git"), commit_hash)
+        format!(
+            "{}/archive/{}.zip",
+            repo_url.trim_end_matches(".git"),
+            commit_hash
+        )
     } else {
-        return Err(ApiError::InvalidInput("Only GitHub repositories are supported".to_string()));
+        return Err(());
     };
 
     Ok((download_url, repo_name))
-}
-
-async fn check_or_create_algorithm(_state: &AppState, algo_link: &str, _repo_name: &str) -> ApiResult<i64> {
-    // TODO: Implement database check for existing algorithm
-    let algo_id = chrono::Utc::now().timestamp();
-    
-    info!(algo_id = algo_id, algo_link = %algo_link, "Algorithm processed");
-    Ok(algo_id)
-}
-
-async fn create_algorithm_execution(
-    _state: &AppState, 
-    algo_id: i64, 
-    payload: &AlgoExeSubmissionRequest
-) -> ApiResult<i64> {
-    // TODO: Implement database insertion
-    let execution_id = chrono::Utc::now().timestamp();
-    
-    info!(
-        execution_id = execution_id,
-        algo_id = algo_id,
-        scientist_wallet = %payload.scientist_wallet,
-        dataset = %payload.dataset,
-        "Algorithm execution record created"
-    );
-    
-    Ok(execution_id)
-}
-
-async fn submit_to_blockchain(
-    _state: &AppState,
-    execution_id: i64,
-    _payload: &AlgoExeSubmissionRequest,
-) -> ApiResult<String> {
-    // TODO: Implement actual blockchain submission
-    let tx_hash = format!("0x{:x}", chrono::Utc::now().timestamp());
-    
-    info!(
-        execution_id = execution_id,
-        tx_hash = %tx_hash,
-        "Submitted to blockchain (mock)"
-    );
-    
-    Ok(tx_hash)
-}
-
-async fn create_blockchain_transaction(
-    _state: &AppState,
-    tx_hash: &str,
-    entity_id: i64,
-) -> ApiResult<()> {
-    // TODO: Implement database insertion for blockchain transaction
-    info!(
-        tx_hash = %tx_hash,
-        entity_id = entity_id,
-        entity_type = "EXECUTION",
-        "Blockchain transaction record created"
-    );
-    
-    Ok(())
-}
-
-async fn get_algorithm_executions_with_info(
-    _state: &AppState,
-    page: u32,
-    limit: u32,
-) -> ApiResult<PaginatedResponse<AlgoExeData>> {
-    // TODO: Implement database query
-    let result = PaginatedResponse::new(vec![], page, limit, 0);
-    Ok(result)
-}
-
-async fn get_algorithm_execution_by_id(
-    _state: &AppState,
-    _id: i64,
-) -> ApiResult<Option<AlgoExeData>> {
-    // TODO: Implement database query
-    Ok(None)
 }
 
 #[cfg(test)]
@@ -206,32 +169,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_validate_submission_request() {
-        let valid_request = AlgoExeSubmissionRequest {
-            github_repo: "https://github.com/user/repo".to_string(),
-            commit_hash: "abc123".to_string(),
-            scientist_wallet: "0x1234567890123456789012345678901234567890".to_string(),
-            dataset: "dataset_001".to_string(),
-        };
-
-        assert!(validate_submission_request(&valid_request).is_ok());
-
-        // Test invalid wallet
-        let invalid_wallet = AlgoExeSubmissionRequest {
-            scientist_wallet: "invalid_wallet".to_string(),
-            ..valid_request.clone()
-        };
-        assert!(validate_submission_request(&invalid_wallet).is_err());
-    }
-
-    #[test]
     fn test_build_github_download_url() {
-        let (download_url, repo_name) = build_github_download_url(
-            "https://github.com/user/repo",
-            "abc123"
-        ).unwrap();
+        let (download_url, repo_name) =
+            build_github_download_url("https://github.com/user/repo", "abc123").unwrap();
 
-        assert_eq!(download_url, "https://github.com/user/repo/archive/abc123.zip");
+        assert_eq!(
+            download_url,
+            "https://github.com/user/repo/archive/abc123.zip"
+        );
         assert_eq!(repo_name, "repo");
     }
 } 
