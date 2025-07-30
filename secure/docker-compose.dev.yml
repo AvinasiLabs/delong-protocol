@@ -1,0 +1,103 @@
+services:
+  # PostgreSQL database for secure service development
+  postgres:
+    image: postgres:16-alpine
+    container_name: secure-postgres-dev
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: secure_user
+      POSTGRES_PASSWORD: secure_dev_password
+      POSTGRES_DB: secure_db
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U secure_user -d secure_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - secure-dev-network
+
+  # Redis for caching
+  redis:
+    image: redis:7-alpine
+    container_name: secure-redis-dev
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --requirepass secure_redis_dev_password
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - secure-dev-network
+
+  # Foundry for local Ethereum development
+  foundry:
+    image: ghcr.io/foundry-rs/foundry:latest
+    container_name: secure-foundry-dev
+    restart: unless-stopped
+    ports:
+      - "8545:8545" # HTTP and WebSocket RPC
+    command: >
+      anvil
+      --host 0.0.0.0
+      --port 8545
+      --ws
+      --ws-host 0.0.0.0
+      --ws-port 8545
+      --block-time 1
+      --accounts 10
+      --balance 10000
+      --mnemonic "test test test test test test test test test test test junk"
+    healthcheck:
+      test:
+        ["CMD", "cast", "block-number", "--rpc-url", "http://localhost:8545"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - secure-dev-network
+
+  # IPFS for decentralized storage
+  ipfs:
+    image: ipfs/kubo:latest
+    container_name: secure-ipfs-dev
+    restart: unless-stopped
+    ports:
+      - "5001:5001" # API port
+      - "8080:8080" # Gateway port
+      - "4001:4001" # Swarm port
+    environment:
+      IPFS_PROFILE: test
+    volumes:
+      - ipfs_data:/data/ipfs
+    command: ["daemon", "--migrate=true", "--enable-gc", "--routing=dhtclient"]
+    healthcheck:
+      test: ["CMD-SHELL", "ipfs version || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - secure-dev-network
+
+volumes:
+  postgres_data:
+    name: secure_postgres_data_dev
+  redis_data:
+    name: secure_redis_data_dev
+  ipfs_data:
+    name: secure_ipfs_data_dev
+
+networks:
+  secure-dev-network:
+    name: secure-dev-network
+    driver: bridge

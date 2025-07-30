@@ -26,6 +26,8 @@ target
 
 # NOTES
 notes
+prompt/
+RULES.md
 
 # Gateway monitoring stack
 # Keep configuration files, ignore runtime data

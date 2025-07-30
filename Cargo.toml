@@ -32,7 +32,7 @@ async-trait = { version = "0.1.88" }
 
 # Serialization
 serde = { version = "1.0.219" }
-serde_json = { version = "1.0.140" }
+serde_json = { version = "1.0.141" }
 serde_yaml = { version = "0.9" }
 
 # Error handling
