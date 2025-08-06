@@ -9,15 +9,20 @@ use crate::error::{DbErrorExt, Result};
 pub use super::pg_types::TransactionStatus;
 
 /// Entity type that the transaction is associated with
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "text", rename_all = "SCREAMING_SNAKE_CASE")]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum EntityType {
+    #[sqlx(rename = "STATIC_DATASET")]
     StaticDataset,
+    #[sqlx(rename = "EXECUTION")]
     Execution,
+    #[sqlx(rename = "DATAUSAGE")]
     DataUsage,
+    #[sqlx(rename = "VOTE")]
     Vote,
+    #[sqlx(rename = "COMMITTEE")]
     Committee,
-    TestReport,
 }
 
 impl EntityType {
@@ -28,7 +33,6 @@ impl EntityType {
             Self::DataUsage => "DATAUSAGE",
             Self::Vote => "VOTE",
             Self::Committee => "COMMITTEE",
-            Self::TestReport => "TEST_REPORT",
         }
     }
 
@@ -39,7 +43,6 @@ impl EntityType {
             "DATAUSAGE" => Some(Self::DataUsage),
             "VOTE" => Some(Self::Vote),
             "COMMITTEE" => Some(Self::Committee),
-            "TEST_REPORT" => Some(Self::TestReport),
             _ => None,
         }
     }
@@ -66,7 +69,7 @@ impl BlockchainTransaction {
         pool: &PgPool,
         tx_hash: &str,
         status: TransactionStatus,
-        block_number: Option<i64>,
+        block_number: Option<u64>,
         block_timestamp: Option<DateTime<Utc>>,
     ) -> Result<Self> {
         sqlx::query!(
@@ -76,7 +79,7 @@ impl BlockchainTransaction {
             WHERE tx_hash = $4
             "#,
             status as _,
-            block_number,
+            block_number.map(|n| n as i64),
             block_timestamp,
             tx_hash
         )
@@ -86,6 +89,95 @@ impl BlockchainTransaction {
         Self::find_by_tx_hash(pool, tx_hash)
             .await?
             .ok_or_else(|| crate::error::AppError::NotFound("Transaction not found".to_string()))
+    }
+
+    /// Create a new transaction with a specific status
+    pub async fn create_with_status(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        tx_hash: &str,
+        entity_id: i64,
+        entity_type: EntityType,
+        status: TransactionStatus,
+        block_number: Option<u64>,
+        block_timestamp: Option<DateTime<Utc>>,
+    ) -> Result<Self> {
+        let transaction = sqlx::query_as!(
+            BlockchainTransaction,
+            r#"
+            INSERT INTO blockchain_transactions (tx_hash, entity_id, entity_type, status, block_number, block_timestamp)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING id, tx_hash, entity_id,
+                     entity_type,
+                     status as "status: _",
+                     block_number, block_timestamp,
+                     created_at, updated_at
+            "#,
+            tx_hash,
+            entity_id,
+            entity_type.as_str(),
+            status as _,
+            block_number.map(|n| n as i64),
+            block_timestamp
+        )
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(|e| {
+            if let sqlx::Error::Database(ref db_err) = e {
+                if db_err.is_unique_violation() {
+                    return crate::error::AppError::Conflict(
+                        "Transaction with this hash already exists".to_string(),
+                    );
+                }
+            }
+            e.into()
+        })?;
+
+        Ok(transaction)
+    }
+
+    /// Create a new transaction with PENDING status
+    pub async fn create(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        tx_hash: String,
+        entity_id: i64,
+        entity_type: EntityType,
+        status: TransactionStatus,
+    ) -> Result<Self> {
+        Self::create_with_status(tx, &tx_hash, entity_id, entity_type, status, None, None).await
+    }
+
+    /// Update transaction status by entity
+    pub async fn update_status_by_entity(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        entity_id: i64,
+        entity_type: EntityType,
+        status: TransactionStatus,
+        block_number: Option<u64>,
+        block_time: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<()> {
+        let result = sqlx::query!(
+            r#"
+            UPDATE blockchain_transactions
+            SET status = $1, block_number = $2, block_timestamp = $3, updated_at = NOW()
+            WHERE entity_id = $4 AND entity_type = $5
+            "#,
+            status as _,
+            block_number.map(|n| n as i64),
+            block_time,
+            entity_id,
+            entity_type.as_str()
+        )
+        .execute(&mut **tx)
+        .await?;
+
+        if result.rows_affected() == 0 {
+            return Err(crate::error::AppError::NotFound(format!(
+                "BlockchainTransaction for entity_id {} and entity_type {:?} not found",
+                entity_id, entity_type
+            )));
+        }
+
+        Ok(())
     }
 
     /// Find transaction by hash
@@ -273,6 +365,22 @@ impl Create for BlockchainTransaction {
         .conflict_msg("Transaction with this hash already exists")?;
 
         Ok(tx)
+    }
+}
+
+impl Default for BlockchainTransaction {
+    fn default() -> Self {
+        Self {
+            id: 0,
+            tx_hash: String::new(),
+            entity_id: 0,
+            entity_type: EntityType::Execution.as_str().to_string(),
+            status: TransactionStatus::Pending,
+            block_number: None,
+            block_timestamp: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
     }
 }
 

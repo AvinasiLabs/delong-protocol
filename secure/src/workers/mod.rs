@@ -10,4 +10,5 @@ pub mod runtime;
 pub mod scheduler;
 
 // Re-export commonly used items
-pub use scheduler::{AlgoScheduler, SchedulerConfig, SchedulerEvent, SchedulerHandler};
+pub use chainsync::ChainSyncWorker;
+pub use scheduler::{AlgoScheduler, Scheduler, SchedulerConfig, SchedulerEvent, SchedulerHandler};

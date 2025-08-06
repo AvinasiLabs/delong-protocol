@@ -1,0 +1,125 @@
+services:
+  # PostgreSQL database for secure service development
+  postgres:
+    image: postgres:16-alpine
+    container_name: secure-postgres-dev
+    restart: unless-stopped
+    ports:
+      - "11001:5432"
+    environment:
+      POSTGRES_USER: secure_user
+      POSTGRES_PASSWORD: secure_dev_password
+      POSTGRES_DB: secure_db
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U secure_user -d secure_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - secure-dev-network
+
+  # Redis for caching
+  redis:
+    image: redis:7-alpine
+    container_name: secure-redis-dev
+    restart: unless-stopped
+    ports:
+      - "11002:6379"
+    command: redis-server --requirepass secure_redis_dev_password
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - secure-dev-network
+
+  anvil:
+    image: aztecprotocol/foundry:25f24e677a6a32a62512ad4f561995589ac2c7dc
+    container_name: secure-anvil-dev
+    command:
+      ["anvil", "--host", "0.0.0.0", "--port", "8545", "--chain-id", "31337"]
+    tmpfs:
+      - /data/anvil
+    ports:
+      - "11003:8545" # HTTP and WebSocket RPC
+    healthcheck:
+      test:
+        ["CMD", "cast", "block-number", "--rpc-url", "http://localhost:8545"]
+      timeout: 10s
+      retries: 3
+    networks:
+      - secure-dev-network
+
+  # IPFS for decentralized storage
+  ipfs:
+    image: ipfs/kubo:latest
+    container_name: secure-ipfs-dev
+    restart: unless-stopped
+    ports:
+      - "11004:5001" # API port
+      - "11005:8080" # Gateway port
+      - "11006:4001" # Swarm port
+    environment:
+      IPFS_PROFILE: test
+    volumes:
+      - ipfs_data:/data/ipfs
+    command: ["daemon", "--migrate=true", "--enable-gc", "--routing=dhtclient"]
+    healthcheck:
+      test: ["CMD-SHELL", "ipfs version || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - secure-dev-network
+
+  # DStack Simulator for TEE testing
+  dstack-simulator:
+    image: lilhammer/dstack-simulator:latest
+    container_name: secure-dstack-simulator-dev
+    restart: unless-stopped
+    ports:
+      - "11007:8090"
+    volumes:
+      - simulator_sockets:/app/sockets
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - RUST_LOG=debug
+    networks:
+      - secure-dev-network
+
+  # Data Pipeline service
+  delong-datapipe:
+    image: lilhammer/delong-pipeline:latest
+    container_name: secure-delong-datapipe-dev
+    restart: unless-stopped
+    ports:
+      - "11008:8018"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8018/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - secure-dev-network
+
+volumes:
+  postgres_data:
+    name: secure_postgres_data_dev
+  redis_data:
+    name: secure_redis_data_dev
+  ipfs_data:
+    name: secure_ipfs_data_dev
+  simulator_sockets:
+    name: secure_simulator_sockets_dev
+
+networks:
+  secure-dev-network:
+    name: secure-dev-network
+    driver: bridge

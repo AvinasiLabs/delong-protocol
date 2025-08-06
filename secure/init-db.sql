@@ -9,7 +9,7 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 DROP TABLE IF EXISTS test_results CASCADE;
 DROP TABLE IF EXISTS test_reports CASCADE;
 DROP TABLE IF EXISTS votes CASCADE;
-DROP TABLE IF EXISTS data_usages CASCADE;
+DROP TABLE IF EXISTS data_usage CASCADE;
 DROP TABLE IF EXISTS algo_exes CASCADE;
 DROP TABLE IF EXISTS algos CASCADE;
 DROP TABLE IF EXISTS static_datasets CASCADE;
@@ -129,7 +129,7 @@ COMMENT ON COLUMN contract_metas.name IS 'contract identifier, e.g. ''data_contr
 COMMENT ON COLUMN contract_metas.address IS 'contract address';
 
 -- Data usage table (matches datausage.go)
-CREATE TABLE IF NOT EXISTS data_usages (
+CREATE TABLE IF NOT EXISTS data_usage (
     id BIGSERIAL PRIMARY KEY,
     scientist_wallet VARCHAR(255) NOT NULL,
     cid VARCHAR(255) NOT NULL,
@@ -139,13 +139,13 @@ CREATE TABLE IF NOT EXISTS data_usages (
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_du_wallet ON data_usages(scientist_wallet);
-CREATE INDEX idx_du_cid ON data_usages(cid);
-CREATE INDEX idx_du_dataset ON data_usages(dataset);
-CREATE INDEX idx_used_at ON data_usages(used_at);
+CREATE INDEX idx_du_wallet ON data_usage(scientist_wallet);
+CREATE INDEX idx_du_cid ON data_usage(cid);
+CREATE INDEX idx_du_dataset ON data_usage(dataset);
+CREATE INDEX idx_used_at ON data_usage(used_at);
 
 -- Add comments
-COMMENT ON COLUMN data_usages.dataset IS 'Dataset name';
+COMMENT ON COLUMN data_usage.dataset IS 'Dataset name';
 
 -- Dynamic datasets table (matches dyn_dataset.go)
 CREATE TABLE IF NOT EXISTS dynamic_datasets (
@@ -267,7 +267,7 @@ CREATE TRIGGER update_blockchain_transactions_updated_at BEFORE UPDATE ON blockc
 CREATE TRIGGER update_committee_members_updated_at BEFORE UPDATE ON committee_members
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER update_data_usages_updated_at BEFORE UPDATE ON data_usages
+CREATE TRIGGER update_data_usage_updated_at BEFORE UPDATE ON data_usage
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 CREATE TRIGGER update_dynamic_datasets_updated_at BEFORE UPDATE ON dynamic_datasets

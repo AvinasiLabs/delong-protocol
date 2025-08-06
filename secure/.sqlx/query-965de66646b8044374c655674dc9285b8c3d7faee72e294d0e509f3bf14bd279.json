@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                UPDATE committee_members\n                SET is_approved = false\n                WHERE member_wallet = $1\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "965de66646b8044374c655674dc9285b8c3d7faee72e294d0e509f3bf14bd279"
+}

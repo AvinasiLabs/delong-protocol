@@ -1,358 +1,121 @@
-//! TEE (Trusted Execution Environment) key management and derivation
-//!
-//! This module provides secure key derivation and management functionality
-//! specifically designed for TEE environments. It supports Ethereum key
-//! generation and symmetric key derivation using HKDF.
+use super::tee_error::{TeeError, TeeResult};
+use dstack_sdk::dstack_client::DstackClient;
 
-use async_trait::async_trait;
-use ethers::{core::k256::ecdsa::SigningKey, prelude::*};
-use hkdf::Hkdf;
-use sha2::Sha256;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use thiserror::Error;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use tracing::{debug, info};
 
-/// Errors that can occur during TEE operations
-#[derive(Error, Debug)]
-pub enum TeeError {
-    #[error("TEE adapter error: {0}")]
-    AdapterError(String),
-
-    #[error("Key derivation failed: {0}")]
-    KeyDerivationFailed(String),
-
-    #[error("Invalid key type: {0}")]
-    InvalidKeyType(String),
-
-    #[error("Ethereum key generation failed: {0}")]
-    EthereumKeyError(String),
-
-    #[error("Cache error: {0}")]
-    CacheError(String),
-}
-
-/// Result type for TEE operations
-pub type Result<T> = std::result::Result<T, TeeError>;
-
-/// TEE client types
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ClientKind {
-    Dstack,
-    Tappd,
-}
-
-/// Ethereum account representation
+/// TEE service configuration
 #[derive(Debug, Clone)]
-pub struct EthereumAccount {
-    pub private_key: SigningKey,
-    pub address: Address,
+pub struct TeeConfig {
+    /// Endpoint for dstack service (Unix socket path or HTTP URL)
+    pub endpoint: Option<String>,
 }
 
-impl EthereumAccount {
-    /// Create a new Ethereum account from a private key
-    pub fn from_private_key(private_key: SigningKey) -> Self {
-        let wallet = LocalWallet::from(private_key.clone());
-        Self {
-            private_key,
-            address: wallet.address(),
-        }
-    }
-
-    /// Get the address as a hex string
-    pub fn address_hex(&self) -> String {
-        format!("{:?}", self.address)
+impl Default for TeeConfig {
+    fn default() -> Self {
+        Self { endpoint: None }
     }
 }
 
-/// TEE adapter trait for different TEE implementations
-#[async_trait]
-pub trait TeeAdapter: Send + Sync {
-    /// Derive a key from the TEE's root key
-    async fn derive_key(&self, context: &str, key_type: &str) -> Result<Vec<u8>>;
-
-    /// Get the TEE's attestation report
-    async fn get_attestation(&self) -> Result<Vec<u8>>;
-
-    /// Get the TEE type
-    fn client_kind(&self) -> ClientKind;
+/// TEE derived key with attestation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeeKey {
+    /// Private key in hex format
+    pub key: String,
+    /// Signature chain (certificate chain)
+    pub signature_chain: Vec<String>,
+    /// Key derivation path
+    pub path: String,
+    /// Key purpose
+    pub purpose: Option<String>,
 }
 
-/// Dstack TEE adapter implementation
-pub struct DstackAdapter {
-    // Implementation details would go here
+/// TEE service for secure operations
+pub struct TeeService {
+    client: Arc<DstackClient>,
 }
 
-impl DstackAdapter {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
-
-#[async_trait]
-impl TeeAdapter for DstackAdapter {
-    async fn derive_key(&self, context: &str, key_type: &str) -> Result<Vec<u8>> {
-        // TODO: Implement actual Dstack key derivation
-        // For now, return a dummy implementation
-        let mut key = vec![0u8; 32];
-        let input = format!("{}-{}", context, key_type);
-        let hk = Hkdf::<Sha256>::new(None, input.as_bytes());
-        hk.expand(b"dstack-key", &mut key)
-            .map_err(|e| TeeError::KeyDerivationFailed(e.to_string()))?;
-        Ok(key)
+impl TeeService {
+    /// Create a new TEE service instance
+    pub fn new(config: TeeConfig) -> Self {
+        let client = Arc::new(DstackClient::new(config.endpoint.as_deref()));
+        Self { client }
     }
 
-    async fn get_attestation(&self) -> Result<Vec<u8>> {
-        // TODO: Implement actual attestation
-        Ok(vec![])
+    /// Derive a key with attestation
+    pub async fn derive_key(&self, path: &str, purpose: Option<&str>) -> TeeResult<TeeKey> {
+        debug!("Deriving key for path: {}, purpose: {:?}", path, purpose);
+
+        let response = self
+            .client
+            .get_key(Some(path.to_string()), purpose.map(|p| p.to_string()))
+            .await
+            .map_err(|e| TeeError::key_derivation(path, Some(e.to_string())))?;
+
+        Ok(TeeKey {
+            key: response.key,
+            signature_chain: response.signature_chain,
+            path: path.to_string(),
+            purpose: purpose.map(|p| p.to_string()),
+        })
     }
 
-    fn client_kind(&self) -> ClientKind {
-        ClientKind::Dstack
-    }
-}
+    /// Emit an event to the TEE event log
+    pub async fn emit_event(&self, event_name: &str, payload: &[u8]) -> TeeResult<()> {
+        debug!("Emitting event: {}", event_name);
 
-/// Tappd TEE adapter implementation
-pub struct TappdAdapter {
-    // Implementation details would go here
-}
+        self.client
+            .emit_event(event_name.to_string(), payload.to_vec())
+            .await
+            .map_err(|e| TeeError::EventEmission {
+                event_name: event_name.to_string(),
+                reason: e.to_string(),
+            })?;
 
-impl TappdAdapter {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
-
-#[async_trait]
-impl TeeAdapter for TappdAdapter {
-    async fn derive_key(&self, context: &str, key_type: &str) -> Result<Vec<u8>> {
-        // TODO: Implement actual Tappd key derivation
-        let mut key = vec![0u8; 32];
-        let input = format!("{}-{}", context, key_type);
-        let hk = Hkdf::<Sha256>::new(None, input.as_bytes());
-        hk.expand(b"tappd-key", &mut key)
-            .map_err(|e| TeeError::KeyDerivationFailed(e.to_string()))?;
-        Ok(key)
-    }
-
-    async fn get_attestation(&self) -> Result<Vec<u8>> {
-        // TODO: Implement actual attestation
-        Ok(vec![])
-    }
-
-    fn client_kind(&self) -> ClientKind {
-        ClientKind::Tappd
-    }
-}
-
-/// Key vault for managing TEE-derived keys
-pub struct KeyVault {
-    adapter: Box<dyn TeeAdapter>,
-    eth_cache: Arc<Mutex<HashMap<String, EthereumAccount>>>,
-    symm_key_cache: Arc<Mutex<HashMap<String, Vec<u8>>>>,
-}
-
-impl KeyVault {
-    /// Create a new key vault with the specified adapter
-    pub fn new(adapter: Box<dyn TeeAdapter>) -> Self {
-        Self {
-            adapter,
-            eth_cache: Arc::new(Mutex::new(HashMap::new())),
-            symm_key_cache: Arc::new(Mutex::new(HashMap::new())),
-        }
-    }
-
-    /// Create a key vault from a client type
-    pub fn from_config(client_type: ClientKind) -> Self {
-        let adapter: Box<dyn TeeAdapter> = match client_type {
-            ClientKind::Dstack => Box::new(DstackAdapter::new()),
-            ClientKind::Tappd => Box::new(TappdAdapter::new()),
-        };
-        Self::new(adapter)
-    }
-
-    /// Get or derive an Ethereum account for the given context
-    pub async fn get_ethereum_account(&self, context: &str) -> Result<EthereumAccount> {
-        // Check cache first
-        {
-            let cache = self
-                .eth_cache
-                .lock()
-                .map_err(|e| TeeError::CacheError(e.to_string()))?;
-            if let Some(account) = cache.get(context) {
-                return Ok(account.clone());
-            }
-        }
-
-        // Derive new key
-        let key_bytes = self.adapter.derive_key(context, "ethereum").await?;
-
-        // Create signing key from bytes
-        let signing_key = SigningKey::from_slice(&key_bytes)
-            .map_err(|e| TeeError::EthereumKeyError(e.to_string()))?;
-
-        let account = EthereumAccount::from_private_key(signing_key);
-
-        // Cache the account
-        {
-            let mut cache = self
-                .eth_cache
-                .lock()
-                .map_err(|e| TeeError::CacheError(e.to_string()))?;
-            cache.insert(context.to_string(), account.clone());
-        }
-
-        Ok(account)
-    }
-
-    /// Get or derive a symmetric key for the given context
-    pub async fn get_symmetric_key(&self, context: &str) -> Result<Vec<u8>> {
-        // Check cache first
-        {
-            let cache = self
-                .symm_key_cache
-                .lock()
-                .map_err(|e| TeeError::CacheError(e.to_string()))?;
-            if let Some(key) = cache.get(context) {
-                return Ok(key.clone());
-            }
-        }
-
-        // Derive new key
-        let key = self.adapter.derive_key(context, "symmetric").await?;
-
-        // Cache the key
-        {
-            let mut cache = self
-                .symm_key_cache
-                .lock()
-                .map_err(|e| TeeError::CacheError(e.to_string()))?;
-            cache.insert(context.to_string(), key.clone());
-        }
-
-        Ok(key)
-    }
-
-    /// Derive a key using HKDF with custom salt and info
-    pub fn derive_key_hkdf(
-        &self,
-        ikm: &[u8],
-        salt: Option<&[u8]>,
-        info: &[u8],
-        length: usize,
-    ) -> Result<Vec<u8>> {
-        let mut okm = vec![0u8; length];
-        let hk = Hkdf::<Sha256>::new(salt, ikm);
-        hk.expand(info, &mut okm)
-            .map_err(|e| TeeError::KeyDerivationFailed(e.to_string()))?;
-        Ok(okm)
-    }
-
-    /// Get attestation report from TEE
-    pub async fn get_attestation(&self) -> Result<Vec<u8>> {
-        self.adapter.get_attestation().await
-    }
-
-    /// Clear all cached keys
-    pub fn clear_cache(&self) -> Result<()> {
-        {
-            let mut cache = self
-                .eth_cache
-                .lock()
-                .map_err(|e| TeeError::CacheError(e.to_string()))?;
-            cache.clear();
-        }
-        {
-            let mut cache = self
-                .symm_key_cache
-                .lock()
-                .map_err(|e| TeeError::CacheError(e.to_string()))?;
-            cache.clear();
-        }
+        info!("Event '{}' emitted successfully", event_name);
         Ok(())
     }
 }
 
-/// Key context builder for generating deterministic context strings
-pub struct KeyContext {
-    parts: Vec<String>,
+/// Builder for creating a TEE service with custom configuration
+pub struct TeeServiceBuilder {
+    config: TeeConfig,
 }
 
-impl KeyContext {
-    /// Create a new key context builder
+impl TeeServiceBuilder {
     pub fn new() -> Self {
-        Self { parts: Vec::new() }
+        Self {
+            config: TeeConfig::default(),
+        }
     }
 
-    /// Add a component to the context
-    pub fn with(mut self, component: &str) -> Self {
-        self.parts.push(component.to_string());
+    pub fn endpoint(mut self, endpoint: impl Into<String>) -> Self {
+        self.config.endpoint = Some(endpoint.into());
         self
     }
 
-    /// Add a typed component to the context
-    pub fn with_type(self, typ: &str, value: &str) -> Self {
-        self.with(&format!("{}:{}", typ, value))
-    }
-
-    /// Build the final context string
-    pub fn build(self) -> String {
-        self.parts.join("/")
+    pub fn build(self) -> TeeService {
+        TeeService::new(self.config)
     }
 }
 
-impl Default for KeyContext {
+impl Default for TeeServiceBuilder {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod test_helpers {
     use super::*;
 
-    #[tokio::test]
-    async fn test_key_vault_ethereum_account() {
-        let vault = KeyVault::from_config(ClientKind::Dstack);
+    /// Create a TeeService configured for testing with dstack simulator
+    pub fn create_test_tee_service() -> TeeService {
+        let endpoint = std::env::var("DSTACK_SIMULATOR_ENDPOINT").unwrap_or_else(|_| {
+            "/var/lib/docker/volumes/secure_simulator_sockets_dev/_data/dstack.sock".to_string()
+        });
 
-        let account1 = vault.get_ethereum_account("test-context").await.unwrap();
-        let account2 = vault.get_ethereum_account("test-context").await.unwrap();
-
-        // Should return the same account from cache
-        assert_eq!(account1.address, account2.address);
-    }
-
-    #[tokio::test]
-    async fn test_key_vault_symmetric_key() {
-        let vault = KeyVault::from_config(ClientKind::Tappd);
-
-        let key1 = vault.get_symmetric_key("test-key").await.unwrap();
-        let key2 = vault.get_symmetric_key("test-key").await.unwrap();
-
-        // Should return the same key from cache
-        assert_eq!(key1, key2);
-        assert_eq!(key1.len(), 32);
-    }
-
-    #[test]
-    fn test_key_context_builder() {
-        let context = KeyContext::new()
-            .with("delong")
-            .with_type("algo", "123")
-            .with_type("dataset", "456")
-            .build();
-
-        assert_eq!(context, "delong/algo:123/dataset:456");
-    }
-
-    #[test]
-    fn test_hkdf_key_derivation() {
-        let vault = KeyVault::from_config(ClientKind::Dstack);
-
-        let ikm = b"initial key material";
-        let salt = b"salt";
-        let info = b"info";
-
-        let key = vault.derive_key_hkdf(ikm, Some(salt), info, 32).unwrap();
-        assert_eq!(key.len(), 32);
+        TeeServiceBuilder::new().endpoint(endpoint).build()
     }
 }

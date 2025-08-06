@@ -11,8 +11,8 @@ CREATE TABLE IF NOT EXISTS algos (
     name VARCHAR(255) NOT NULL,
     algo_link VARCHAR(255) NOT NULL,
     cid VARCHAR(255) NOT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Create unique indexes for algos
@@ -30,15 +30,15 @@ CREATE TABLE IF NOT EXISTS algo_exes (
     used_dataset VARCHAR(255) NOT NULL,
     scientist_wallet VARCHAR(255) NOT NULL,
     review_status algo_review_status NOT NULL DEFAULT 'reviewing',
-    vote_start_time TIMESTAMP NULL,
-    vote_end_time TIMESTAMP NULL,
+    vote_start_time TIMESTAMPTZ NULL,
+    vote_end_time TIMESTAMPTZ NULL,
     status algo_exe_status NOT NULL DEFAULT 'queued',
-    start_time TIMESTAMP NULL,
-    end_time TIMESTAMP NULL,
+    start_time TIMESTAMPTZ NULL,
+    end_time TIMESTAMPTZ NULL,
     result TEXT NULL,
     error_msg TEXT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Create indexes for algo_exes
@@ -56,11 +56,18 @@ COMMENT ON COLUMN algo_exes.scientist_wallet IS 'Ethereum wallet address (0x...)
 CREATE TABLE IF NOT EXISTS static_datasets (
     id BIGSERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
+    ui_name VARCHAR(255) NOT NULL,
+    "desc" TEXT,
     file_hash VARCHAR(255) NOT NULL,
     ipfs_cid VARCHAR(255) NOT NULL,
+    file_size BIGINT NOT NULL,
+    file_format VARCHAR(255) NOT NULL,
+    author TEXT,
     author_wallet VARCHAR(255) NOT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    sample_url TEXT,
+    file_path TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Create unique indexes for static_datasets
@@ -75,8 +82,10 @@ CREATE TABLE IF NOT EXISTS blockchain_transactions (
     entity_id BIGINT NOT NULL,
     entity_type VARCHAR(50) NOT NULL,
     status transaction_status NOT NULL DEFAULT 'pending',
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    block_number BIGINT NULL,
+    block_timestamp TIMESTAMPTZ NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Create indexes for blockchain_transactions
@@ -84,79 +93,78 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_tx_hash ON blockchain_transactions(tx_hash
 CREATE INDEX IF NOT EXISTS idx_entity ON blockchain_transactions(entity_id, entity_type);
 CREATE INDEX IF NOT EXISTS idx_tx_status ON blockchain_transactions(status);
 CREATE INDEX IF NOT EXISTS idx_blockchain_transactions_created_at ON blockchain_transactions(created_at);
+CREATE INDEX IF NOT EXISTS idx_blockchain_transactions_block_number ON blockchain_transactions(block_number);
 
 -- Add comments for blockchain_transactions
-COMMENT ON COLUMN blockchain_transactions.entity_type IS 'static_dataset, execution, data_usage, vote';
+COMMENT ON COLUMN blockchain_transactions.entity_type IS 'static_dataset, execution, data_usage, vote, committee';
 
--- Create committees table (key-value store for committee configuration)
-CREATE TABLE IF NOT EXISTS committees (
-    id BIGSERIAL PRIMARY KEY,
-    key VARCHAR(255) NOT NULL,
-    value TEXT NOT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+-- Create committee_members table
+CREATE TABLE IF NOT EXISTS committee_members (
+    id SERIAL PRIMARY KEY,
+    member_wallet VARCHAR(255) NOT NULL,
+    is_approved BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- Create unique index for committees
-CREATE UNIQUE INDEX IF NOT EXISTS idx_key ON committees(key);
+-- Create unique index for committee_members
+CREATE UNIQUE INDEX IF NOT EXISTS idx_committee_member_wallet ON committee_members(member_wallet);
+CREATE INDEX IF NOT EXISTS idx_committee_members_created_at ON committee_members(created_at);
 
--- Create contracts table (smart contract metadata)
-CREATE TABLE IF NOT EXISTS contracts (
+-- Create contract_metas table (smart contract metadata)
+CREATE TABLE IF NOT EXISTS contract_metas (
     id BIGSERIAL PRIMARY KEY,
-    contract_type VARCHAR(50) NOT NULL,
+    name VARCHAR(255) NOT NULL,
     address VARCHAR(255) NOT NULL,
-    chain_id BIGINT NOT NULL,
-    deployed_at TIMESTAMP NOT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- Create indexes for contracts
-CREATE UNIQUE INDEX IF NOT EXISTS idx_address ON contracts(address);
-CREATE INDEX IF NOT EXISTS idx_contract_type_chain ON contracts(contract_type, chain_id);
-CREATE INDEX IF NOT EXISTS idx_deployed_at ON contracts(deployed_at);
+-- Create indexes for contract_metas
+CREATE UNIQUE INDEX IF NOT EXISTS idx_contract_name ON contract_metas(name);
+CREATE INDEX IF NOT EXISTS idx_contract_address ON contract_metas(address);
+CREATE INDEX IF NOT EXISTS idx_contract_metas_created_at ON contract_metas(created_at);
 
--- Add comments for contracts
-COMMENT ON COLUMN contracts.contract_type IS 'data_contribution, algorithm_review';
+-- Add comments for contract_metas
+COMMENT ON COLUMN contract_metas.name IS 'Contract identifier (data_contribution, algorithm_review, etc.)';
 
--- Create data_usages table
-CREATE TABLE IF NOT EXISTS data_usages (
+-- Create data_usage table
+CREATE TABLE IF NOT EXISTS data_usage (
     id BIGSERIAL PRIMARY KEY,
     scientist_wallet VARCHAR(255) NOT NULL,
     cid VARCHAR(255) NOT NULL,
     dataset VARCHAR(255) NOT NULL,
-    used_at TIMESTAMP NOT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    used_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- Create indexes for data_usages
-CREATE INDEX IF NOT EXISTS idx_data_usages_scientist_wallet ON data_usages(scientist_wallet);
-CREATE INDEX IF NOT EXISTS idx_data_usages_cid ON data_usages(cid);
-CREATE INDEX IF NOT EXISTS idx_data_usages_dataset ON data_usages(dataset);
-CREATE INDEX IF NOT EXISTS idx_used_at ON data_usages(used_at);
+-- Create indexes for data_usage
+CREATE INDEX IF NOT EXISTS idx_data_usage_scientist_wallet ON data_usage(scientist_wallet);
+CREATE INDEX IF NOT EXISTS idx_data_usage_cid ON data_usage(cid);
+CREATE INDEX IF NOT EXISTS idx_data_usage_dataset ON data_usage(dataset);
+CREATE INDEX IF NOT EXISTS idx_data_usage_used_at ON data_usage(used_at);
 
--- Add comments for data_usages
-COMMENT ON COLUMN data_usages.cid IS 'Algorithm CID';
+-- Add comments for data_usage
+COMMENT ON COLUMN data_usage.cid IS 'Algorithm CID';
 
 -- Create votes table
 CREATE TABLE IF NOT EXISTS votes (
     id BIGSERIAL PRIMARY KEY,
-    cid VARCHAR(255) NOT NULL,
-    member VARCHAR(255) NOT NULL,
-    approved BOOLEAN NOT NULL,
-    vote_time TIMESTAMP NOT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    algo_cid VARCHAR(255) NOT NULL,
+    voter VARCHAR(255) NOT NULL,
+    approve BOOLEAN NOT NULL,
+    voted_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Create indexes for votes
-CREATE UNIQUE INDEX IF NOT EXISTS idx_cid_member ON votes(cid, member);
-CREATE INDEX IF NOT EXISTS idx_vote_time ON votes(vote_time);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_algo_cid_voter ON votes(algo_cid, voter);
+CREATE INDEX IF NOT EXISTS idx_voted_at ON votes(voted_at);
 
 -- Add comments for votes
-COMMENT ON COLUMN votes.cid IS 'Algorithm CID';
-COMMENT ON COLUMN votes.member IS 'Committee member wallet address';
+COMMENT ON COLUMN votes.algo_cid IS 'Algorithm CID';
+COMMENT ON COLUMN votes.voter IS 'Committee member wallet address';
 
 -- Create datasets table (missing from original but referenced in handlers)
 CREATE TABLE IF NOT EXISTS datasets (
@@ -166,8 +174,8 @@ CREATE TABLE IF NOT EXISTS datasets (
     owner_address VARCHAR(255) NOT NULL,
     ipfs_hash VARCHAR(255) NOT NULL,
     size_bytes BIGINT NOT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Create indexes for datasets
@@ -198,13 +206,10 @@ CREATE TRIGGER update_static_datasets_updated_at BEFORE UPDATE ON static_dataset
 CREATE TRIGGER update_blockchain_transactions_updated_at BEFORE UPDATE ON blockchain_transactions
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER update_committees_updated_at BEFORE UPDATE ON committees
+CREATE TRIGGER update_committee_members_updated_at BEFORE UPDATE ON committee_members
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER update_contracts_updated_at BEFORE UPDATE ON contracts
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
-CREATE TRIGGER update_data_usages_updated_at BEFORE UPDATE ON data_usages
+CREATE TRIGGER update_data_usage_updated_at BEFORE UPDATE ON data_usage
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 CREATE TRIGGER update_votes_updated_at BEFORE UPDATE ON votes

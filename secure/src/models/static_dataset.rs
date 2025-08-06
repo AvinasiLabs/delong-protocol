@@ -4,7 +4,7 @@ use sqlx::{FromRow, PgPool};
 
 use super::blockchain_transaction::EntityType;
 use super::pg_types::TransactionStatus;
-use super::{Create, FindById, PaginatedResponse, PaginationParams, Timestamped};
+use super::{Create, FindById, Timestamped};
 use crate::error::{DbErrorExt, Result};
 
 /// Static dataset entity representing datasets stored in IPFS
@@ -66,8 +66,9 @@ impl StaticDataset {
     /// Find all static datasets with confirmed blockchain transactions
     pub async fn find_all_confirmed(
         pool: &PgPool,
-        pagination: PaginationParams,
-    ) -> Result<PaginatedResponse<Self>> {
+        page: u32,
+        per_page: u32,
+    ) -> Result<(Vec<Self>, u64)> {
         // Get total count
         let total = sqlx::query_scalar!(
             r#"
@@ -99,12 +100,12 @@ impl StaticDataset {
         let datasets = sqlx::query_as::<_, Self>(&query)
             .bind(TransactionStatus::Confirmed)
             .bind(EntityType::StaticDataset.as_str())
-            .bind(pagination.get_limit() as i64)
-            .bind(pagination.get_offset() as i64)
+            .bind(per_page as i64)
+            .bind(((page - 1) * per_page) as i64)
             .fetch_all(pool)
             .await?;
 
-        Ok(PaginatedResponse::new(datasets, &pagination, total as u64))
+        Ok((datasets, total as u64))
     }
 
     /// Find static dataset by file hash
@@ -222,7 +223,7 @@ impl StaticDataset {
             .await?;
 
         if result.rows_affected() == 0 {
-            return Err(crate::error::AppError::not_found(format!(
+            return Err(crate::error::AppError::NotFound(format!(
                 "Static dataset with id {} not found",
                 id
             )));

@@ -1,10 +1,11 @@
+use avinapi::{query::PaginationQuery, transport::response::PaginatedData};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, PgPool};
 
 use super::{
-    Create, FindById, PaginatedResponse, PaginationParams, Timestamped,
-    blockchain_transaction::EntityType, pg_types::TransactionStatus,
+    blockchain_transaction::{EntityType, TransactionStatus},
+    Create, FindById, Timestamped,
 };
 use crate::error::{DbErrorExt, Result};
 
@@ -45,8 +46,8 @@ impl CommitteeMember {
     /// Get confirmed committee members with pagination
     pub async fn get_confirmed_members(
         pool: &PgPool,
-        pagination: PaginationParams,
-    ) -> Result<PaginatedResponse<Self>> {
+        pagination: PaginationQuery,
+    ) -> Result<PaginatedData<Self>> {
         // Get total count
         let total = sqlx::query_scalar!(
             r#"
@@ -80,7 +81,12 @@ impl CommitteeMember {
         .fetch_all(pool)
         .await?;
 
-        Ok(PaginatedResponse::new(members, &pagination, total as u64))
+        Ok(PaginatedData {
+            items: members,
+            n_page: pagination.get_page(),
+            per_page: pagination.get_per_page(),
+            total: total as u64,
+        })
     }
 
     /// Get a confirmed committee member by ID

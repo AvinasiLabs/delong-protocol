@@ -1,0 +1,61 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO votes (algo_cid, voter, approve, voted_at)\n            VALUES ($1, $2, $3, $4)\n            RETURNING *\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "algo_cid",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "voter",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "approve",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 4,
+        "name": "voted_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 5,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Bool",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "8cd5dfad4f3536aa3092ad1c58250ecd839bb7221b8330519b917b708a87de68"
+}

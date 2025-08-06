@@ -3,7 +3,7 @@
 //! This module provides centralized database connection management for the secure service,
 //! including connection pool initialization, health checks, and migration support.
 
-use sqlx::{PgPool, postgres::PgPoolOptions};
+use sqlx::{postgres::PgPoolOptions, PgPool};
 use std::time::Duration;
 use tracing::{error, info, instrument};
 
@@ -13,7 +13,7 @@ use crate::config::DatabaseConfig;
 /// Database connection pool wrapper
 #[derive(Clone)]
 pub struct Database {
-    pool: PgPool,
+    pub pool: PgPool,
 }
 
 impl Database {
@@ -88,6 +88,12 @@ impl Database {
             max_connections: pool.options().get_max_connections(),
             min_connections: pool.options().get_min_connections(),
         }
+    }
+}
+
+impl AsRef<PgPool> for Database {
+    fn as_ref(&self) -> &PgPool {
+        &self.pool
     }
 }
 

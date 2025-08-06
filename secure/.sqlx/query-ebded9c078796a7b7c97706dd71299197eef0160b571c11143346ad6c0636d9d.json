@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE blockchain_transactions\n            SET status = $1, block_number = $2, block_timestamp = $3, updated_at = NOW()\n            WHERE entity_id = $4 AND entity_type = $5\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        {
+          "Custom": {
+            "name": "transaction_status",
+            "kind": {
+              "Enum": [
+                "pending",
+                "confirmed",
+                "failed"
+              ]
+            }
+          }
+        },
+        "Int8",
+        "Timestamptz",
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ebded9c078796a7b7c97706dd71299197eef0160b571c11143346ad6c0636d9d"
+}

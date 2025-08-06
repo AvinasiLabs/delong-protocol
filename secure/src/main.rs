@@ -1,20 +1,25 @@
 //! Secure TEE Service Entry Point
 //!
 //! This is the main entry point for the secure service that runs within the TEE environment.
-//! It provides the core DeLong protocol functionality including secure computation,
+//! It provides the core DeLong protocol functionality, including secure computation,
 //! data management, and blockchain synchronization.
 
-use anyhow::Result;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tokio::signal;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
 use secure::config::Config;
+use secure::infra::contracts::ContractCaller;
 use secure::infra::db::Database;
+// use secure::infra::tee::{ClientKind, KeyVault}; // TEE integration pending
+use secure::infra::notification::NotificationService;
+use secure::infra::ws::Hub;
+use secure::workers::ChainSyncWorker;
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize tracing
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -26,24 +31,52 @@ async fn main() -> Result<()> {
     info!("Starting DeLong Protocol Secure Service");
 
     // Load configuration from environment variables (supports .env file)
-    let config = secure::config::init_config()
-        .map_err(|e| anyhow::anyhow!("Failed to load configuration: {}", e))?;
+    let config = secure::config::init_config()?;
     info!("Configuration loaded successfully");
 
     // Initialize database
     let db = Database::new(&config.database).await?;
     info!("Database connection established");
 
+    // Initialize TEE key vault (temporarily disabled - TEE integration pending)
+    // let key_vault = Arc::new(KeyVault::from_config(ClientKind::Dstack));
+    // info!("TEE key vault initialized");
+
+    // Initialize contract infrastructure
+    let mut contract_caller = ContractCaller::new(config.chain.clone()).await?;
+
+    // Deploy or load contracts
+    info!("Ensuring contracts are deployed...");
+    contract_caller.ensure_contracts_deployed().await?;
+    info!("Contracts ready");
+
+    let contract_caller = Arc::new(contract_caller);
+
+    // Create WebSocket hub
+    let ws_hub = Arc::new(Hub::new());
+
     // Create cancellation token for graceful shutdown
     let shutdown_token = CancellationToken::new();
 
     // Start background tasks
-    let chainsync_handle = spawn_chainsync_task(db.clone(), config.clone(), shutdown_token.clone());
+    let chainsync_handle = spawn_chainsync_task(
+        db.clone(),
+        config.clone(),
+        contract_caller.clone(),
+        ws_hub.clone(),
+        shutdown_token.clone(),
+    );
 
-    let runtime_handle = spawn_runtime_task(db.clone(), config.clone(), shutdown_token.clone());
+    let runtime_handle = spawn_runtime_task(
+        db.clone(),
+        config.clone(),
+        contract_caller.clone(),
+        ws_hub.clone(),
+        shutdown_token.clone(),
+    );
 
     // Build the application
-    let app = secure::routes::create_app(db.clone(), config.clone()).await;
+    let app = secure::routes::create_app(db.clone(), config.clone(), ws_hub.clone()).await;
 
     // Create TCP listener
     let addr = SocketAddr::from(([0, 0, 0, 0], config.server.port));
@@ -71,36 +104,38 @@ async fn main() -> Result<()> {
 fn spawn_chainsync_task(
     db: Database,
     config: Config,
+    contract_caller: Arc<ContractCaller>,
+    ws_hub: Arc<Hub>,
     shutdown_token: CancellationToken,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        info!("Starting blockchain synchronization task");
+        info!("Starting blockchain synchronization service");
 
-        let mut interval =
-            tokio::time::interval(tokio::time::Duration::from_secs(config.chain.sync_interval));
+        // Note: ChainsyncService will coordinate with runtime through a database
+        // instead of direct scheduler access
+        let notification_service = Arc::new(NotificationService::new(ws_hub));
+        let chainsync_worker = Arc::new(ChainSyncWorker::new(
+            Arc::new(db),
+            Arc::new(config),
+            contract_caller,
+            notification_service,
+        ));
 
-        loop {
-            tokio::select! {
-                _ = interval.tick() => {
-                    match secure::workers::chainsync::sync_blockchain(&db, &config).await {
-                        Ok(synced_count) => {
-                            if synced_count > 0 {
-                                info!("Synchronized {} blockchain events", synced_count);
-                            }
-                        }
-                        Err(e) => {
-                            error!("Blockchain sync error: {}", e);
-                        }
-                    }
+        tokio::select! {
+            result = chainsync_worker.start() => {
+                match result {
+                    Ok(_) => info!("Chainsync service completed"),
+                    Err(e) => error!("Chainsync service error: {}", e),
                 }
-                _ = shutdown_token.cancelled() => {
-                    info!("Blockchain sync task received shutdown signal");
-                    break;
-                }
+            }
+            _ = shutdown_token.cancelled() => {
+                info!("Chainsync service received shutdown signal");
+                // ChainSyncWorker will stop when shutdown signal is received
+                info!("Stopping chainsync worker");
             }
         }
 
-        info!("Blockchain sync task stopped");
+        info!("Chainsync service stopped");
     })
 }
 
@@ -108,41 +143,31 @@ fn spawn_chainsync_task(
 fn spawn_runtime_task(
     db: Database,
     config: Config,
+    contract_caller: Arc<ContractCaller>,
+    ws_hub: Arc<Hub>,
     shutdown_token: CancellationToken,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        info!("Starting algorithm runtime task");
+        info!("Starting algorithm runtime worker");
 
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(
-            config.runtime.poll_interval,
-        ));
-
-        loop {
-            tokio::select! {
-                _ = interval.tick() => {
-                    match secure::workers::runtime::process_pending_executions(&db, &config).await {
-                        Ok(processed_count) => {
-                            if processed_count > 0 {
-                                info!("Processed {} algorithm executions", processed_count);
-                            }
-                        }
-                        Err(e) => {
-                            error!("Algorithm runtime error: {}", e);
-                        }
-                    }
+        // Start the runtime worker with proper error handling
+        tokio::select! {
+            result = secure::workers::runtime::start_runtime_worker(db, config, contract_caller, ws_hub) => {
+                match result {
+                    Ok(_) => info!("Algorithm runtime worker completed"),
+                    Err(e) => error!("Algorithm runtime worker error: {}", e),
                 }
-                _ = shutdown_token.cancelled() => {
-                    info!("Algorithm runtime task received shutdown signal");
-                    break;
-                }
+            }
+            _ = shutdown_token.cancelled() => {
+                info!("Algorithm runtime worker received shutdown signal");
             }
         }
 
-        info!("Algorithm runtime task stopped");
+        info!("Algorithm runtime worker stopped");
     })
 }
 
-/// Create shutdown signal handler
+/// Create a shutdown signal handler
 async fn shutdown_signal(shutdown_token: CancellationToken) {
     let ctrl_c = async {
         signal::ctrl_c()

@@ -1,7 +1,7 @@
 //! Error handling module that uses avinapi for consistent error types.
 
-pub use avinapi::error::AppResult as Result;
-pub use avinapi::error::{AppError, AppResult};
+pub use avinapi::prelude::AppResult as Result;
+pub use avinapi::prelude::{AppError, AppResult};
 
 /// Extension trait for converting database errors with context
 pub trait DbErrorExt<T> {
@@ -15,8 +15,8 @@ pub trait DbErrorExt<T> {
 impl<T> DbErrorExt<T> for std::result::Result<T, sqlx::Error> {
     fn not_found_msg(self, entity: &str) -> Result<T> {
         self.map_err(|e| match e {
-            sqlx::Error::RowNotFound => AppError::not_found(format!("{} not found", entity)),
-            _ => AppError::database(e.to_string()),
+            sqlx::Error::RowNotFound => AppError::NotFound(format!("{} not found", entity)),
+            _ => AppError::Database(e),
         })
     }
 
@@ -25,12 +25,12 @@ impl<T> DbErrorExt<T> for std::result::Result<T, sqlx::Error> {
             sqlx::Error::Database(db_err) => {
                 // MySQL error code 1062 is for duplicate entry
                 if db_err.code().map(|c| c == "1062").unwrap_or(false) {
-                    AppError::conflict(msg)
+                    AppError::Conflict(msg.to_string())
                 } else {
-                    AppError::database(e.to_string())
+                    AppError::Database(e)
                 }
             }
-            _ => AppError::database(e.to_string()),
+            _ => AppError::Database(e),
         })
     }
 }
@@ -41,28 +41,43 @@ mod tests {
 
     #[test]
     fn test_error_constructors() {
-        let error = AppError::validation("test message");
+        let error = AppError::Validation("test message".to_string());
         assert_eq!(format!("{}", error), "Validation error: test message");
 
-        let error = AppError::not_found("resource not found");
-        assert_eq!(format!("{}", error), "Not found: resource not found");
+        let error = AppError::NotFound("resource not found".to_string());
+        assert_eq!(
+            format!("{}", error),
+            "Resource not found: resource not found"
+        );
 
-        let error = AppError::internal("internal error");
-        assert_eq!(format!("{}", error), "Internal error: internal error");
+        let error = AppError::Internal("internal error".to_string());
+        assert_eq!(
+            format!("{}", error),
+            "Internal server error: internal error"
+        );
     }
 
     #[test]
     fn test_project_specific_errors() {
-        let error = AppError::ipfs("upload failed");
-        assert_eq!(format!("{}", error), "IPFS error: upload failed");
+        let error = AppError::Internal("ipfs upload failed".to_string());
+        assert_eq!(
+            format!("{}", error),
+            "Internal server error: ipfs upload failed"
+        );
 
-        let error = AppError::blockchain("transaction failed");
-        assert_eq!(format!("{}", error), "Blockchain error: transaction failed");
+        let error = AppError::Internal("blockchain transaction failed".to_string());
+        assert_eq!(
+            format!("{}", error),
+            "Internal server error: blockchain transaction failed"
+        );
 
-        let error = AppError::tee("enclave error");
-        assert_eq!(format!("{}", error), "TEE error: enclave error");
+        let error = AppError::Internal("tee enclave error".to_string());
+        assert_eq!(
+            format!("{}", error),
+            "Internal server error: tee enclave error"
+        );
 
-        let error = AppError::configuration("missing config");
+        let error = AppError::Config("missing config".to_string());
         assert_eq!(format!("{}", error), "Configuration error: missing config");
     }
 }

@@ -1,9 +1,10 @@
+use avinapi::prelude::AppResult as Result;
+use avinapi::{query::PaginationQuery, transport::response::PaginatedData};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, PgPool};
 
-use super::{Create, FindById, PaginatedResponse, PaginationParams, Timestamped};
-use crate::error::Result;
+use super::{Create, FindById, Timestamped};
 
 /// Vote entity - represents a committee member's vote on an algorithm
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -35,6 +36,40 @@ impl Vote {
         Ok(votes)
     }
 
+    /// Find votes by algorithm CID with pagination
+    pub async fn find_by_algo_cid_paginated(
+        pool: &PgPool,
+        algo_cid: &str,
+        page: u32,
+        per_page: u32,
+    ) -> Result<(Vec<Self>, u64)> {
+        // Get total count
+        let total = sqlx::query_scalar!(
+            "SELECT COUNT(*) as \"count!\" FROM votes WHERE algo_cid = $1",
+            algo_cid
+        )
+        .fetch_one(pool)
+        .await?;
+
+        // Get paginated results
+        let votes = sqlx::query_as!(
+            Vote,
+            r#"
+            SELECT * FROM votes
+            WHERE algo_cid = $1
+            ORDER BY voted_at DESC
+            LIMIT $2 OFFSET $3
+            "#,
+            algo_cid,
+            per_page as i64,
+            ((page - 1) * per_page) as i64
+        )
+        .fetch_all(pool)
+        .await?;
+
+        Ok((votes, total as u64))
+    }
+
     /// Count votes for a specific algorithm CID
     pub async fn count_by_algo_cid(pool: &PgPool, algo_cid: &str) -> Result<(i64, i64)> {
         let result = sqlx::query!(
@@ -60,8 +95,8 @@ impl Vote {
     pub async fn find_by_voter_paginated(
         pool: &PgPool,
         voter: &str,
-        pagination: PaginationParams,
-    ) -> Result<PaginatedResponse<Self>> {
+        pagination: PaginationQuery,
+    ) -> Result<PaginatedData<Self>> {
         // Get total count
         let total = sqlx::query_scalar!(
             "SELECT COUNT(*) as \"count!\" FROM votes WHERE voter = $1",
@@ -86,10 +121,15 @@ impl Vote {
         .fetch_all(pool)
         .await?;
 
-        Ok(PaginatedResponse::new(votes, &pagination, total as u64))
+        Ok(PaginatedData {
+            items: votes,
+            n_page: pagination.get_page(),
+            per_page: pagination.get_per_page(),
+            total: total as u64,
+        })
     }
 
-    /// Find vote by algo_cid and voter (unique combination)
+    /// Find a vote by algo_cid and voter (unique combination)
     pub async fn find_by_algo_cid_and_voter(
         pool: &PgPool,
         algo_cid: &str,
@@ -125,8 +165,8 @@ impl Vote {
         pool: &PgPool,
         start_time: DateTime<Utc>,
         end_time: DateTime<Utc>,
-        pagination: PaginationParams,
-    ) -> Result<PaginatedResponse<Self>> {
+        pagination: PaginationQuery,
+    ) -> Result<PaginatedData<Self>> {
         // Get total count
         let total = sqlx::query_scalar!(
             "SELECT COUNT(*) as \"count!\" FROM votes WHERE voted_at BETWEEN $1 AND $2",
@@ -153,7 +193,38 @@ impl Vote {
         .fetch_all(pool)
         .await?;
 
-        Ok(PaginatedResponse::new(votes, &pagination, total as u64))
+        Ok(PaginatedData {
+            items: votes,
+            n_page: pagination.get_page(),
+            per_page: pagination.get_per_page(),
+            total: total as u64,
+        })
+    }
+
+    /// Create a new vote within a database transaction
+    pub async fn create(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        cid: &str,
+        member: &str,
+        approved: bool,
+        vote_time: DateTime<Utc>,
+    ) -> Result<Self> {
+        let vote = sqlx::query_as!(
+            Vote,
+            r#"
+            INSERT INTO votes (algo_cid, voter, approve, voted_at)
+            VALUES ($1, $2, $3, $4)
+            RETURNING *
+            "#,
+            cid,
+            member,
+            approved,
+            vote_time
+        )
+        .fetch_one(&mut **tx)
+        .await?;
+
+        Ok(vote)
     }
 }
 
