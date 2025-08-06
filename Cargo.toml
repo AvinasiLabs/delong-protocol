@@ -72,7 +72,7 @@ mime = { version = "0.3" }
 lettre = { version = "0.11", default-features = false }
 
 # Validation and configuration
-validator = { version = "0.18" }
+validator = { version = "0.20" }
 config = { version = "0.14" }
 
 # Environment and random utilities
@@ -94,6 +94,24 @@ opentelemetry_sdk = { version = "0.30.0" }
 utoipa = { version = "5.4.0", features = ["axum_extras", "chrono", "uuid"] }
 utoipa-swagger-ui = { version = "8.0.0", features = ["axum"] }
 utoipa-scalar = { version = "0.3.0", features = ["axum"] }
+
+# Blockchain - Alloy
+alloy = { version = "0.3", features = [
+    "full",
+    "node-bindings",
+    "rpc-client-ws",
+    "contract",
+    "signer-local",
+] }
+alloy-contract = { version = "0.3" }
+alloy-network = { version = "0.3" }
+alloy-primitives = { version = "0.7" }
+alloy-provider = { version = "0.3" }
+alloy-pubsub = { version = "0.3" }
+alloy-signer = { version = "0.3" }
+alloy-signer-local = { version = "0.3" }
+alloy-sol-types = { version = "0.7", features = ["json"] }
+alloy-transport = { version = "0.3" }
 
 [profile.dev]
 debug = true

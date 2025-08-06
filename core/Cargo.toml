@@ -101,15 +101,13 @@ utoipa = { workspace = true }
 utoipa-swagger-ui = { workspace = true }
 utoipa-scalar = { workspace = true }
 
-# Regular expressions
-regex = { workspace = true }
-
 # Random number generation
 rand = { workspace = true }
 
 # Decimal number handling
 bigdecimal = { workspace = true }
 num-traits = { workspace = true }
+regex.workspace = true
 
 [dev-dependencies]
 tokio-test = "0.4"
