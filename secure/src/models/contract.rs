@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, PgPool};
 
 use super::{Create, FindById, Timestamped};
-use crate::error::{DbErrorExt, Result};
+use crate::Result;
 
 /// Contract metadata entity - stores deployed contract addresses
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -17,7 +17,7 @@ pub struct ContractMeta {
 impl ContractMeta {
     /// Get contract address by name
     pub async fn get_contract_address(pool: &PgPool, name: &str) -> Result<Option<String>> {
-        let result = sqlx::query!("SELECT address FROM contract_metas WHERE name = $1", name)
+        let result = sqlx::query!("SELECT address FROM contract_meta WHERE name = $1", name)
             .fetch_optional(pool)
             .await?;
 
@@ -29,7 +29,7 @@ impl ContractMeta {
         let contracts = sqlx::query_as!(
             ContractMeta,
             r#"
-            SELECT * FROM contract_metas
+            SELECT * FROM contract_meta
             ORDER BY created_at DESC
             "#
         )
@@ -44,7 +44,7 @@ impl ContractMeta {
         let contract = sqlx::query_as!(
             ContractMeta,
             r#"
-            INSERT INTO contract_metas (name, address)
+            INSERT INTO contract_meta (name, address)
             VALUES ($1, $2)
             RETURNING *
             "#,
@@ -52,8 +52,7 @@ impl ContractMeta {
             address
         )
         .fetch_one(pool)
-        .await
-        .conflict_msg("Contract with this name already exists")?;
+        .await?;
 
         Ok(contract)
     }
@@ -62,7 +61,7 @@ impl ContractMeta {
     pub async fn find_by_name(pool: &PgPool, name: &str) -> Result<Option<Self>> {
         let contract = sqlx::query_as!(
             ContractMeta,
-            "SELECT * FROM contract_metas WHERE name = $1",
+            "SELECT * FROM contract_meta WHERE name = $1",
             name
         )
         .fetch_optional(pool)
@@ -76,7 +75,7 @@ impl ContractMeta {
         let contract = sqlx::query_as!(
             ContractMeta,
             r#"
-            UPDATE contract_metas
+            UPDATE contract_meta
             SET address = $1
             WHERE name = $2
             RETURNING *
@@ -123,7 +122,7 @@ impl FindById for ContractMeta {
     async fn find_by_id(pool: &PgPool, id: i64) -> Result<Option<Self>> {
         let contract = sqlx::query_as!(
             ContractMeta,
-            "SELECT * FROM contract_metas WHERE id = $1",
+            "SELECT * FROM contract_meta WHERE id = $1",
             id
         )
         .fetch_optional(pool)

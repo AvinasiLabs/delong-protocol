@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, PgPool};
 
 use super::{Create, FindById, Timestamped};
-use crate::error::Result;
+use crate::Result;
 
 /// Data usage tracking entity
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]

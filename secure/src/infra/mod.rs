@@ -8,18 +8,19 @@ pub mod contracts;
 pub mod crypto;
 pub mod db;
 pub mod dstack_adapter;
-pub mod notification;
+pub mod notifier;
+
 pub mod tee;
 pub mod tee_error;
 pub mod tee_ethereum;
 pub mod tee_key_management;
-pub mod ws;
 
 // Re-export commonly used items for convenience
 pub use contracts::{ContractAddresses, ContractCaller, ContractError};
 pub use crypto::{decrypt, decrypt_hex_key, encrypt, encrypt_hex_key, CryptoError};
 pub use db::{Database, DatabaseError};
-pub use notification::{Notification, NotificationService};
+pub use notifier::Notifier;
+
 pub use tee::{TeeConfig, TeeKey, TeeService, TeeServiceBuilder};
 pub use tee_error::{TeeError, TeeResult};
 pub use tee_ethereum::{
@@ -31,4 +32,3 @@ pub use tee_key_management::{
     TeeKeyManagementServiceBuilder, KEY_CTX_DATA_ENCRYPT_PREFIX, KEY_CTX_TASK_ENCRYPT_PREFIX,
     KEY_CTX_UPLOAD_REPORT_ENCRYPT,
 };
-pub use ws::{BizCode, Hub, Notifier};

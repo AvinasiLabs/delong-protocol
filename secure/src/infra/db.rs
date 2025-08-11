@@ -48,6 +48,11 @@ impl Database {
         &self.pool
     }
 
+    /// Create a Database instance from an existing pool
+    pub fn from_pool(pool: PgPool) -> Self {
+        Self { pool }
+    }
+
     /// Check database connectivity
     #[instrument(skip(self))]
     pub async fn health_check(&self) -> Result<(), DatabaseError> {

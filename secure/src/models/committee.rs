@@ -7,7 +7,7 @@ use super::{
     blockchain_transaction::{EntityType, TransactionStatus},
     Create, FindById, Timestamped,
 };
-use crate::error::{DbErrorExt, Result};
+use crate::Result;
 
 /// Committee member entity
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -25,7 +25,7 @@ impl CommitteeMember {
         let member = sqlx::query_as!(
             CommitteeMember,
             r#"
-            INSERT INTO committee_members (member_wallet, is_approved)
+            INSERT INTO committee_member (member_wallet, is_approved)
             VALUES ($1, $2)
             ON CONFLICT (member_wallet)
             DO UPDATE SET
@@ -37,8 +37,7 @@ impl CommitteeMember {
             is_approved
         )
         .fetch_one(pool)
-        .await
-        .conflict_msg("Failed to upsert committee member")?;
+        .await?;
 
         Ok(member)
     }
@@ -52,8 +51,8 @@ impl CommitteeMember {
         let total = sqlx::query_scalar!(
             r#"
             SELECT COUNT(*) as "count!"
-            FROM committee_members
-            JOIN blockchain_transactions bt ON bt.entity_id = committee_members.id
+            FROM committee_member
+            JOIN blockchain_transaction bt ON bt.entity_id = committee_member.id
             WHERE bt.status = $1 AND bt.entity_type = $2
             "#,
             TransactionStatus::Confirmed as _,
@@ -66,11 +65,11 @@ impl CommitteeMember {
         let members = sqlx::query_as!(
             CommitteeMember,
             r#"
-            SELECT committee_members.*
-            FROM committee_members
-            JOIN blockchain_transactions bt ON bt.entity_id = committee_members.id
+            SELECT committee_member.*
+            FROM committee_member
+            JOIN blockchain_transaction bt ON bt.entity_id = committee_member.id
             WHERE bt.status = $1 AND bt.entity_type = $2
-            ORDER BY committee_members.created_at DESC
+            ORDER BY committee_member.created_at DESC
             LIMIT $3 OFFSET $4
             "#,
             TransactionStatus::Confirmed as _,
@@ -94,10 +93,10 @@ impl CommitteeMember {
         let member = sqlx::query_as!(
             CommitteeMember,
             r#"
-            SELECT committee_members.*
-            FROM committee_members
-            JOIN blockchain_transactions bt ON bt.entity_id = committee_members.id
-            WHERE bt.status = $1 AND bt.entity_type = $2 AND committee_members.id = $3
+            SELECT committee_member.*
+            FROM committee_member
+            JOIN blockchain_transaction bt ON bt.entity_id = committee_member.id
+            WHERE bt.status = $1 AND bt.entity_type = $2 AND committee_member.id = $3
             "#,
             TransactionStatus::Confirmed as _,
             EntityType::Committee.as_str(),
@@ -114,10 +113,10 @@ impl CommitteeMember {
         let member = sqlx::query_as!(
             CommitteeMember,
             r#"
-            SELECT committee_members.*
-            FROM committee_members
-            JOIN blockchain_transactions bt ON bt.entity_id = committee_members.id
-            WHERE bt.status = $1 AND bt.entity_type = $2 AND committee_members.member_wallet = $3
+            SELECT committee_member.*
+            FROM committee_member
+            JOIN blockchain_transaction bt ON bt.entity_id = committee_member.id
+            WHERE bt.status = $1 AND bt.entity_type = $2 AND committee_member.member_wallet = $3
             "#,
             TransactionStatus::Confirmed as _,
             EntityType::Committee.as_str(),
@@ -135,9 +134,9 @@ impl CommitteeMember {
             r#"
             SELECT EXISTS(
                 SELECT 1
-                FROM committee_members
-                JOIN blockchain_transactions bt ON bt.entity_id = committee_members.id
-                WHERE bt.status = $1 AND bt.entity_type = $2 AND committee_members.member_wallet = $3
+                FROM committee_member
+                JOIN blockchain_transaction bt ON bt.entity_id = committee_member.id
+                WHERE bt.status = $1 AND bt.entity_type = $2 AND committee_member.member_wallet = $3
             )
             "#,
             TransactionStatus::Confirmed as _,
@@ -155,7 +154,7 @@ impl CommitteeMember {
         let members = sqlx::query_as!(
             CommitteeMember,
             r#"
-            SELECT * FROM committee_members
+            SELECT * FROM committee_member
             WHERE is_approved = true
             ORDER BY created_at DESC
             "#
@@ -192,7 +191,7 @@ impl Create for CommitteeMember {
         let member = sqlx::query_as!(
             CommitteeMember,
             r#"
-            INSERT INTO committee_members (member_wallet, is_approved)
+            INSERT INTO committee_member (member_wallet, is_approved)
             VALUES ($1, $2)
             RETURNING *
             "#,
@@ -200,8 +199,7 @@ impl Create for CommitteeMember {
             request.is_approved
         )
         .fetch_one(pool)
-        .await
-        .conflict_msg("Committee member with this wallet already exists")?;
+        .await?;
 
         Ok(member)
     }
@@ -215,7 +213,7 @@ impl FindById for CommitteeMember {
 
         let member = sqlx::query_as!(
             CommitteeMember,
-            "SELECT * FROM committee_members WHERE id = $1",
+            "SELECT * FROM committee_member WHERE id = $1",
             id
         )
         .fetch_optional(pool)

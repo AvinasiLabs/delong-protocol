@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, PgPool};
 
 use super::{Create, FindById, Timestamped};
-use crate::error::{DbErrorExt, Result};
+use crate::{AppError, Result};
 
 // Re-export TransactionStatus for other modules
 pub use super::pg_types::TransactionStatus;
@@ -13,8 +13,8 @@ pub use super::pg_types::TransactionStatus;
 #[sqlx(type_name = "text", rename_all = "SCREAMING_SNAKE_CASE")]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum EntityType {
-    #[sqlx(rename = "STATIC_DATASET")]
-    StaticDataset,
+    #[sqlx(rename = "DATASET")]
+    Dataset,
     #[sqlx(rename = "EXECUTION")]
     Execution,
     #[sqlx(rename = "DATAUSAGE")]
@@ -28,7 +28,7 @@ pub enum EntityType {
 impl EntityType {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::StaticDataset => "STATIC_DATASET",
+            Self::Dataset => "DATASET",
             Self::Execution => "EXECUTION",
             Self::DataUsage => "DATAUSAGE",
             Self::Vote => "VOTE",
@@ -38,7 +38,8 @@ impl EntityType {
 
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
-            "STATIC_DATASET" => Some(Self::StaticDataset),
+            "DATASET" => Some(Self::Dataset),
+            "STATIC_DATASET" => Some(Self::Dataset), // For backward compatibility
             "EXECUTION" => Some(Self::Execution),
             "DATAUSAGE" => Some(Self::DataUsage),
             "VOTE" => Some(Self::Vote),
@@ -74,7 +75,7 @@ impl BlockchainTransaction {
     ) -> Result<Self> {
         sqlx::query!(
             r#"
-            UPDATE blockchain_transactions
+            UPDATE blockchain_transaction
             SET status = $1, block_number = $2, block_timestamp = $3, updated_at = NOW()
             WHERE tx_hash = $4
             "#,
@@ -88,7 +89,7 @@ impl BlockchainTransaction {
 
         Self::find_by_tx_hash(pool, tx_hash)
             .await?
-            .ok_or_else(|| crate::error::AppError::NotFound("Transaction not found".to_string()))
+            .ok_or_else(|| AppError::NotFound("Transaction not found".to_string()))
     }
 
     /// Create a new transaction with a specific status
@@ -104,7 +105,7 @@ impl BlockchainTransaction {
         let transaction = sqlx::query_as!(
             BlockchainTransaction,
             r#"
-            INSERT INTO blockchain_transactions (tx_hash, entity_id, entity_type, status, block_number, block_timestamp)
+            INSERT INTO blockchain_transaction (tx_hash, entity_id, entity_type, status, block_number, block_timestamp)
             VALUES ($1, $2, $3, $4, $5, $6)
             RETURNING id, tx_hash, entity_id,
                      entity_type,
@@ -124,7 +125,7 @@ impl BlockchainTransaction {
         .map_err(|e| {
             if let sqlx::Error::Database(ref db_err) = e {
                 if db_err.is_unique_violation() {
-                    return crate::error::AppError::Conflict(
+                    return AppError::Conflict(
                         "Transaction with this hash already exists".to_string(),
                     );
                 }
@@ -157,7 +158,7 @@ impl BlockchainTransaction {
     ) -> Result<()> {
         let result = sqlx::query!(
             r#"
-            UPDATE blockchain_transactions
+            UPDATE blockchain_transaction
             SET status = $1, block_number = $2, block_timestamp = $3, updated_at = NOW()
             WHERE entity_id = $4 AND entity_type = $5
             "#,
@@ -171,7 +172,7 @@ impl BlockchainTransaction {
         .await?;
 
         if result.rows_affected() == 0 {
-            return Err(crate::error::AppError::NotFound(format!(
+            return Err(AppError::NotFound(format!(
                 "BlockchainTransaction for entity_id {} and entity_type {:?} not found",
                 entity_id, entity_type
             )));
@@ -190,7 +191,7 @@ impl BlockchainTransaction {
                    status as "status: _",
                    block_number, block_timestamp,
                    created_at, updated_at
-            FROM blockchain_transactions
+            FROM blockchain_transaction
             WHERE tx_hash = $1
             "#,
             tx_hash
@@ -215,7 +216,7 @@ impl BlockchainTransaction {
                    status as "status: _",
                    block_number, block_timestamp,
                    created_at, updated_at
-            FROM blockchain_transactions
+            FROM blockchain_transaction
             WHERE entity_id = $1 AND entity_type = $2 AND status = $3
             ORDER BY created_at DESC
             "#,
@@ -239,7 +240,7 @@ impl BlockchainTransaction {
                    status as "status: _",
                    block_number, block_timestamp,
                    created_at, updated_at
-            FROM blockchain_transactions
+            FROM blockchain_transaction
             WHERE status = $1
             ORDER BY created_at ASC
             "#,
@@ -260,7 +261,7 @@ impl BlockchainTransaction {
         let count = sqlx::query_scalar!(
             r#"
             SELECT COUNT(*) as "count!"
-            FROM blockchain_transactions
+            FROM blockchain_transaction
             WHERE entity_id = $1 AND entity_type = $2 AND status = $3
             "#,
             entity_id,
@@ -309,7 +310,7 @@ impl CreateTransaction {
         let transaction = sqlx::query_as!(
             BlockchainTransaction,
             r#"
-            INSERT INTO blockchain_transactions (tx_hash, entity_id, entity_type, status)
+            INSERT INTO blockchain_transaction (tx_hash, entity_id, entity_type, status)
             VALUES ($1, $2, $3, $4)
             RETURNING id, tx_hash, entity_id,
                      entity_type,
@@ -327,7 +328,7 @@ impl CreateTransaction {
         .map_err(|e| {
             if let sqlx::Error::Database(ref db_err) = e {
                 if db_err.is_unique_violation() {
-                    return crate::error::AppError::Conflict(
+                    return AppError::Conflict(
                         "Transaction with this hash already exists".to_string(),
                     );
                 }
@@ -347,7 +348,7 @@ impl Create for BlockchainTransaction {
         let tx = sqlx::query_as!(
             BlockchainTransaction,
             r#"
-            INSERT INTO blockchain_transactions (tx_hash, entity_id, entity_type, status)
+            INSERT INTO blockchain_transaction (tx_hash, entity_id, entity_type, status)
             VALUES ($1, $2, $3, $4)
             RETURNING id, tx_hash, entity_id,
                      entity_type,
@@ -361,8 +362,7 @@ impl Create for BlockchainTransaction {
             TransactionStatus::Pending as _
         )
         .fetch_one(pool)
-        .await
-        .conflict_msg("Transaction with this hash already exists")?;
+        .await?;
 
         Ok(tx)
     }
@@ -395,7 +395,7 @@ impl FindById for BlockchainTransaction {
                    status as "status: _",
                    block_number, block_timestamp,
                    created_at, updated_at
-            FROM blockchain_transactions
+            FROM blockchain_transaction
             WHERE id = $1
             "#,
             id

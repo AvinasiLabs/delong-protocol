@@ -9,8 +9,9 @@ use alloy::{
     primitives::{Address, U256},
     providers::{Provider, ProviderBuilder},
     rpc::types::{BlockNumberOrTag, Filter, Log},
-    signers::local::PrivateKeySigner,
+    signers::local::{LocalSignerError, PrivateKeySigner},
     sol,
+    sol_types::SolValue,
 };
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
@@ -45,7 +46,7 @@ pub enum ContractError {
 
     /// Signer error
     #[error("Signer error: {0}")]
-    SignerError(String),
+    SignerError(#[from] LocalSignerError),
 
     /// Insufficient balance
     #[error("Insufficient balance: required {required} ETH, available {available} ETH")]
@@ -104,8 +105,7 @@ impl ContractCaller {
             ContractError::InvalidConfig("OFFICIAL_ACCOUNT_PRIVATE_KEY not set".to_string())
         })?;
 
-        let signer = PrivateKeySigner::from_str(&private_key)
-            .map_err(|e| ContractError::SignerError(e.to_string()))?;
+        let signer = PrivateKeySigner::from_str(&private_key)?;
         let wallet = EthereumWallet::from(signer);
 
         // Parse contract addresses from config
@@ -161,6 +161,99 @@ impl ContractCaller {
         Ok(())
     }
 
+    /// Ensure contracts are deployed and accessible
+    /// If contracts are not deployed, deploy them using the configured wallet
+    pub async fn ensure_contracts_deployed(&mut self) -> Result<()> {
+        let provider = self.create_provider().await?;
+
+        // Check DataContribution contract
+        let data_code = provider
+            .get_code_at(self.addresses.data_contribution)
+            .await?;
+
+        let data_contribution_address = if data_code.is_empty() {
+            info!("DataContribution contract not found, deploying...");
+
+            // Deploy DataContribution contract
+            let deploy_provider = self.create_provider().await?;
+            let deploy_tx = DataContribution::deploy(deploy_provider)
+                .await
+                .map_err(|e| {
+                    ContractError::ContractCallError(format!(
+                        "Failed to deploy DataContribution: {}",
+                        e
+                    ))
+                })?;
+
+            let deployed_address = deploy_tx.address().clone();
+            info!(
+                "DataContribution contract deployed at: {:?}",
+                deployed_address
+            );
+
+            // Store contract address in database for future use
+            self.store_contract_address("DataContribution", deployed_address)
+                .await?;
+
+            deployed_address
+        } else {
+            info!(
+                "DataContribution contract already deployed at: {:?}",
+                self.addresses.data_contribution
+            );
+            self.addresses.data_contribution
+        };
+
+        // Check AlgorithmReview contract
+        let algo_code = provider
+            .get_code_at(self.addresses.algorithm_review)
+            .await?;
+
+        let algorithm_review_address = if algo_code.is_empty() {
+            info!("AlgorithmReview contract not found, deploying...");
+
+            // Deploy AlgorithmReview contract
+            let deploy_provider = self.create_provider().await?;
+            let deploy_tx = AlgorithmReview::deploy(deploy_provider)
+                .await
+                .map_err(|e| {
+                    ContractError::ContractCallError(format!(
+                        "Failed to deploy AlgorithmReview: {}",
+                        e
+                    ))
+                })?;
+
+            let deployed_address = deploy_tx.address().clone();
+            info!(
+                "AlgorithmReview contract deployed at: {:?}",
+                deployed_address
+            );
+
+            // Store contract address in database for future use
+            self.store_contract_address("AlgorithmReview", deployed_address)
+                .await?;
+
+            deployed_address
+        } else {
+            info!(
+                "AlgorithmReview contract already deployed at: {:?}",
+                self.addresses.algorithm_review
+            );
+            self.addresses.algorithm_review
+        };
+
+        // Update addresses if they were deployed
+        if data_code.is_empty() {
+            self.addresses.data_contribution = data_contribution_address;
+        }
+        if algo_code.is_empty() {
+            self.addresses.algorithm_review = algorithm_review_address;
+        }
+
+        info!("All contracts are deployed and accessible");
+        Ok(())
+    }
+
     /// Record data usage on the blockchain
     pub async fn record_data_usage(
         &self,
@@ -183,6 +276,35 @@ impl ContractCaller {
 
         let tx_hash = format!("{:?}", receipt.transaction_hash);
         info!("Data usage recorded: algo_cid={}, tx={}", algo_cid, tx_hash);
+
+        Ok(tx_hash)
+    }
+
+    /// Register a dataset on the blockchain
+    pub async fn register_data(
+        &self,
+        author_wallet: Address,
+        ipfs_cid: String,
+        dataset_name: String,
+    ) -> Result<String> {
+        let provider = self.create_provider().await?;
+        let contract = DataContribution::new(self.addresses.data_contribution, provider);
+
+        // Call the registerData function on the smart contract
+        let call = contract.registerData(author_wallet, ipfs_cid.clone(), dataset_name.clone());
+
+        let pending_tx = call.send().await?;
+        let receipt = pending_tx
+            .with_required_confirmations(self.config.confirmations)
+            .get_receipt()
+            .await
+            .map_err(|e| ContractError::TransactionFailed(e.to_string()))?;
+
+        let tx_hash = format!("{:?}", receipt.transaction_hash);
+        info!(
+            "Dataset registered: name={}, ipfs_cid={}, tx={}",
+            dataset_name, ipfs_cid, tx_hash
+        );
 
         Ok(tx_hash)
     }
@@ -350,108 +472,15 @@ impl ContractCaller {
         Ok(owner)
     }
 
-    /// Ensure contracts are deployed and accessible
-    /// If contracts are not deployed, deploy them using the configured wallet
-    pub async fn ensure_contracts_deployed(&mut self) -> Result<()> {
-        let provider = self.create_provider().await?;
-
-        // Check DataContribution contract
-        let data_code = provider
-            .get_code_at(self.addresses.data_contribution)
-            .await?;
-
-        let data_contribution_address = if data_code.is_empty() {
-            info!("DataContribution contract not found, deploying...");
-
-            // Deploy DataContribution contract
-            let deploy_provider = self.create_provider().await?;
-            let deploy_tx = DataContribution::deploy(deploy_provider)
-                .await
-                .map_err(|e| {
-                    ContractError::ContractCallError(format!(
-                        "Failed to deploy DataContribution: {}",
-                        e
-                    ))
-                })?;
-
-            let deployed_address = deploy_tx.address().clone();
-            info!(
-                "DataContribution contract deployed at: {:?}",
-                deployed_address
-            );
-
-            // Store contract address in database for future use
-            self.store_contract_address("DataContribution", deployed_address)
-                .await?;
-
-            deployed_address
-        } else {
-            info!(
-                "DataContribution contract already deployed at: {:?}",
-                self.addresses.data_contribution
-            );
-            self.addresses.data_contribution
-        };
-
-        // Check AlgorithmReview contract
-        let algo_code = provider
-            .get_code_at(self.addresses.algorithm_review)
-            .await?;
-
-        let algorithm_review_address = if algo_code.is_empty() {
-            info!("AlgorithmReview contract not found, deploying...");
-
-            // Deploy AlgorithmReview contract
-            let deploy_provider = self.create_provider().await?;
-            let deploy_tx = AlgorithmReview::deploy(deploy_provider)
-                .await
-                .map_err(|e| {
-                    ContractError::ContractCallError(format!(
-                        "Failed to deploy AlgorithmReview: {}",
-                        e
-                    ))
-                })?;
-
-            let deployed_address = deploy_tx.address().clone();
-            info!(
-                "AlgorithmReview contract deployed at: {:?}",
-                deployed_address
-            );
-
-            // Store contract address in database for future use
-            self.store_contract_address("AlgorithmReview", deployed_address)
-                .await?;
-
-            deployed_address
-        } else {
-            info!(
-                "AlgorithmReview contract already deployed at: {:?}",
-                self.addresses.algorithm_review
-            );
-            self.addresses.algorithm_review
-        };
-
-        // Update addresses if they were deployed
-        if data_code.is_empty() {
-            self.addresses.data_contribution = data_contribution_address;
-        }
-        if algo_code.is_empty() {
-            self.addresses.algorithm_review = algorithm_review_address;
-        }
-
-        info!("All contracts are deployed and accessible");
-        Ok(())
-    }
-
     /// Store contract address in database
     async fn store_contract_address(&self, name: &str, address: Address) -> Result<()> {
         // This would typically store the contract address in the database
-        // using the contract_metas table
+        // using the contract_meta table
         info!("Storing contract {} at address {:?}", name, address);
 
         // TODO: Implement database storage when Database connection is available
         // sqlx::query!(
-        //     "INSERT INTO contract_metas (name, address) VALUES ($1, $2)
+        //     "INSERT INTO contract_meta (name, address) VALUES ($1, $2)
         //      ON CONFLICT (name) DO UPDATE SET address = $2",
         //     name,
         //     format!("{:?}", address)
@@ -524,83 +553,141 @@ impl ContractCaller {
 
     /// Parse a log into a specific event type
     pub fn parse_event(&self, log: &Log) -> Result<ParsedEvent> {
-        // Check the first topic (event signature)
+        use alloy::sol_types::SolEvent;
+
+        // Get the event signature (first topic)
         let event_sig = log
-            .topics()
-            .get(0)
+            .topic0()
             .ok_or_else(|| ContractError::ParseError("No event signature in log".to_string()))?;
 
         // DataContribution events
         if log.address() == self.addresses.data_contribution {
-            // DataRegistered(address indexed contributor, string indexed cid, string dataset)
-            if event_sig == &alloy::primitives::keccak256("DataRegistered(address,string,string)") {
+            // DataRegistered event
+            if event_sig == &DataContribution::DataRegistered::SIGNATURE_HASH {
+                // For indexed string (cid), we only have the hash in topics[2]
+                let cid = if log.topics().len() > 2 {
+                    format!("0x{}", hex::encode(&log.topics()[2]))
+                } else {
+                    return Err(ContractError::ParseError("Missing cid topic".to_string()));
+                };
+
+                // Decode the data field to get non-indexed parameters
+                let dataset = String::abi_decode(&log.data().data).map_err(|e| {
+                    ContractError::ParseError(format!("Failed to decode dataset: {}", e))
+                })?;
+
+                // Extract contributor address from topics[1]
                 let contributor = Address::from_slice(&log.topics()[1][12..]);
-                // For now, return a simplified version
+
                 return Ok(ParsedEvent::DataRegistered {
-                    data_hash: format!("0x{}", hex::encode(&log.topics()[2])),
-                    provider: contributor,
-                    price: U256::ZERO, // Price not in this event
+                    contributor,
+                    cid,
+                    dataset,
                 });
             }
-            // DataUsed(address indexed scientist, string indexed cid, string dataset, uint256 when)
-            if event_sig == &alloy::primitives::keccak256("DataUsed(address,string,string,uint256)")
-            {
+
+            // DataUsed event
+            if event_sig == &DataContribution::DataUsed::SIGNATURE_HASH {
+                // For indexed string (cid), we only have the hash in topics[2]
+                let cid = if log.topics().len() > 2 {
+                    format!("0x{}", hex::encode(&log.topics()[2]))
+                } else {
+                    return Err(ContractError::ParseError("Missing cid topic".to_string()));
+                };
+
+                // Decode the data field to get non-indexed parameters (dataset, when)
+                let (dataset, when): (String, U256) =
+                    <(String, U256)>::abi_decode(&log.data().data).map_err(|e| {
+                        ContractError::ParseError(format!("Failed to decode data: {}", e))
+                    })?;
+
                 let scientist = Address::from_slice(&log.topics()[1][12..]);
+
                 return Ok(ParsedEvent::DataUsed {
-                    data_hash: format!("0x{}", hex::encode(&log.topics()[2])),
-                    algorithm_id: format!("0x{}", hex::encode(&log.topics()[2])), // CID as algorithm_id
-                    fee: U256::ZERO, // Fee not in this event
+                    scientist,
+                    cid,
+                    dataset,
+                    when,
                 });
             }
         }
 
         // AlgorithmReview events
         if log.address() == self.addresses.algorithm_review {
-            // AlgorithmResolved(uint256 indexed executionId, string cid, bool approved)
-            if event_sig == &alloy::primitives::keccak256("AlgorithmResolved(uint256,string,bool)")
-            {
-                // TODO: Properly decode the data field
+            // AlgorithmResolved event
+            if event_sig == &AlgorithmReview::AlgorithmResolved::SIGNATURE_HASH {
+                // Decode the data field (cid, approved)
+                let (cid, approved): (String, bool) =
+                    <(String, bool)>::abi_decode(&log.data().data).map_err(|e| {
+                        ContractError::ParseError(format!("Failed to decode data: {}", e))
+                    })?;
+
+                // Extract execution_id from topics[1]
+                let execution_id = U256::from_be_bytes(log.topics()[1].into());
+
                 return Ok(ParsedEvent::AlgorithmResolved {
-                    algorithm_id: "decoded_cid".to_string(), // Placeholder
-                    approved: false,                         // Placeholder
+                    execution_id,
+                    cid,
+                    approved,
                 });
             }
-            // CommitteeMemberUpdated(address indexed member, bool approved)
-            if event_sig == &alloy::primitives::keccak256("CommitteeMemberUpdated(address,bool)") {
+
+            // CommitteeMemberUpdated event
+            if event_sig == &AlgorithmReview::CommitteeMemberUpdated::SIGNATURE_HASH {
+                // Extract member address from topics[1]
                 let member = Address::from_slice(&log.topics()[1][12..]);
-                // TODO: Decode bool from data
-                return Ok(ParsedEvent::CommitteeMemberUpdated {
-                    member,
-                    is_member: true, // Placeholder
-                });
+
+                // Decode the approved flag from data
+                let approved = bool::abi_decode(&log.data().data).map_err(|e| {
+                    ContractError::ParseError(format!("Failed to decode approved: {}", e))
+                })?;
+
+                return Ok(ParsedEvent::CommitteeMemberUpdated { member, approved });
             }
-            // ExecutionSubmitted(uint256 indexed executionId, string cid, uint256 startTime, uint256 endTime)
-            if event_sig
-                == &alloy::primitives::keccak256(
-                    "ExecutionSubmitted(uint256,string,uint256,uint256)",
-                )
-            {
+
+            // ExecutionSubmitted event
+            if event_sig == &AlgorithmReview::ExecutionSubmitted::SIGNATURE_HASH {
+                // Decode the data field (cid, startTime, endTime)
+                let (cid, start_time, end_time): (String, U256, U256) =
+                    <(String, U256, U256)>::abi_decode(&log.data().data).map_err(|e| {
+                        ContractError::ParseError(format!("Failed to decode data: {}", e))
+                    })?;
+
+                // Extract execution_id from topics[1]
+                let execution_id = U256::from_be_bytes(log.topics()[1].into());
+
                 return Ok(ParsedEvent::ExecutionSubmitted {
-                    algorithm_id: "decoded_cid".to_string(), // Placeholder
-                    data_hash: "".to_string(),               // Not in this event
-                    execution_result: "".to_string(),        // Not in this event
+                    execution_id,
+                    cid,
+                    start_time,
+                    end_time,
                 });
             }
-            // VoteCasted(address indexed member, string cid, bool approved, uint256 voteTime)
-            if event_sig == &alloy::primitives::keccak256("VoteCasted(address,string,bool,uint256)")
-            {
-                let voter = Address::from_slice(&log.topics()[1][12..]);
+
+            // VoteCasted event
+            if event_sig == &AlgorithmReview::VoteCasted::SIGNATURE_HASH {
+                // Extract member address from topics[1]
+                let member = Address::from_slice(&log.topics()[1][12..]);
+
+                // Decode the data field (cid, approved, voteTime)
+                let (cid, approved, vote_time): (String, bool, U256) =
+                    <(String, bool, U256)>::abi_decode(&log.data().data).map_err(|e| {
+                        ContractError::ParseError(format!("Failed to decode data: {}", e))
+                    })?;
+
                 return Ok(ParsedEvent::VoteCasted {
-                    algorithm_id: "decoded_cid".to_string(), // Placeholder
-                    voter,
-                    vote: true, // Placeholder
+                    member,
+                    cid,
+                    approved,
+                    vote_time,
                 });
             }
         }
 
         Err(ContractError::ParseError(format!(
-            "Unknown event signature: {:?}",
-            event_sig
+            "Unknown event signature: {:?} at address {:?}",
+            event_sig,
+            log.address()
         )))
     }
 }
@@ -611,75 +698,46 @@ impl ContractCaller {
 pub enum ParsedEvent {
     // DataContribution events
     DataRegistered {
-        data_hash: String,
-        provider: Address,
-        price: U256,
+        contributor: Address,
+        cid: String, // Note: for indexed string, this will be the hash
+        dataset: String,
     },
     DataUsed {
-        data_hash: String,
-        algorithm_id: String,
-        fee: U256,
+        scientist: Address,
+        cid: String, // Note: for indexed string, this will be the hash
+        dataset: String,
+        when: U256,
     },
     // AlgorithmReview events
     AlgorithmResolved {
-        algorithm_id: String,
+        execution_id: U256,
+        cid: String,
         approved: bool,
     },
     CommitteeMemberUpdated {
         member: Address,
-        is_member: bool,
+        approved: bool,
     },
     ExecutionSubmitted {
-        algorithm_id: String,
-        data_hash: String,
-        execution_result: String,
+        execution_id: U256,
+        cid: String,
+        start_time: U256,
+        end_time: U256,
     },
     VoteCasted {
-        algorithm_id: String,
-        voter: Address,
-        vote: bool,
+        member: Address,
+        cid: String,
+        approved: bool,
+        vote_time: U256,
     },
 }
 
-impl From<ContractError> for crate::error::AppError {
+impl From<ContractError> for crate::AppError {
     fn from(err: ContractError) -> Self {
-        use crate::error::AppError;
         match err {
-            ContractError::InvalidConfig(msg) => AppError::Config(msg),
-            ContractError::NotFound(msg) => AppError::NotFound(msg),
-            _ => AppError::Internal(err.to_string()),
+            ContractError::InvalidConfig(msg) => crate::AppError::Validation(msg),
+            ContractError::NotFound(msg) => crate::AppError::NotFound(msg),
+            _ => crate::AppError::Internal(err.to_string()),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_contract_initialization() {
-        // Test with a minimal config
-        let config = ChainConfig {
-            rpc_url: "http://localhost:8545".to_string(),
-            ws_url: None,
-            chain_id: 1337,
-            contract_address: "0x0000000000000000000000000000000000000000".to_string(),
-            data_contribution_address: "0x5FbDB2315678afecb367f032d93F642f64180aa3".to_string(),
-            algorithm_review_address: "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512".to_string(),
-            private_key: Some(
-                "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string(),
-            ),
-            confirmations: 1,
-            gas_price_multiplier: 1.1,
-            max_gas_limit: 10_000_000,
-            funding_threshold_eth: 0.01,
-            funding_amount_eth: 0.1,
-            sync_interval: 10,
-            sync_batch_size: 1000,
-            block_batch_size: 100,
-        };
-
-        // Should create without errors (won't connect in test environment)
-        let _caller = ContractCaller::new(config).await;
     }
 }

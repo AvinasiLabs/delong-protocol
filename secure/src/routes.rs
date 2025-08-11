@@ -4,7 +4,6 @@
 //! for the secure service running in the TEE environment.
 
 use axum::{
-    extract::{Path, State, WebSocketUpgrade},
     routing::{get, post},
     Router,
 };
@@ -15,11 +14,11 @@ use tower_http::cors::{Any, CorsLayer};
 use crate::{
     config::Config,
     handlers,
-    infra::ws::{ws_handler, Hub},
     infra::{
         contracts::ContractCaller,
         db::Database,
         tee::{TeeConfig as InfraTeeConfig, TeeService},
+        Notifier,
     },
 };
 
@@ -34,8 +33,8 @@ pub struct AppState {
     pub ipfs_client: ipfs_api_backend_hyper::IpfsClient,
     /// Contract caller for blockchain interactions
     pub contract_caller: ContractCaller,
-    /// WebSocket hub for real-time notifications
-    pub ws_hub: Arc<Hub>,
+    /// Notifier for WebSocket notifications
+    pub notifier: Arc<Notifier>,
     /// TEE service for secure operations
     pub tee_service: Arc<TeeService>,
 }
@@ -47,7 +46,7 @@ impl AppState {
         config: Config,
         ipfs_client: ipfs_api_backend_hyper::IpfsClient,
         contract_caller: ContractCaller,
-        ws_hub: Arc<Hub>,
+        notifier: Arc<Notifier>,
         tee_service: Arc<TeeService>,
     ) -> Self {
         Self {
@@ -55,14 +54,14 @@ impl AppState {
             config,
             ipfs_client,
             contract_caller,
-            ws_hub,
+            notifier,
             tee_service,
         }
     }
 }
 
 /// Create the main application router with all routes and middleware
-pub async fn create_app(db: Database, config: Config, ws_hub: Arc<Hub>) -> Router {
+pub async fn create_app(db: Database, config: Config) -> Router {
     // Initialize IPFS client
     let ipfs_client = ipfs_api_backend_hyper::IpfsClient::from_str(&config.ipfs.api_url)
         .expect("Failed to create IPFS client");
@@ -81,12 +80,15 @@ pub async fn create_app(db: Database, config: Config, ws_hub: Arc<Hub>) -> Route
         .await
         .expect("Failed to create contract caller");
 
+    // Create notifier
+    let notifier = Arc::new(Notifier::new());
+
     let state = AppState::new(
         db,
         config,
         ipfs_client,
         contract_caller,
-        ws_hub,
+        notifier.clone(),
         tee_service,
     );
 
@@ -99,10 +101,10 @@ pub async fn create_app(db: Database, config: Config, ws_hub: Arc<Hub>) -> Route
         .route("/", get(handlers::list_algo_exes))
         .route("/{id}", get(handlers::get_algo_exe));
 
-    // Static dataset routes
-    let static_dataset_routes = Router::new()
-        .route("/", post(handlers::create_static_dataset))
-        .route("/", get(handlers::list_static_datasets));
+    // Dataset routes
+    let dataset_routes = Router::new()
+        .route("/", post(handlers::create_dataset))
+        .route("/", get(handlers::list_datasets));
 
     // Committee and voting routes
     let committee_routes = Router::new()
@@ -122,17 +124,16 @@ pub async fn create_app(db: Database, config: Config, ws_hub: Arc<Hub>) -> Route
     // Contract metadata routes
     let contract_routes = Router::new().route("/", get(handlers::contract::list_contracts));
 
-    // WebSocket route handler
-    let ws_route_handler = |Path(task_id): Path<String>,
-                            ws: WebSocketUpgrade,
-                            State(state): State<AppState>| async move {
-        ws_handler(ws, task_id, state.ws_hub.clone()).await
-    };
+    // Create WebSocket state
+    let ws_state = handlers::WsState { notifier };
+
+    // WebSocket routes
+    let ws_routes = handlers::ws_routes().with_state(ws_state);
 
     // Protected API routes (require authentication)
     let api_routes = Router::new()
         .nest("/algoexes", algo_exe_routes)
-        .nest("/static-datasets", static_dataset_routes)
+        .nest("/datasets", dataset_routes)
         .nest("/committee", committee_routes)
         .nest("/votes", vote_routes)
         .nest("/contracts", contract_routes);
@@ -143,8 +144,8 @@ pub async fn create_app(db: Database, config: Config, ws_hub: Arc<Hub>) -> Route
         .merge(health_routes)
         // API routes (auth required)
         .nest("/api", api_routes)
-        // WebSocket endpoint
-        .route("/ws/{task_id}", get(ws_route_handler))
+        // WebSocket routes
+        .merge(ws_routes)
         .layer(
             CorsLayer::new()
                 .allow_origin(Any)

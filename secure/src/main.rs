@@ -4,18 +4,17 @@
 //! It provides the core DeLong protocol functionality, including secure computation,
 //! data management, and blockchain synchronization.
 
+use ipfs_api_backend_hyper::TryFromUri;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::signal;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
-use secure::config::Config;
 use secure::infra::contracts::ContractCaller;
 use secure::infra::db::Database;
-// use secure::infra::tee::{ClientKind, KeyVault}; // TEE integration pending
-use secure::infra::notification::NotificationService;
-use secure::infra::ws::Hub;
+use secure::infra::Notifier;
+use secure::workers::algo_executor::{AlgoExecutor, ExecutorConfig};
 use secure::workers::ChainSyncWorker;
 
 #[tokio::main]
@@ -42,6 +41,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let key_vault = Arc::new(KeyVault::from_config(ClientKind::Dstack));
     // info!("TEE key vault initialized");
 
+    // Initialize IPFS client
+    let ipfs_client = Arc::new(
+        ipfs_api_backend_hyper::IpfsClient::from_str(&config.ipfs.api_url)
+            .expect("Failed to create IPFS client"),
+    );
+
     // Initialize contract infrastructure
     let mut contract_caller = ContractCaller::new(config.chain.clone()).await?;
 
@@ -52,8 +57,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let contract_caller = Arc::new(contract_caller);
 
-    // Create WebSocket hub
-    let ws_hub = Arc::new(Hub::new());
+    // Initialize algorithm executor
+    let executor_config = ExecutorConfig {
+        build_size_limit: 100 * 1024 * 1024, // 100MB
+        execution_timeout: 3600,             // 1 hour
+        working_directory: std::path::PathBuf::from("/tmp/delong-algo"),
+        max_concurrent: 10,
+        dataset_base_path: std::path::PathBuf::from(&config.runtime.dataset_base_path),
+    };
+
+    let algo_executor = secure::workers::algo_executor::create_executor_service(
+        Arc::new(db.clone()),
+        ipfs_client.clone(),
+        contract_caller.clone(),
+        executor_config,
+    )
+    .await
+    .expect("Failed to create algorithm executor");
+
+    // Create notifier for WebSocket notifications
+    let notifier = Arc::new(Notifier::new());
 
     // Create cancellation token for graceful shutdown
     let shutdown_token = CancellationToken::new();
@@ -61,22 +84,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Start background tasks
     let chainsync_handle = spawn_chainsync_task(
         db.clone(),
-        config.clone(),
         contract_caller.clone(),
-        ws_hub.clone(),
-        shutdown_token.clone(),
-    );
-
-    let runtime_handle = spawn_runtime_task(
-        db.clone(),
-        config.clone(),
-        contract_caller.clone(),
-        ws_hub.clone(),
+        notifier.clone(),
+        algo_executor.clone(),
         shutdown_token.clone(),
     );
 
     // Build the application
-    let app = secure::routes::create_app(db.clone(), config.clone(), ws_hub.clone()).await;
+    let app = secure::routes::create_app(db.clone(), config.clone()).await;
 
     // Create TCP listener
     let addr = SocketAddr::from(([0, 0, 0, 0], config.server.port));
@@ -94,7 +109,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     shutdown_token.cancel();
 
     // Wait for background tasks to complete
-    let _ = tokio::join!(chainsync_handle, runtime_handle);
+    chainsync_handle.await.unwrap();
 
     info!("Secure service stopped gracefully");
     Ok(())
@@ -103,9 +118,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// Spawn blockchain synchronization background task
 fn spawn_chainsync_task(
     db: Database,
-    config: Config,
     contract_caller: Arc<ContractCaller>,
-    ws_hub: Arc<Hub>,
+    notifier: Arc<Notifier>,
+    algo_executor: Arc<AlgoExecutor>,
     shutdown_token: CancellationToken,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
@@ -113,16 +128,15 @@ fn spawn_chainsync_task(
 
         // Note: ChainsyncService will coordinate with runtime through a database
         // instead of direct scheduler access
-        let notification_service = Arc::new(NotificationService::new(ws_hub));
-        let chainsync_worker = Arc::new(ChainSyncWorker::new(
+        let chain_sync = Arc::new(ChainSyncWorker::new(
             Arc::new(db),
-            Arc::new(config),
             contract_caller,
-            notification_service,
+            notifier,
+            algo_executor,
         ));
 
         tokio::select! {
-            result = chainsync_worker.start() => {
+            result = chain_sync.start() => {
                 match result {
                     Ok(_) => info!("Chainsync service completed"),
                     Err(e) => error!("Chainsync service error: {}", e),
@@ -136,34 +150,6 @@ fn spawn_chainsync_task(
         }
 
         info!("Chainsync service stopped");
-    })
-}
-
-/// Spawn algorithm runtime background task
-fn spawn_runtime_task(
-    db: Database,
-    config: Config,
-    contract_caller: Arc<ContractCaller>,
-    ws_hub: Arc<Hub>,
-    shutdown_token: CancellationToken,
-) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        info!("Starting algorithm runtime worker");
-
-        // Start the runtime worker with proper error handling
-        tokio::select! {
-            result = secure::workers::runtime::start_runtime_worker(db, config, contract_caller, ws_hub) => {
-                match result {
-                    Ok(_) => info!("Algorithm runtime worker completed"),
-                    Err(e) => error!("Algorithm runtime worker error: {}", e),
-                }
-            }
-            _ = shutdown_token.cancelled() => {
-                info!("Algorithm runtime worker received shutdown signal");
-            }
-        }
-
-        info!("Algorithm runtime worker stopped");
     })
 }
 

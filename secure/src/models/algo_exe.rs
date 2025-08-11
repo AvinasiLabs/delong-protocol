@@ -7,7 +7,7 @@ use super::{
     pg_types::{ExecutionStatus, ReviewStatus, TransactionStatus},
     Create, FindById, Timestamped,
 };
-use crate::error::Result;
+use crate::{AppError, Result};
 
 /// Algorithm execution entity
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -31,8 +31,8 @@ pub struct AlgoExe {
 impl AlgoExe {
     /// SQL join clause for confirmed transactions
     const JOIN_CONFIRMED_TX: &str = r#"
-JOIN blockchain_transactions bt
-ON bt.entity_id = algo_exes.id
+JOIN blockchain_transaction bt
+ON bt.entity_id = algo_exe.id
    AND bt.status = ?
    AND bt.entity_type = ?
     "#;
@@ -41,10 +41,10 @@ ON bt.entity_id = algo_exes.id
     pub async fn find_pending_confirmed(pool: &PgPool) -> Result<Vec<Self>> {
         let query = format!(
             r#"
-            SELECT algo_exes.*
-            FROM algo_exes
+            SELECT algo_exe.*
+            FROM algo_exe
             {}
-            WHERE algo_exes.status = ?
+            WHERE algo_exe.status = ?
             "#,
             Self::JOIN_CONFIRMED_TX
         );
@@ -63,10 +63,10 @@ ON bt.entity_id = algo_exes.id
     pub async fn find_reviewing_confirmed(pool: &PgPool) -> Result<Vec<Self>> {
         let query = format!(
             r#"
-            SELECT algo_exes.*
-            FROM algo_exes
+            SELECT algo_exe.*
+            FROM algo_exe
             {}
-            WHERE algo_exes.review_status = ?
+            WHERE algo_exe.review_status = ?
             "#,
             Self::JOIN_CONFIRMED_TX
         );
@@ -95,7 +95,7 @@ ON bt.entity_id = algo_exes.id
                    status as "status: ExecutionStatus",
                    start_time, end_time, result, error_msg,
                    created_at, updated_at
-            FROM algo_exes
+            FROM algo_exe
             WHERE review_status = $1
             "#,
             review_status as _
@@ -114,7 +114,7 @@ ON bt.entity_id = algo_exes.id
     ) -> Result<()> {
         sqlx::query!(
             r#"
-            UPDATE algo_exes
+            UPDATE algo_exe
             SET review_status = $1, updated_at = NOW()
             WHERE id = $2
             "#,
@@ -136,7 +136,7 @@ ON bt.entity_id = algo_exes.id
     ) -> Result<()> {
         sqlx::query!(
             r#"
-            UPDATE algo_exes
+            UPDATE algo_exe
             SET vote_start_time = $1, vote_end_time = $2, updated_at = NOW()
             WHERE id = $3
             "#,
@@ -157,7 +157,7 @@ ON bt.entity_id = algo_exes.id
         if status == ExecutionStatus::Running {
             sqlx::query!(
                 r#"
-                UPDATE algo_exes
+                UPDATE algo_exe
                 SET status = $1, updated_at = $2, start_time = $3
                 WHERE id = $4
                 "#,
@@ -171,7 +171,7 @@ ON bt.entity_id = algo_exes.id
         } else {
             sqlx::query!(
                 r#"
-                UPDATE algo_exes
+                UPDATE algo_exe
                 SET status = $1, updated_at = $2
                 WHERE id = $3
                 "#,
@@ -202,7 +202,7 @@ ON bt.entity_id = algo_exes.id
 
         sqlx::query!(
             r#"
-            UPDATE algo_exes
+            UPDATE algo_exe
             SET status = $1, result = $2, error_msg = $3, end_time = $4, updated_at = $5
             WHERE id = $6
             "#,
@@ -225,20 +225,20 @@ ON bt.entity_id = algo_exes.id
             Self,
             r#"
             SELECT
-                algo_exes.id, algo_exes.algo_id, algo_exes.used_dataset, algo_exes.scientist_wallet,
-                algo_exes.review_status as "review_status: ReviewStatus",
-                algo_exes.vote_start_time, algo_exes.vote_end_time,
-                algo_exes.status as "status: ExecutionStatus",
-                algo_exes.start_time, algo_exes.end_time, algo_exes.result, algo_exes.error_msg,
-                algo_exes.created_at, algo_exes.updated_at
-            FROM algo_exes
-            JOIN blockchain_transactions bt
-            ON bt.entity_id = algo_exes.id
+                algo_exe.id, algo_exe.algo_id, algo_exe.used_dataset, algo_exe.scientist_wallet,
+                algo_exe.review_status as "review_status: ReviewStatus",
+                algo_exe.vote_start_time, algo_exe.vote_end_time,
+                algo_exe.status as "status: ExecutionStatus",
+                algo_exe.start_time, algo_exe.end_time, algo_exe.result, algo_exe.error_msg,
+                algo_exe.created_at, algo_exe.updated_at
+            FROM algo_exe
+            JOIN blockchain_transaction bt
+            ON bt.entity_id = algo_exe.id
                AND bt.status = $1
                AND bt.entity_type = $2
-            WHERE algo_exes.review_status = $3
-              AND algo_exes.status = $4
-            ORDER BY algo_exes.created_at ASC
+            WHERE algo_exe.review_status = $3
+              AND algo_exe.status = $4
+            ORDER BY algo_exe.created_at ASC
             "#,
             TransactionStatus::Confirmed as _,
             EntityType::Execution as _,
@@ -263,8 +263,8 @@ ON bt.entity_id = algo_exes.id
                 ae.status as "status: ExecutionStatus",
                 ae.start_time, ae.end_time, ae.result, ae.error_msg,
                 ae.created_at, ae.updated_at
-            FROM algo_exes ae
-            JOIN algos a ON ae.algo_id = a.id
+            FROM algo_exe ae
+            JOIN algo a ON ae.algo_id = a.id
             WHERE a.cid = $1
             ORDER BY ae.created_at DESC
             LIMIT 1
@@ -285,10 +285,10 @@ ON bt.entity_id = algo_exes.id
     ) -> Result<()> {
         let result = sqlx::query!(
             r#"
-            UPDATE algo_exes
+            UPDATE algo_exe
             SET review_status = $1, updated_at = NOW()
             WHERE algo_id = (
-                SELECT id FROM algos WHERE cid = $2
+                SELECT id FROM algo WHERE cid = $2
             )
             "#,
             review_status as _,
@@ -298,7 +298,7 @@ ON bt.entity_id = algo_exes.id
         .await?;
 
         if result.rows_affected() == 0 {
-            return Err(crate::error::AppError::NotFound(format!(
+            return Err(AppError::NotFound(format!(
                 "AlgoExe with algo_cid {} not found",
                 algo_cid
             )));
@@ -319,7 +319,7 @@ ON bt.entity_id = algo_exes.id
                 status as "status: ExecutionStatus",
                 start_time, end_time, result, error_msg,
                 created_at, updated_at
-            FROM algo_exes
+            FROM algo_exe
             WHERE status = $1
             "#,
             status as _
@@ -333,10 +333,7 @@ ON bt.entity_id = algo_exes.id
     /// Find by ID with required result
     pub async fn find_by_id_required(pool: &PgPool, id: i64) -> Result<Self> {
         Self::find_by_id(pool, id).await?.ok_or_else(|| {
-            crate::error::AppError::NotFound(format!(
-                "Algorithm execution with ID {} not found",
-                id
-            ))
+            AppError::NotFound(format!("Algorithm execution with ID {} not found", id))
         })
     }
 }
@@ -424,7 +421,7 @@ impl AlgoExeWithAlgo {
         per_page: u32,
     ) -> Result<(Vec<Self>, u64)> {
         let mut count_query =
-            "SELECT COUNT(*) as \"count!\" FROM algo_exes ae JOIN algos a ON ae.algo_id = a.id"
+            "SELECT COUNT(*) as \"count!\" FROM algo_exe ae JOIN algo a ON ae.algo_id = a.id"
                 .to_string();
         let mut data_query = r#"
             SELECT ae.id, ae.algo_id, ae.used_dataset, ae.scientist_wallet,
@@ -434,8 +431,8 @@ impl AlgoExeWithAlgo {
                    ae.start_time, ae.end_time, ae.result, ae.error_msg,
                    ae.created_at, ae.updated_at,
                    a.name as algo_name, a.algo_link, a.cid
-            FROM algo_exes ae
-            JOIN algos a ON ae.algo_id = a.id
+            FROM algo_exe ae
+            JOIN algo a ON ae.algo_id = a.id
         "#
         .to_string();
 
@@ -511,7 +508,7 @@ impl Create for AlgoExe {
         let exe = sqlx::query_as!(
             AlgoExe,
             r#"
-            INSERT INTO algo_exes (algo_id, used_dataset, scientist_wallet, review_status, status)
+            INSERT INTO algo_exe (algo_id, used_dataset, scientist_wallet, review_status, status)
             VALUES ($1, $2, $3, $4, $5)
             RETURNING id, algo_id, used_dataset, scientist_wallet,
                      review_status as "review_status: ReviewStatus",
@@ -541,7 +538,7 @@ impl AlgoExe {
         let exe = sqlx::query_as!(
             AlgoExe,
             r#"
-            INSERT INTO algo_exes (algo_id, used_dataset, scientist_wallet, review_status, status)
+            INSERT INTO algo_exe (algo_id, used_dataset, scientist_wallet, review_status, status)
             VALUES ($1, $2, $3, $4, $5)
             RETURNING id, algo_id, used_dataset, scientist_wallet,
                      review_status as "review_status: ReviewStatus",
@@ -575,7 +572,7 @@ impl FindById for AlgoExe {
                    status as "status: ExecutionStatus",
                    start_time, end_time, result, error_msg,
                    created_at, updated_at
-            FROM algo_exes
+            FROM algo_exe
             WHERE id = $1
             "#,
             id

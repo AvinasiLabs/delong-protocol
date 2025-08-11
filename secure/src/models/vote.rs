@@ -24,7 +24,7 @@ impl Vote {
         let votes = sqlx::query_as!(
             Vote,
             r#"
-            SELECT * FROM votes
+            SELECT * FROM vote
             WHERE algo_cid = $1
             ORDER BY voted_at DESC
             "#,
@@ -45,7 +45,7 @@ impl Vote {
     ) -> Result<(Vec<Self>, u64)> {
         // Get total count
         let total = sqlx::query_scalar!(
-            "SELECT COUNT(*) as \"count!\" FROM votes WHERE algo_cid = $1",
+            "SELECT COUNT(*) as \"count!\" FROM vote WHERE algo_cid = $1",
             algo_cid
         )
         .fetch_one(pool)
@@ -55,7 +55,7 @@ impl Vote {
         let votes = sqlx::query_as!(
             Vote,
             r#"
-            SELECT * FROM votes
+            SELECT * FROM vote
             WHERE algo_cid = $1
             ORDER BY voted_at DESC
             LIMIT $2 OFFSET $3
@@ -77,7 +77,7 @@ impl Vote {
             SELECT
                 COUNT(CASE WHEN approve = true THEN 1 END) as approve_count,
                 COUNT(CASE WHEN approve = false THEN 1 END) as reject_count
-            FROM votes
+            FROM vote
             WHERE algo_cid = $1
             "#,
             algo_cid
@@ -99,7 +99,7 @@ impl Vote {
     ) -> Result<PaginatedData<Self>> {
         // Get total count
         let total = sqlx::query_scalar!(
-            "SELECT COUNT(*) as \"count!\" FROM votes WHERE voter = $1",
+            "SELECT COUNT(*) as \"count!\" FROM vote WHERE voter = $1",
             voter
         )
         .fetch_one(pool)
@@ -109,7 +109,7 @@ impl Vote {
         let votes = sqlx::query_as!(
             Vote,
             r#"
-            SELECT * FROM votes
+            SELECT * FROM vote
             WHERE voter = $1
             ORDER BY voted_at DESC
             LIMIT $2 OFFSET $3
@@ -137,7 +137,7 @@ impl Vote {
     ) -> Result<Option<Self>> {
         let vote = sqlx::query_as!(
             Vote,
-            "SELECT * FROM votes WHERE algo_cid = $1 AND voter = $2",
+            "SELECT * FROM vote WHERE algo_cid = $1 AND voter = $2",
             algo_cid,
             voter
         )
@@ -150,7 +150,7 @@ impl Vote {
     /// Check if a voter has already voted on an algorithm
     pub async fn has_voted(pool: &PgPool, algo_cid: &str, voter: &str) -> Result<bool> {
         let exists = sqlx::query_scalar!(
-            "SELECT EXISTS(SELECT 1 FROM votes WHERE algo_cid = $1 AND voter = $2)",
+            "SELECT EXISTS(SELECT 1 FROM vote WHERE algo_cid = $1 AND voter = $2)",
             algo_cid,
             voter
         )
@@ -169,7 +169,7 @@ impl Vote {
     ) -> Result<PaginatedData<Self>> {
         // Get total count
         let total = sqlx::query_scalar!(
-            "SELECT COUNT(*) as \"count!\" FROM votes WHERE voted_at BETWEEN $1 AND $2",
+            "SELECT COUNT(*) as \"count!\" FROM vote WHERE voted_at BETWEEN $1 AND $2",
             start_time,
             end_time
         )
@@ -180,7 +180,7 @@ impl Vote {
         let votes = sqlx::query_as!(
             Vote,
             r#"
-            SELECT * FROM votes
+            SELECT * FROM vote
             WHERE voted_at BETWEEN $1 AND $2
             ORDER BY voted_at DESC
             LIMIT $3 OFFSET $4
@@ -212,7 +212,7 @@ impl Vote {
         let vote = sqlx::query_as!(
             Vote,
             r#"
-            INSERT INTO votes (algo_cid, voter, approve, voted_at)
+            INSERT INTO vote (algo_cid, voter, approve, voted_at)
             VALUES ($1, $2, $3, $4)
             RETURNING *
             "#,
@@ -255,7 +255,7 @@ impl Create for Vote {
         let vote = sqlx::query_as!(
             Vote,
             r#"
-            INSERT INTO votes (algo_cid, voter, approve, voted_at)
+            INSERT INTO vote (algo_cid, voter, approve, voted_at)
             VALUES ($1, $2, $3, $4)
             RETURNING *
             "#,
@@ -274,16 +274,10 @@ impl Create for Vote {
 #[async_trait::async_trait]
 impl FindById for Vote {
     async fn find_by_id(pool: &PgPool, id: i64) -> Result<Option<Self>> {
-        let vote = sqlx::query_as!(Vote, "SELECT * FROM votes WHERE id = $1", id)
+        let vote = sqlx::query_as!(Vote, "SELECT * FROM vote WHERE id = $1", id)
             .fetch_optional(pool)
             .await?;
 
         Ok(vote)
     }
-}
-
-#[cfg(test)]
-mod tests {
-
-    // Add tests here if needed
 }

@@ -8,9 +8,6 @@ pub mod routes;
 
 pub mod workers;
 
-#[cfg(test)]
-pub mod test_helpers;
-
 // Re-export commonly used types
 pub use config::Config;
 

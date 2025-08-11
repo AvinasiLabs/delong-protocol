@@ -5,11 +5,11 @@ use sqlx::{FromRow, PgPool};
 use super::blockchain_transaction::EntityType;
 use super::pg_types::TransactionStatus;
 use super::{Create, FindById, Timestamped};
-use crate::error::{DbErrorExt, Result};
+use crate::{AppError, Result};
 
-/// Static dataset entity representing datasets stored in IPFS
+/// Dataset entity representing datasets stored in IPFS
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
-pub struct StaticDataset {
+pub struct Dataset {
     pub id: i64,
     pub name: String,
     pub ui_name: String,
@@ -28,7 +28,7 @@ pub struct StaticDataset {
     pub updated_at: DateTime<Utc>,
 }
 
-impl Timestamped for StaticDataset {
+impl Timestamped for Dataset {
     fn created_at(&self) -> &DateTime<Utc> {
         &self.created_at
     }
@@ -38,9 +38,9 @@ impl Timestamped for StaticDataset {
     }
 }
 
-/// Request to create a new static dataset
+/// Request to create a new dataset
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreateStaticDatasetRequest {
+pub struct CreateDatasetRequest {
     pub name: String,
     pub ui_name: String,
     pub desc: Option<String>,
@@ -54,16 +54,16 @@ pub struct CreateStaticDatasetRequest {
     pub file_path: Option<String>,
 }
 
-impl StaticDataset {
+impl Dataset {
     /// SQL join clause for confirmed transactions
     const JOIN_CONFIRMED_TX: &'static str = r#"
-        JOIN blockchain_transactions bt
-        ON bt.entity_id = static_datasets.id
+        JOIN blockchain_transaction bt
+        ON bt.entity_id = dataset.id
            AND bt.status = $1
            AND bt.entity_type = $2
     "#;
 
-    /// Find all static datasets with confirmed blockchain transactions
+    /// Find all datasets with confirmed blockchain transactions
     pub async fn find_all_confirmed(
         pool: &PgPool,
         page: u32,
@@ -73,14 +73,14 @@ impl StaticDataset {
         let total = sqlx::query_scalar!(
             r#"
             SELECT COUNT(*) as "count!"
-            FROM static_datasets
-            JOIN blockchain_transactions bt
-            ON bt.entity_id = static_datasets.id
+            FROM dataset
+            JOIN blockchain_transaction bt
+            ON bt.entity_id = dataset.id
                AND bt.status = $1
                AND bt.entity_type = $2
             "#,
             TransactionStatus::Confirmed as _,
-            EntityType::StaticDataset.as_str()
+            EntityType::Dataset.as_str()
         )
         .fetch_one(pool)
         .await?;
@@ -88,10 +88,10 @@ impl StaticDataset {
         // Get paginated results
         let query = format!(
             r#"
-            SELECT static_datasets.*
-            FROM static_datasets
+            SELECT dataset.*
+            FROM dataset
             {}
-            ORDER BY static_datasets.created_at DESC
+            ORDER BY dataset.created_at DESC
             LIMIT $3 OFFSET $4
             "#,
             Self::JOIN_CONFIRMED_TX
@@ -99,7 +99,7 @@ impl StaticDataset {
 
         let datasets = sqlx::query_as::<_, Self>(&query)
             .bind(TransactionStatus::Confirmed)
-            .bind(EntityType::StaticDataset.as_str())
+            .bind(EntityType::Dataset.as_str())
             .bind(per_page as i64)
             .bind(((page - 1) * per_page) as i64)
             .fetch_all(pool)
@@ -108,15 +108,15 @@ impl StaticDataset {
         Ok((datasets, total as u64))
     }
 
-    /// Find static dataset by file hash
+    /// Find dataset by file hash
     pub async fn find_by_file_hash(pool: &PgPool, file_hash: &str) -> Result<Option<Self>> {
         let dataset = sqlx::query_as!(
-            StaticDataset,
+            Dataset,
             r#"
             SELECT id, name, ui_name, "desc", file_hash, ipfs_cid, file_size,
                    file_format, author, author_wallet, sample_url, file_path,
                    created_at, updated_at
-            FROM static_datasets
+            FROM dataset
             WHERE file_hash = $1
             "#,
             file_hash
@@ -127,15 +127,15 @@ impl StaticDataset {
         Ok(dataset)
     }
 
-    /// Find static dataset by name
+    /// Find dataset by name
     pub async fn find_by_name(pool: &PgPool, name: &str) -> Result<Option<Self>> {
         let dataset = sqlx::query_as!(
-            StaticDataset,
+            Dataset,
             r#"
             SELECT id, name, ui_name, "desc", file_hash, ipfs_cid, file_size,
                    file_format, author, author_wallet, sample_url, file_path,
                    created_at, updated_at
-            FROM static_datasets
+            FROM dataset
             WHERE name = $1
             "#,
             name
@@ -146,15 +146,15 @@ impl StaticDataset {
         Ok(dataset)
     }
 
-    /// Find static dataset by IPFS CID
+    /// Find dataset by IPFS CID
     pub async fn find_by_ipfs_cid(pool: &PgPool, ipfs_cid: &str) -> Result<Option<Self>> {
         let dataset = sqlx::query_as!(
-            StaticDataset,
+            Dataset,
             r#"
             SELECT id, name, ui_name, "desc", file_hash, ipfs_cid, file_size,
                    file_format, author, author_wallet, sample_url, file_path,
                    created_at, updated_at
-            FROM static_datasets
+            FROM dataset
             WHERE ipfs_cid = $1
             "#,
             ipfs_cid
@@ -165,21 +165,21 @@ impl StaticDataset {
         Ok(dataset)
     }
 
-    /// Find static dataset by ID with confirmed transaction
+    /// Find dataset by ID with confirmed transaction
     pub async fn find_by_id_confirmed(pool: &PgPool, id: i64) -> Result<Option<Self>> {
         let query = format!(
             r#"
-            SELECT static_datasets.*
-            FROM static_datasets
+            SELECT dataset.*
+            FROM dataset
             {}
-            WHERE static_datasets.id = $3
+            WHERE dataset.id = $3
             "#,
             Self::JOIN_CONFIRMED_TX
         );
 
         let dataset = sqlx::query_as::<_, Self>(&query)
             .bind(TransactionStatus::Confirmed)
-            .bind(EntityType::StaticDataset.as_str())
+            .bind(EntityType::Dataset.as_str())
             .bind(id)
             .fetch_optional(pool)
             .await?;
@@ -187,7 +187,7 @@ impl StaticDataset {
         Ok(dataset)
     }
 
-    /// Update static dataset metadata
+    /// Update dataset metadata
     pub async fn update_metadata(
         pool: &PgPool,
         id: i64,
@@ -196,9 +196,9 @@ impl StaticDataset {
         desc: Option<&str>,
     ) -> Result<Self> {
         let dataset = sqlx::query_as!(
-            StaticDataset,
+            Dataset,
             r#"
-            UPDATE static_datasets
+            UPDATE dataset
             SET ui_name = $1, name = $2, "desc" = $3, updated_at = NOW()
             WHERE id = $4
             RETURNING id, name, ui_name, "desc", file_hash, ipfs_cid, file_size,
@@ -216,15 +216,15 @@ impl StaticDataset {
         Ok(dataset)
     }
 
-    /// Delete static dataset
+    /// Delete dataset
     pub async fn delete(pool: &PgPool, id: i64) -> Result<()> {
-        let result = sqlx::query!("DELETE FROM static_datasets WHERE id = $1", id)
+        let result = sqlx::query!("DELETE FROM dataset WHERE id = $1", id)
             .execute(pool)
             .await?;
 
         if result.rows_affected() == 0 {
-            return Err(crate::error::AppError::NotFound(format!(
-                "Static dataset with id {} not found",
+            return Err(AppError::NotFound(format!(
+                "Dataset with id {} not found",
                 id
             )));
         }
@@ -233,8 +233,8 @@ impl StaticDataset {
     }
 
     /// Convert to response format
-    pub fn to_response(&self) -> crate::handlers::static_dataset::StaticDatasetResponse {
-        crate::handlers::static_dataset::StaticDatasetResponse {
+    pub fn to_response(&self) -> crate::handlers::dataset::DatasetResponse {
+        crate::handlers::dataset::DatasetResponse {
             id: self.id as u64,
             name: self.name.clone(),
             file_hash: self.file_hash.clone(),
@@ -247,14 +247,14 @@ impl StaticDataset {
 }
 
 #[async_trait::async_trait]
-impl Create for StaticDataset {
-    type Request = CreateStaticDatasetRequest;
+impl Create for Dataset {
+    type Request = CreateDatasetRequest;
 
     async fn create(pool: &PgPool, request: Self::Request) -> Result<Self> {
-        let dataset = sqlx::query_as!(
-            StaticDataset,
+        let result = sqlx::query_as!(
+            Dataset,
             r#"
-            INSERT INTO static_datasets (
+            INSERT INTO dataset (
                 name, ui_name, "desc", file_hash, ipfs_cid, file_size,
                 file_format, author, author_wallet, sample_url, file_path
             )
@@ -276,23 +276,53 @@ impl Create for StaticDataset {
             request.file_path.as_deref()
         )
         .fetch_one(pool)
-        .await
-        .conflict_msg("Dataset with this name, ui_name or file_hash already exists")?;
+        .await;
 
-        Ok(dataset)
+        match result {
+            Ok(dataset) => Ok(dataset),
+            Err(sqlx::Error::Database(db_err)) => {
+                // Check for unique constraint violation
+                if db_err.is_unique_violation() {
+                    // Determine which field caused the violation
+                    let message = db_err.message();
+                    if message.contains("file_hash") {
+                        Err(AppError::Conflict(
+                            "Dataset with this file hash already exists".to_string(),
+                        ))
+                    } else if message.contains("ipfs_cid") {
+                        Err(AppError::Conflict(
+                            "Dataset with this IPFS CID already exists".to_string(),
+                        ))
+                    } else if message.contains("ui_name") {
+                        Err(AppError::Conflict(
+                            "Dataset with this UI name already exists".to_string(),
+                        ))
+                    } else if message.contains("name") {
+                        Err(AppError::Conflict(
+                            "Dataset with this name already exists".to_string(),
+                        ))
+                    } else {
+                        Err(AppError::Conflict("Dataset already exists".to_string()))
+                    }
+                } else {
+                    Err(AppError::from(sqlx::Error::Database(db_err)))
+                }
+            }
+            Err(e) => Err(e.into()),
+        }
     }
 }
 
 #[async_trait::async_trait]
-impl FindById for StaticDataset {
+impl FindById for Dataset {
     async fn find_by_id(pool: &PgPool, id: i64) -> Result<Option<Self>> {
         let dataset = sqlx::query_as!(
-            StaticDataset,
+            Dataset,
             r#"
             SELECT id, name, ui_name, "desc", file_hash, ipfs_cid, file_size,
                    file_format, author, author_wallet, sample_url, file_path,
                    created_at, updated_at
-            FROM static_datasets
+            FROM dataset
             WHERE id = $1
             "#,
             id
@@ -301,14 +331,5 @@ impl FindById for StaticDataset {
         .await?;
 
         Ok(dataset)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-
-    #[tokio::test]
-    async fn test_create_static_dataset() {
-        // Test will be implemented when we have test database setup
     }
 }
