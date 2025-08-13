@@ -14,6 +14,7 @@ use tracing::{error, info};
 use secure::infra::contracts::ContractCaller;
 use secure::infra::db::Database;
 use secure::infra::Notifier;
+use secure::infra::{TeeClientBuilder, TeeEthereum};
 use secure::workers::algo_executor::{AlgoExecutor, ExecutorConfig};
 use secure::workers::ChainSyncWorker;
 
@@ -37,9 +38,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db = Database::new(&config.database).await?;
     info!("Database connection established");
 
-    // Initialize TEE key vault (temporarily disabled - TEE integration pending)
-    // let key_vault = Arc::new(KeyVault::from_config(ClientKind::Dstack));
-    // info!("TEE key vault initialized");
+    // Initialize TEE services
+    let tee_endpoint = std::env::var("DSTACK_SIMULATOR_ENDPOINT")
+        .unwrap_or_else(|_| "http://localhost:11010".to_string());
+    let tee_client = Arc::new(TeeClientBuilder::new().endpoint(tee_endpoint).build());
+    info!("TEE client initialized");
+
+    // Initialize TEE Ethereum manager
+    let tee_ethereum = Arc::new(TeeEthereum::new(tee_client.clone()));
+    info!("TEE Ethereum manager initialized");
 
     // Initialize IPFS client
     let ipfs_client = Arc::new(
@@ -47,10 +54,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .expect("Failed to create IPFS client"),
     );
 
-    // Initialize contract infrastructure
-    let mut contract_caller = ContractCaller::new(config.chain.clone()).await?;
+    // Initialize contract infrastructure with TEE wallet
+    let mut contract_caller = ContractCaller::new(config.chain.clone(), db.clone())
+        .await?
+        .with_tee(tee_ethereum.clone())
+        .await?;
 
-    // Deploy or load contracts
+    // Ensure TEE wallet has sufficient balance for operations
+    contract_caller.ensure_sufficient_balance(0.1).await?;
+    info!("TEE wallet funded and ready");
+
+    // Deploy or load contracts using TEE wallet
     info!("Ensuring contracts are deployed...");
     contract_caller.ensure_contracts_deployed().await?;
     info!("Contracts ready");
@@ -91,7 +105,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Build the application
-    let app = secure::routes::create_app(db.clone(), config.clone()).await;
+    let app = secure::routes::create_app(
+        db.clone(),
+        config.clone(),
+        ipfs_client.clone(),
+        contract_caller.clone(),
+        notifier.clone(),
+        tee_client.clone(),
+        tee_ethereum.clone(),
+    )
+    .await;
 
     // Create TCP listener
     let addr = SocketAddr::from(([0, 0, 0, 0], config.server.port));

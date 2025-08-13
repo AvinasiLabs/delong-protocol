@@ -7,19 +7,13 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use ipfs_api_backend_hyper::TryFromUri;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
 
 use crate::{
     config::Config,
     handlers,
-    infra::{
-        contracts::ContractCaller,
-        db::Database,
-        tee::{TeeConfig as InfraTeeConfig, TeeService},
-        Notifier,
-    },
+    infra::{contracts::ContractCaller, db::Database, Notifier, TeeClient, TeeEthereum},
 };
 
 /// Application state shared across handlers
@@ -32,11 +26,13 @@ pub struct AppState {
     /// IPFS client for decentralized storage
     pub ipfs_client: ipfs_api_backend_hyper::IpfsClient,
     /// Contract caller for blockchain interactions
-    pub contract_caller: ContractCaller,
+    pub contract_caller: Arc<ContractCaller>,
     /// Notifier for WebSocket notifications
     pub notifier: Arc<Notifier>,
     /// TEE service for secure operations
-    pub tee_service: Arc<TeeService>,
+    pub tee_service: Arc<TeeClient>,
+    /// TEE Ethereum manager for TEE-based Ethereum operations
+    pub tee_ethereum: Arc<TeeEthereum>,
 }
 
 impl AppState {
@@ -45,9 +41,10 @@ impl AppState {
         db: Database,
         config: Config,
         ipfs_client: ipfs_api_backend_hyper::IpfsClient,
-        contract_caller: ContractCaller,
+        contract_caller: Arc<ContractCaller>,
         notifier: Arc<Notifier>,
-        tee_service: Arc<TeeService>,
+        tee_service: Arc<TeeClient>,
+        tee_ethereum: Arc<TeeEthereum>,
     ) -> Self {
         Self {
             db,
@@ -56,40 +53,29 @@ impl AppState {
             contract_caller,
             notifier,
             tee_service,
+            tee_ethereum,
         }
     }
 }
 
 /// Create the main application router with all routes and middleware
-pub async fn create_app(db: Database, config: Config) -> Router {
-    // Initialize IPFS client
-    let ipfs_client = ipfs_api_backend_hyper::IpfsClient::from_str(&config.ipfs.api_url)
-        .expect("Failed to create IPFS client");
-
-    // Initialize contract caller
-    // Initialize TEE service
-    let tee_config = InfraTeeConfig {
-        endpoint: config
-            .tee
-            .enabled
-            .then(|| "/var/run/dstack.sock".to_string()),
-    };
-    let tee_service = Arc::new(TeeService::new(tee_config));
-
-    let contract_caller = ContractCaller::new(config.chain.clone())
-        .await
-        .expect("Failed to create contract caller");
-
-    // Create notifier
-    let notifier = Arc::new(Notifier::new());
-
+pub async fn create_app(
+    db: Database,
+    config: Config,
+    ipfs_client: Arc<ipfs_api_backend_hyper::IpfsClient>,
+    contract_caller: Arc<ContractCaller>,
+    notifier: Arc<Notifier>,
+    tee_service: Arc<TeeClient>,
+    tee_ethereum: Arc<TeeEthereum>,
+) -> Router {
     let state = AppState::new(
         db,
         config,
-        ipfs_client,
+        ipfs_client.as_ref().clone(),
         contract_caller,
         notifier.clone(),
         tee_service,
+        tee_ethereum,
     );
 
     // Health check routes (no authentication)

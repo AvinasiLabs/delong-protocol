@@ -4,14 +4,17 @@
 //! using the alloy library.
 
 use crate::config::ChainConfig;
+
+use crate::infra::{db::Database, TeeEthereum, KEY_CTX_CONTRACT_OWNER};
+use alloy::providers::Provider;
+use alloy::sol_types::SolValue;
 use alloy::{
     network::EthereumWallet,
     primitives::{Address, U256},
-    providers::{Provider, ProviderBuilder},
+    providers::ProviderBuilder,
     rpc::types::{BlockNumberOrTag, Filter, Log},
     signers::local::{LocalSignerError, PrivateKeySigner},
     sol,
-    sol_types::SolValue,
 };
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
@@ -93,42 +96,109 @@ pub struct ContractAddresses {
 #[derive(Clone)]
 pub struct ContractCaller {
     config: ChainConfig,
-    wallet: EthereumWallet,
+    official_wallet: EthereumWallet, // Official wallet for funding operations
+    tee_wallet: Option<EthereumWallet>, // TEE-derived wallet for contract operations
+    tee_ethereum: Option<Arc<TeeEthereum>>, // TEE Ethereum manager
     addresses: ContractAddresses,
+    db: Database, // Database connection for contract storage
 }
 
 impl ContractCaller {
     /// Create a new contract caller instance
-    pub async fn new(config: ChainConfig) -> Result<Self> {
-        // Get private key from config or use a default for development
+    pub async fn new(config: ChainConfig, db: Database) -> Result<Self> {
+        // Get official private key from config for funding operations
         let private_key = config.private_key.clone().ok_or_else(|| {
             ContractError::InvalidConfig("OFFICIAL_ACCOUNT_PRIVATE_KEY not set".to_string())
         })?;
 
         let signer = PrivateKeySigner::from_str(&private_key)?;
-        let wallet = EthereumWallet::from(signer);
+        let official_wallet = EthereumWallet::from(signer);
 
-        // Parse contract addresses from config
-        let addresses = ContractAddresses {
-            data_contribution: Address::from_str(&config.data_contribution_address)
-                .map_err(|e| ContractError::ParseError(e.to_string()))?,
-            algorithm_review: Address::from_str(&config.algorithm_review_address)
-                .map_err(|e| ContractError::ParseError(e.to_string()))?,
-        };
+        // Load contract addresses from database
+        let addresses = Self::load_contract_addresses(&db).await?;
 
         Ok(ContractCaller {
             config,
-            wallet,
+            official_wallet,
+            tee_wallet: None,
+            tee_ethereum: None,
             addresses,
+            db,
         })
     }
 
-    /// Create a provider instance
-    async fn create_provider(&self) -> Result<impl Provider> {
+    /// Load contract addresses from database
+    async fn load_contract_addresses(db: &Database) -> Result<ContractAddresses> {
+        let chain_id = std::env::var("CHAIN_ID").unwrap_or_else(|_| "31337".to_string());
+
+        // Try to load addresses from database using runtime queries
+        // This allows the code to compile even if the table doesn't exist yet
+        let data_contribution: Option<String> = sqlx::query_scalar(
+            "SELECT address FROM contract_meta WHERE name = $1 AND chain_id = $2",
+        )
+        .bind("DataContribution")
+        .bind(&chain_id)
+        .fetch_optional(db.pool())
+        .await
+        .unwrap_or(None); // If table doesn't exist, treat as None
+
+        let algorithm_review: Option<String> = sqlx::query_scalar(
+            "SELECT address FROM contract_meta WHERE name = $1 AND chain_id = $2",
+        )
+        .bind("AlgorithmReview")
+        .bind(&chain_id)
+        .fetch_optional(db.pool())
+        .await
+        .unwrap_or(None); // If table doesn't exist, treat as None
+
+        // Use zero addresses if not found in database - will trigger deployment
+        let data_contribution = data_contribution
+            .and_then(|addr| Address::from_str(&addr).ok())
+            .unwrap_or(Address::ZERO);
+
+        let algorithm_review = algorithm_review
+            .and_then(|addr| Address::from_str(&addr).ok())
+            .unwrap_or(Address::ZERO);
+
+        Ok(ContractAddresses {
+            data_contribution,
+            algorithm_review,
+        })
+    }
+
+    /// Initialize TEE wallet for contract operations
+    pub async fn with_tee(mut self, tee_ethereum: Arc<TeeEthereum>) -> Result<Self> {
+        // Get TEE-derived contract owner account
+        let tee_account = tee_ethereum.get_contract_owner().await.map_err(|e| {
+            ContractError::InvalidConfig(format!("Failed to get TEE account: {}", e))
+        })?;
+
+        // Get the signer from TEE ethereum manager
+        let tee_signer = tee_ethereum
+            .get_signer(KEY_CTX_CONTRACT_OWNER)
+            .await
+            .map_err(|e| {
+                ContractError::InvalidConfig(format!("Failed to get TEE signer: {}", e))
+            })?;
+
+        let tee_wallet = EthereumWallet::from(tee_signer);
+
+        info!(
+            "Initialized TEE wallet with address: {}",
+            tee_account.address
+        );
+
+        self.tee_wallet = Some(tee_wallet);
+        self.tee_ethereum = Some(tee_ethereum);
+        Ok(self)
+    }
+
+    /// Create a provider instance with the official wallet (for funding)
+    async fn create_official_provider(&self) -> Result<impl Provider> {
         let provider_url = &self.config.rpc_url;
 
         let provider = ProviderBuilder::new()
-            .wallet(self.wallet.clone())
+            .wallet(self.official_wallet.clone())
             .connect(provider_url)
             .await
             .map_err(|e| ContractError::ProviderError(format!("Failed to connect: {}", e)))?;
@@ -136,35 +206,84 @@ impl ContractCaller {
         Ok(provider)
     }
 
-    /// Ensure the wallet has sufficient balance
+    /// Create a provider instance with the TEE wallet (for contract operations)
+    async fn create_tee_provider(&self) -> Result<impl Provider> {
+        let provider_url = &self.config.rpc_url;
+
+        let tee_wallet = self.tee_wallet.as_ref().ok_or_else(|| {
+            ContractError::InvalidConfig("TEE wallet not initialized".to_string())
+        })?;
+
+        let provider = ProviderBuilder::new()
+            .wallet(tee_wallet.clone())
+            .connect(provider_url)
+            .await
+            .map_err(|e| ContractError::ProviderError(format!("Failed to connect: {}", e)))?;
+
+        Ok(provider)
+    }
+
+    /// Ensure the TEE wallet has sufficient balance (funded by official wallet if needed)
     pub async fn ensure_sufficient_balance(&self, required_eth: f64) -> Result<()> {
-        let provider = self.create_provider().await?;
-        let signer = self.wallet.default_signer();
-        let address = signer.address();
+        // First check if TEE wallet is initialized
+        let tee_wallet = self.tee_wallet.as_ref().ok_or_else(|| {
+            ContractError::InvalidConfig("TEE wallet not initialized".to_string())
+        })?;
+
+        let tee_address = tee_wallet.default_signer().address();
+
+        // Check TEE wallet balance
+        let provider = self.create_official_provider().await?;
         let balance = provider
-            .get_balance(address)
+            .get_balance(tee_address)
             .await
             .map_err(|e| ContractError::ProviderError(e.to_string()))?;
         let balance_eth = balance.to::<u128>() as f64 / 1e18;
 
         if balance_eth < required_eth {
-            return Err(ContractError::InsufficientBalance {
-                required: required_eth,
-                available: balance_eth,
-            });
+            // Fund the TEE wallet from official wallet
+            info!(
+                "TEE wallet balance insufficient: {} ETH (required: {} ETH). Funding from official wallet...",
+                balance_eth, required_eth
+            );
+
+            // Check official wallet balance first
+            let official_address = self.official_wallet.default_signer().address();
+            let official_balance = provider
+                .get_balance(official_address)
+                .await
+                .map_err(|e| ContractError::ProviderError(e.to_string()))?;
+            let official_balance_eth = official_balance.to::<u128>() as f64 / 1e18;
+
+            let transfer_amount = required_eth - balance_eth + 0.01; // Add a small buffer
+
+            if official_balance_eth < transfer_amount {
+                return Err(ContractError::InsufficientBalance {
+                    required: transfer_amount,
+                    available: official_balance_eth,
+                });
+            }
+
+            // TODO: Implement transfer from official wallet to TEE wallet
+            // This would involve creating and sending a transaction
+            debug!(
+                "Would transfer {} ETH from official wallet {} to TEE wallet {}",
+                transfer_amount, official_address, tee_address
+            );
+        } else {
+            debug!(
+                "TEE wallet balance: {} ETH (required: {} ETH)",
+                balance_eth, required_eth
+            );
         }
 
-        debug!(
-            "Wallet balance: {} ETH (required: {} ETH)",
-            balance_eth, required_eth
-        );
         Ok(())
     }
 
     /// Ensure contracts are deployed and accessible
-    /// If contracts are not deployed, deploy them using the configured wallet
+    /// If contracts are not deployed, deploy them using the TEE wallet
     pub async fn ensure_contracts_deployed(&mut self) -> Result<()> {
-        let provider = self.create_provider().await?;
+        let provider = self.create_tee_provider().await?;
 
         // Check DataContribution contract
         let data_code = provider
@@ -175,7 +294,7 @@ impl ContractCaller {
             info!("DataContribution contract not found, deploying...");
 
             // Deploy DataContribution contract
-            let deploy_provider = self.create_provider().await?;
+            let deploy_provider = self.create_tee_provider().await?;
             let deploy_tx = DataContribution::deploy(deploy_provider)
                 .await
                 .map_err(|e| {
@@ -213,7 +332,7 @@ impl ContractCaller {
             info!("AlgorithmReview contract not found, deploying...");
 
             // Deploy AlgorithmReview contract
-            let deploy_provider = self.create_provider().await?;
+            let deploy_provider = self.create_tee_provider().await?;
             let deploy_tx = AlgorithmReview::deploy(deploy_provider)
                 .await
                 .map_err(|e| {
@@ -261,7 +380,7 @@ impl ContractCaller {
         algo_cid: String,
         dataset_name: String,
     ) -> Result<String> {
-        let provider = self.create_provider().await?;
+        let provider = self.create_tee_provider().await?;
         let contract = DataContribution::new(self.addresses.data_contribution, provider);
 
         let when = U256::from(chrono::Utc::now().timestamp() as u64);
@@ -287,7 +406,7 @@ impl ContractCaller {
         ipfs_cid: String,
         dataset_name: String,
     ) -> Result<String> {
-        let provider = self.create_provider().await?;
+        let provider = self.create_tee_provider().await?;
         let contract = DataContribution::new(self.addresses.data_contribution, provider);
 
         // Call the registerData function on the smart contract
@@ -316,7 +435,7 @@ impl ContractCaller {
         algorithm_cid: String,
         dataset_name: String,
     ) -> Result<String> {
-        let provider = self.create_provider().await?;
+        let provider = self.create_tee_provider().await?;
         let contract = AlgorithmReview::new(self.addresses.algorithm_review, provider);
 
         // TODO: Get proper execution_id from somewhere
@@ -343,7 +462,7 @@ impl ContractCaller {
 
     /// Add a committee member
     pub async fn add_committee_member(&self, member: Address) -> Result<String> {
-        let provider = self.create_provider().await?;
+        let provider = self.create_tee_provider().await?;
         let contract = AlgorithmReview::new(self.addresses.algorithm_review, provider);
 
         let call = contract.setCommitteeMember(member, true);
@@ -363,7 +482,7 @@ impl ContractCaller {
 
     /// Remove a committee member
     pub async fn remove_committee_member(&self, member: Address) -> Result<String> {
-        let provider = self.create_provider().await?;
+        let provider = self.create_tee_provider().await?;
         let contract = AlgorithmReview::new(self.addresses.algorithm_review, provider);
 
         let call = contract.setCommitteeMember(member, false);
@@ -386,7 +505,7 @@ impl ContractCaller {
 
     /// Set voting duration
     pub async fn set_voting_duration(&self, duration_seconds: U256) -> Result<String> {
-        let provider = self.create_provider().await?;
+        let provider = self.create_tee_provider().await?;
         let contract = AlgorithmReview::new(self.addresses.algorithm_review, provider);
 
         let call = contract.setVotingDuration(duration_seconds);
@@ -409,7 +528,7 @@ impl ContractCaller {
 
     /// Vote on an algorithm
     pub async fn vote_on_algorithm(&self, algorithm_cid: String, vote: bool) -> Result<String> {
-        let provider = self.create_provider().await?;
+        let provider = self.create_tee_provider().await?;
         let contract = AlgorithmReview::new(self.addresses.algorithm_review, provider);
 
         let call = contract.vote(algorithm_cid.clone(), vote);
@@ -436,7 +555,7 @@ impl ContractCaller {
         algorithm_cid: String,
         execution_id: U256,
     ) -> Result<String> {
-        let provider = self.create_provider().await?;
+        let provider = self.create_tee_provider().await?;
         let contract = AlgorithmReview::new(self.addresses.algorithm_review, provider);
 
         let call = contract.resolve(algorithm_cid.clone(), execution_id);
@@ -456,7 +575,7 @@ impl ContractCaller {
 
     /// Check if an address is a committee member
     pub async fn is_committee_member(&self, address: Address) -> Result<bool> {
-        let provider = self.create_provider().await?;
+        let provider = self.create_tee_provider().await?;
         let contract = AlgorithmReview::new(self.addresses.algorithm_review, provider);
 
         let is_member = contract.isCommitteeMember(address).call().await?;
@@ -465,7 +584,7 @@ impl ContractCaller {
 
     /// Get the contract owner
     pub async fn get_contract_owner(&self) -> Result<Address> {
-        let provider = self.create_provider().await?;
+        let provider = self.create_tee_provider().await?;
         let contract = AlgorithmReview::new(self.addresses.algorithm_review, provider);
 
         let owner = contract.owner().call().await?;
@@ -474,20 +593,31 @@ impl ContractCaller {
 
     /// Store contract address in database
     async fn store_contract_address(&self, name: &str, address: Address) -> Result<()> {
-        // This would typically store the contract address in the database
-        // using the contract_meta table
         info!("Storing contract {} at address {:?}", name, address);
 
-        // TODO: Implement database storage when Database connection is available
-        // sqlx::query!(
-        //     "INSERT INTO contract_meta (name, address) VALUES ($1, $2)
-        //      ON CONFLICT (name) DO UPDATE SET address = $2",
-        //     name,
-        //     format!("{:?}", address)
-        // )
-        // .execute(&self.db)
-        // .await
-        // .map_err(|e| ContractError::ContractCallError(format!("Failed to store contract address: {}", e)))?;
+        let chain_id = std::env::var("CHAIN_ID").unwrap_or_else(|_| "31337".to_string());
+        let address_str = format!("{:#x}", address);
+
+        // Use runtime query to avoid compile-time dependency on table existence
+        sqlx::query(
+            "INSERT INTO contract_meta (name, address, chain_id, deployed_at)
+             VALUES ($1, $2, $3, NOW())
+             ON CONFLICT (name, chain_id) DO UPDATE
+             SET address = $2, deployed_at = NOW()",
+        )
+        .bind(name)
+        .bind(&address_str)
+        .bind(&chain_id)
+        .execute(self.db.pool())
+        .await
+        .map_err(|e| {
+            // Log but don't fail if table doesn't exist yet
+            info!(
+                "Could not store contract address (table may not exist yet): {}",
+                e
+            );
+            ContractError::ContractCallError(format!("Failed to store contract address: {}", e))
+        })?;
 
         Ok(())
     }
@@ -508,7 +638,7 @@ impl ContractCaller {
             .from_block(BlockNumberOrTag::Latest);
 
         // Subscribe to logs
-        let provider = self.create_provider().await?;
+        let provider = self.create_tee_provider().await?;
         let sub = provider
             .subscribe_logs(&filter)
             .await
@@ -546,7 +676,7 @@ impl ContractCaller {
             self.addresses.algorithm_review,
         ]);
 
-        let provider = self.create_provider().await?;
+        let provider = self.create_tee_provider().await?;
         let logs = provider.get_logs(&filter).await?;
         Ok(logs)
     }

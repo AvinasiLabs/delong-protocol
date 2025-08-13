@@ -1,4 +1,5 @@
-use super::tee_error::{TeeError, TeeResult};
+use super::client::{Client, Key};
+use super::error::{Error, Result};
 use hkdf::Hkdf;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
@@ -6,8 +7,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
-
-use super::tee::{TeeKey, TeeService};
 
 /// Key context for upload report encryption
 pub const KEY_CTX_UPLOAD_REPORT_ENCRYPT: &str = "upload-report-key/encrypt-user-test-report";
@@ -20,11 +19,11 @@ pub const KEY_CTX_DATA_ENCRYPT_PREFIX: &str = "data-encrypt-key";
 
 /// Symmetric key with attestation
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AttestatedSymmetricKey {
+pub struct SymmetricKey {
     /// The symmetric key bytes
     pub key: Vec<u8>,
     /// Associated TEE key with attestation
-    pub tee_key: TeeKey,
+    pub tee_key: Key,
     /// Key purpose/context
     pub context: String,
     /// Key length in bytes
@@ -52,17 +51,17 @@ impl Default for KeyDerivationParams {
     }
 }
 
-/// TEE-backed key management service
-pub struct TeeKeyManagementService {
-    tee_service: Arc<TeeService>,
-    key_cache: Arc<RwLock<HashMap<String, AttestatedSymmetricKey>>>,
+/// TEE-backed key management
+pub struct KeyManager {
+    client: Arc<Client>,
+    key_cache: Arc<RwLock<HashMap<String, SymmetricKey>>>,
 }
 
-impl TeeKeyManagementService {
-    /// Create a new key management service
-    pub fn new(tee_service: Arc<TeeService>) -> Self {
+impl KeyManager {
+    /// Create a new key manager
+    pub fn new(client: Arc<Client>) -> Self {
         Self {
-            tee_service,
+            client,
             key_cache: Arc::new(RwLock::new(HashMap::new())),
         }
     }
@@ -72,7 +71,7 @@ impl TeeKeyManagementService {
         &self,
         context: &str,
         params: Option<KeyDerivationParams>,
-    ) -> TeeResult<AttestatedSymmetricKey> {
+    ) -> Result<SymmetricKey> {
         // Check cache first
         {
             let cache = self.key_cache.read().await;
@@ -88,11 +87,11 @@ impl TeeKeyManagementService {
 
         // Get master key from TEE
         let tee_key = self
-            .tee_service
+            .client
             .derive_key(context, Some("symmetric"))
             .await
             .map_err(|e| {
-                TeeError::key_derivation(
+                Error::key_derivation(
                     context,
                     Some(format!("Failed to derive master key from TEE: {}", e)),
                 )
@@ -102,7 +101,7 @@ impl TeeKeyManagementService {
         let master_key = hex::decode(&tee_key.key)?;
         let derived_key = self.derive_key_hkdf(&master_key, &params)?;
 
-        let attested_key = AttestatedSymmetricKey {
+        let symmetric_key = SymmetricKey {
             key: derived_key,
             tee_key,
             context: context.to_string(),
@@ -112,7 +111,7 @@ impl TeeKeyManagementService {
         // Cache the key
         {
             let mut cache = self.key_cache.write().await;
-            cache.insert(context.to_string(), attested_key.clone());
+            cache.insert(context.to_string(), symmetric_key.clone());
         }
 
         info!(
@@ -120,11 +119,11 @@ impl TeeKeyManagementService {
             context, params.key_length
         );
 
-        Ok(attested_key)
+        Ok(symmetric_key)
     }
 
     /// Get encryption key for upload reports
-    pub async fn get_upload_report_key(&self) -> TeeResult<AttestatedSymmetricKey> {
+    pub async fn get_upload_report_key(&self) -> Result<SymmetricKey> {
         let params = KeyDerivationParams {
             salt: Some(b"upload-report-salt".to_vec()),
             info: b"encrypt-user-test-report".to_vec(),
@@ -136,10 +135,7 @@ impl TeeKeyManagementService {
     }
 
     /// Get encryption key for a specific task
-    pub async fn get_task_encryption_key(
-        &self,
-        task_id: &str,
-    ) -> TeeResult<AttestatedSymmetricKey> {
+    pub async fn get_task_encryption_key(&self, task_id: &str) -> Result<SymmetricKey> {
         let context = format!("{}/{}", KEY_CTX_TASK_ENCRYPT_PREFIX, task_id);
         let params = KeyDerivationParams {
             salt: Some(format!("task-{}-salt", task_id).into_bytes()),
@@ -151,10 +147,7 @@ impl TeeKeyManagementService {
     }
 
     /// Get encryption key for data encryption
-    pub async fn get_data_encryption_key(
-        &self,
-        data_id: &str,
-    ) -> TeeResult<AttestatedSymmetricKey> {
+    pub async fn get_data_encryption_key(&self, data_id: &str) -> Result<SymmetricKey> {
         let context = format!("{}/{}", KEY_CTX_DATA_ENCRYPT_PREFIX, data_id);
         let params = KeyDerivationParams {
             salt: Some(format!("data-{}-salt", data_id).into_bytes()),
@@ -166,11 +159,11 @@ impl TeeKeyManagementService {
     }
 
     /// Derive a key using HKDF
-    fn derive_key_hkdf(&self, ikm: &[u8], params: &KeyDerivationParams) -> TeeResult<Vec<u8>> {
+    fn derive_key_hkdf(&self, ikm: &[u8], params: &KeyDerivationParams) -> Result<Vec<u8>> {
         let mut okm = vec![0u8; params.key_length];
         let hk = Hkdf::<Sha256>::new(params.salt.as_deref(), ikm);
         hk.expand(&params.info, &mut okm)
-            .map_err(|e| TeeError::HkdfFailed(format!("HKDF expansion failed: {}", e)))?;
+            .map_err(|e| Error::HkdfFailed(format!("HKDF expansion failed: {}", e)))?;
         Ok(okm)
     }
 
@@ -181,9 +174,9 @@ impl TeeKeyManagementService {
         salt: Option<&[u8]>,
         info: &[u8],
         key_length: usize,
-    ) -> TeeResult<Vec<u8>> {
+    ) -> Result<Vec<u8>> {
         // Get master key from cache or derive it
-        let attested_key = self.get_symmetric_key(context, None).await?;
+        let symmetric_key = self.get_symmetric_key(context, None).await?;
 
         // Derive custom key using HKDF
         let params = KeyDerivationParams {
@@ -192,7 +185,7 @@ impl TeeKeyManagementService {
             key_length,
         };
 
-        self.derive_key_hkdf(&attested_key.key, &params)
+        self.derive_key_hkdf(&symmetric_key.key, &params)
     }
 
     /// Clear the key cache
@@ -209,7 +202,7 @@ impl TeeKeyManagementService {
     }
 
     /// Generate a random nonce using TEE
-    pub async fn generate_nonce(&self, length: usize) -> TeeResult<Vec<u8>> {
+    pub async fn generate_nonce(&self, length: usize) -> Result<Vec<u8>> {
         // Use TEE to derive a nonce
         let context = format!("nonce/{}", uuid::Uuid::new_v4());
         let params = KeyDerivationParams {
@@ -223,29 +216,28 @@ impl TeeKeyManagementService {
     }
 }
 
-/// Builder for creating a key management service
-pub struct TeeKeyManagementServiceBuilder {
-    tee_service: Option<Arc<TeeService>>,
+/// Builder for creating a key manager
+pub struct KeyManagerBuilder {
+    client: Option<Arc<Client>>,
 }
 
-impl TeeKeyManagementServiceBuilder {
+impl KeyManagerBuilder {
     pub fn new() -> Self {
-        Self { tee_service: None }
+        Self { client: None }
     }
 
-    pub fn tee_service(mut self, service: Arc<TeeService>) -> Self {
-        self.tee_service = Some(service);
+    pub fn client(mut self, client: Arc<Client>) -> Self {
+        self.client = Some(client);
         self
     }
 
-    pub fn build(self) -> TeeResult<TeeKeyManagementService> {
-        let tee_service = self.tee_service.ok_or(TeeError::ServiceUnavailable)?;
-
-        Ok(TeeKeyManagementService::new(tee_service))
+    pub fn build(self) -> Result<KeyManager> {
+        let client = self.client.ok_or(Error::ServiceUnavailable)?;
+        Ok(KeyManager::new(client))
     }
 }
 
-impl Default for TeeKeyManagementServiceBuilder {
+impl Default for KeyManagerBuilder {
     fn default() -> Self {
         Self::new()
     }
@@ -254,66 +246,65 @@ impl Default for TeeKeyManagementServiceBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::infra::tee::test_helpers;
 
     #[tokio::test]
     async fn test_symmetric_key_derivation() {
-        let tee_service = Arc::new(test_helpers::create_test_tee_service());
-        let key_service = TeeKeyManagementService::new(tee_service);
+        let client = Arc::new(super::super::test_helpers::create_test_client());
+        let key_manager = KeyManager::new(client);
 
-        let key = key_service.get_symmetric_key("test-context", None).await;
+        let key = key_manager.get_symmetric_key("test-context", None).await;
         assert!(key.is_ok());
 
-        if let Ok(attested_key) = key {
-            assert_eq!(attested_key.context, "test-context");
-            assert_eq!(attested_key.key_length, 32); // Default length
-            assert_eq!(attested_key.key.len(), 32);
+        if let Ok(symmetric_key) = key {
+            assert_eq!(symmetric_key.context, "test-context");
+            assert_eq!(symmetric_key.key_length, 32); // Default length
+            assert_eq!(symmetric_key.key.len(), 32);
         }
     }
 
     #[tokio::test]
     async fn test_upload_report_key() {
-        let tee_service = Arc::new(test_helpers::create_test_tee_service());
-        let key_service = TeeKeyManagementService::new(tee_service);
+        let client = Arc::new(super::super::test_helpers::create_test_client());
+        let key_manager = KeyManager::new(client);
 
-        let key = key_service.get_upload_report_key().await;
+        let key = key_manager.get_upload_report_key().await;
         assert!(key.is_ok());
 
-        if let Ok(attested_key) = key {
-            assert_eq!(attested_key.context, KEY_CTX_UPLOAD_REPORT_ENCRYPT);
-            assert_eq!(attested_key.key.len(), 32);
+        if let Ok(symmetric_key) = key {
+            assert_eq!(symmetric_key.context, KEY_CTX_UPLOAD_REPORT_ENCRYPT);
+            assert_eq!(symmetric_key.key.len(), 32);
         }
     }
 
     #[tokio::test]
     async fn test_task_encryption_key() {
-        let tee_service = Arc::new(test_helpers::create_test_tee_service());
-        let key_service = TeeKeyManagementService::new(tee_service);
+        let client = Arc::new(super::super::test_helpers::create_test_client());
+        let key_manager = KeyManager::new(client);
 
         let task_id = "task-123";
-        let key = key_service.get_task_encryption_key(task_id).await;
+        let key = key_manager.get_task_encryption_key(task_id).await;
         assert!(key.is_ok());
 
-        if let Ok(attested_key) = key {
-            assert!(attested_key.context.contains(KEY_CTX_TASK_ENCRYPT_PREFIX));
-            assert!(attested_key.context.contains(task_id));
-            assert_eq!(attested_key.key.len(), 32);
+        if let Ok(symmetric_key) = key {
+            assert!(symmetric_key.context.contains(KEY_CTX_TASK_ENCRYPT_PREFIX));
+            assert!(symmetric_key.context.contains(task_id));
+            assert_eq!(symmetric_key.key.len(), 32);
         }
     }
 
     #[tokio::test]
     async fn test_key_caching() {
-        let tee_service = Arc::new(test_helpers::create_test_tee_service());
-        let key_service = TeeKeyManagementService::new(tee_service);
+        let client = Arc::new(super::super::test_helpers::create_test_client());
+        let key_manager = KeyManager::new(client);
 
         let context = "cache-test";
 
         // First call should derive new key
-        let key1 = key_service.get_symmetric_key(context, None).await;
+        let key1 = key_manager.get_symmetric_key(context, None).await;
         assert!(key1.is_ok());
 
         // Second call should use cached key
-        let key2 = key_service.get_symmetric_key(context, None).await;
+        let key2 = key_manager.get_symmetric_key(context, None).await;
         assert!(key2.is_ok());
 
         if let (Ok(k1), Ok(k2)) = (key1, key2) {
@@ -324,10 +315,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_custom_key_derivation() {
-        let tee_service = Arc::new(test_helpers::create_test_tee_service());
-        let key_service = TeeKeyManagementService::new(tee_service);
+        let client = Arc::new(super::super::test_helpers::create_test_client());
+        let key_manager = KeyManager::new(client);
 
-        let custom_key = key_service
+        let custom_key = key_manager
             .derive_custom_key(
                 "custom-context",
                 Some(b"custom-salt"),

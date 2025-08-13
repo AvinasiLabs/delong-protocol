@@ -93,6 +93,23 @@ services:
     networks:
       - secure-dev-network
 
+  # DStack Proxy for testing (optional)
+  # This proxy allows HTTP access to dstack-simulator's Unix socket
+  # Start with: docker-compose up -d dstack-proxy
+  dstack-proxy:
+    image: alpine/socat:latest
+    container_name: secure-dstack-proxy-dev
+    restart: unless-stopped
+    depends_on:
+      - dstack-simulator
+    ports:
+      - "11010:8090"
+    volumes:
+      - simulator_sockets:/sockets:ro
+    command: TCP-LISTEN:8090,fork,reuseaddr UNIX-CONNECT:/sockets/dstack.sock
+    networks:
+      - secure-dev-network
+
   # Data Pipeline service
   delong-datapipe:
     image: lilhammer/delong-pipeline:latest

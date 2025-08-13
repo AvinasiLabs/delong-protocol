@@ -7,7 +7,7 @@ use thiserror::Error;
 
 /// Errors that can occur during TEE operations
 #[derive(Debug, Error)]
-pub enum TeeError {
+pub enum Error {
     /// Failed to initialize TEE client
     #[error("Failed to initialize TEE client: {0}")]
     ClientInitialization(String),
@@ -87,21 +87,19 @@ impl std::fmt::Display for SigningOperation {
 }
 
 /// Result type for TEE operations
-pub type TeeResult<T> = Result<T, TeeError>;
+pub type Result<T> = std::result::Result<T, Error>;
 
 // Implement conversion to AppError for seamless error propagation
-impl From<TeeError> for crate::AppError {
-    fn from(err: TeeError) -> Self {
+impl From<Error> for crate::AppError {
+    fn from(err: Error) -> Self {
         match &err {
-            TeeError::ClientInitialization(_)
-            | TeeError::ServiceUnavailable
-            | TeeError::InvalidConfig(_)
-            | TeeError::KeyDerivation(_)
-            | TeeError::KeyDerivationWithContext { .. } => {
-                crate::AppError::Internal(err.to_string())
-            }
-            TeeError::AccountNotFound(_) => crate::AppError::NotFound(err.to_string()),
-            TeeError::Serialization { .. } | TeeError::HexDecode(_) | TeeError::Json(_) => {
+            Error::ClientInitialization(_)
+            | Error::ServiceUnavailable
+            | Error::InvalidConfig(_)
+            | Error::KeyDerivation(_)
+            | Error::KeyDerivationWithContext { .. } => crate::AppError::Internal(err.to_string()),
+            Error::AccountNotFound(_) => crate::AppError::NotFound(err.to_string()),
+            Error::Serialization { .. } | Error::HexDecode(_) | Error::Json(_) => {
                 crate::AppError::Validation(err.to_string())
             }
             _ => crate::AppError::Internal(err.to_string()),
@@ -110,26 +108,15 @@ impl From<TeeError> for crate::AppError {
 }
 
 // Helper functions for creating errors with context
-impl TeeError {
+impl Error {
     /// Create a KeyDerivation error with optional source context
     pub fn key_derivation(context: &str, source: Option<String>) -> Self {
         match source {
-            Some(msg) => TeeError::KeyDerivationWithContext {
+            Some(msg) => Error::KeyDerivationWithContext {
                 context: context.to_string(),
                 message: msg,
             },
-            None => TeeError::KeyDerivation(context.to_string()),
+            None => Error::KeyDerivation(context.to_string()),
         }
     }
-}
-
-// Helper macro for creating TeeError with context
-#[macro_export]
-macro_rules! tee_error {
-    ($variant:ident, $msg:expr) => {
-        $crate::infra::tee_error::TeeError::$variant($msg.to_string())
-    };
-    ($variant:ident { $($field:ident: $value:expr),* }) => {
-        $crate::infra::tee_error::TeeError::$variant { $($field: $value),* }
-    };
 }

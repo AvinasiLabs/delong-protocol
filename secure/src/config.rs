@@ -60,8 +60,6 @@ pub struct ChainConfig {
     pub ws_url: Option<String>,
     pub chain_id: u64,
     pub contract_address: String,
-    pub data_contribution_address: String,
-    pub algorithm_review_address: String,
     pub private_key: Option<String>,
     pub confirmations: u64,
     pub gas_price_multiplier: f64,
@@ -169,10 +167,6 @@ impl Config {
                 .unwrap_or(1),
             contract_address: env::var("CHAIN_CONTRACT_ADDRESS")
                 .unwrap_or_else(|_| "0x0000000000000000000000000000000000000000".to_string()),
-            data_contribution_address: env::var("CHAIN_DATA_CONTRIBUTION_ADDRESS")
-                .unwrap_or_else(|_| "0x5FbDB2315678afecb367f032d93F642f64180aa3".to_string()),
-            algorithm_review_address: env::var("CHAIN_ALGORITHM_REVIEW_ADDRESS")
-                .unwrap_or_else(|_| "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512".to_string()),
             private_key: env::var("OFFICIAL_ACCOUNT_PRIVATE_KEY").ok(),
             confirmations: env::var("CHAIN_CONFIRMATIONS")
                 .unwrap_or_else(|_| "1".to_string())
@@ -330,10 +324,6 @@ pub fn init_config() -> Result<Config, env::VarError> {
                 .expect("Invalid CHAIN_ID"),
             contract_address: env::var("CHAIN_CONTRACT_ADDRESS")
                 .unwrap_or_else(|_| "0x0000000000000000000000000000000000000000".to_string()),
-            data_contribution_address: env::var("CHAIN_DATA_CONTRIBUTION_ADDRESS")
-                .unwrap_or_else(|_| "0x5FbDB2315678afecb367f032d93F642f64180aa3".to_string()),
-            algorithm_review_address: env::var("CHAIN_ALGORITHM_REVIEW_ADDRESS")
-                .unwrap_or_else(|_| "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512".to_string()),
             private_key: env::var("OFFICIAL_ACCOUNT_PRIVATE_KEY").ok(),
             confirmations: env::var("CHAIN_CONFIRMATIONS")
                 .unwrap_or_else(|_| "1".to_string())
@@ -419,10 +409,6 @@ impl Default for Config {
                     ws_url: Some("ws://localhost:8545".to_string()),
                     chain_id: 1337,
                     contract_address: "0x0000000000000000000000000000000000000000".to_string(),
-                    data_contribution_address: "0x5FbDB2315678afecb367f032d93F642f64180aa3"
-                        .to_string(),
-                    algorithm_review_address: "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"
-                        .to_string(),
                     private_key: env::var("OFFICIAL_ACCOUNT_PRIVATE_KEY").ok(),
                     confirmations: 1,
                     gas_price_multiplier: 1.1,

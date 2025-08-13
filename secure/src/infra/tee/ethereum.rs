@@ -1,5 +1,6 @@
-use super::dstack_adapter::tee_key_to_ethereum_account;
-use super::tee_error::{SigningOperation, TeeError, TeeResult};
+use super::adapter::tee_key_to_ethereum_account;
+use super::client::{Client, Key};
+use super::error::{Error, Result, SigningOperation};
 use alloy::primitives::{Address, Bytes, B256};
 use alloy::signers::local::PrivateKeySigner;
 use alloy::signers::Signer;
@@ -8,10 +9,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
-use super::tee::{TeeKey, TeeService};
-
 /// Key context for TEE contract owner
-pub const KEY_CTX_TEE_CONTRACT_OWNER: &str = "tee-eth-account/contract-owner";
+pub const KEY_CTX_CONTRACT_OWNER: &str = "tee-eth-account/contract-owner";
 
 /// Key context for algorithm owner accounts
 pub const KEY_CTX_ALGORITHM_OWNER_PREFIX: &str = "tee-eth-account/algorithm-owner";
@@ -21,32 +20,32 @@ pub const KEY_CTX_DATASET_OWNER_PREFIX: &str = "tee-eth-account/dataset-owner";
 
 /// Ethereum account with attestation
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AttestatedEthereumAccount {
+pub struct EthereumAccount {
     /// Ethereum address
     pub address: Address,
     /// Associated TEE key with attestation
-    pub tee_key: TeeKey,
+    pub tee_key: Key,
     /// Account purpose/context
     pub context: String,
 }
 
-/// TEE-backed Ethereum service
-pub struct TeeEthereumService {
-    tee_service: Arc<TeeService>,
-    account_cache: Arc<RwLock<std::collections::HashMap<String, TeeKey>>>,
+/// TEE-backed Ethereum account manager
+pub struct Ethereum {
+    client: Arc<Client>,
+    account_cache: Arc<RwLock<std::collections::HashMap<String, Key>>>,
 }
 
-impl TeeEthereumService {
-    /// Create a new TEE Ethereum service
-    pub fn new(tee_service: Arc<TeeService>) -> Self {
+impl Ethereum {
+    /// Create a new Ethereum manager
+    pub fn new(client: Arc<Client>) -> Self {
         Self {
-            tee_service,
+            client,
             account_cache: Arc::new(RwLock::new(std::collections::HashMap::new())),
         }
     }
 
     /// Get or derive an Ethereum account for the given context
-    pub async fn get_account(&self, context: &str) -> TeeResult<AttestatedEthereumAccount> {
+    pub async fn get_account(&self, context: &str) -> Result<EthereumAccount> {
         // Check cache first
         {
             let cache = self.account_cache.read().await;
@@ -58,7 +57,7 @@ impl TeeEthereumService {
                     signature_chain: tee_key.signature_chain.clone(),
                 };
                 let signer = tee_key_to_ethereum_account(&key_response)?;
-                return Ok(AttestatedEthereumAccount {
+                return Ok(EthereumAccount {
                     address: signer.address(),
                     tee_key: tee_key.clone(),
                     context: context.to_string(),
@@ -69,11 +68,11 @@ impl TeeEthereumService {
         // Derive new account
         info!("Deriving new Ethereum account for context: {}", context);
         let tee_key = self
-            .tee_service
+            .client
             .derive_key(context, Some("ethereum"))
             .await
             .map_err(|e| {
-                TeeError::key_derivation(
+                Error::key_derivation(
                     context,
                     Some(format!("Failed to derive key from TEE: {}", e)),
                 )
@@ -99,7 +98,7 @@ impl TeeEthereumService {
             address, context
         );
 
-        Ok(AttestatedEthereumAccount {
+        Ok(EthereumAccount {
             address,
             tee_key,
             context: context.to_string(),
@@ -107,33 +106,30 @@ impl TeeEthereumService {
     }
 
     /// Get the contract owner account
-    pub async fn get_contract_owner(&self) -> TeeResult<AttestatedEthereumAccount> {
-        self.get_account(KEY_CTX_TEE_CONTRACT_OWNER).await
+    pub async fn get_contract_owner(&self) -> Result<EthereumAccount> {
+        self.get_account(KEY_CTX_CONTRACT_OWNER).await
     }
 
     /// Get an algorithm owner account
-    pub async fn get_algorithm_owner(&self, algo_id: &str) -> TeeResult<AttestatedEthereumAccount> {
+    pub async fn get_algorithm_owner(&self, algo_id: &str) -> Result<EthereumAccount> {
         let context = format!("{}/{}", KEY_CTX_ALGORITHM_OWNER_PREFIX, algo_id);
         self.get_account(&context).await
     }
 
     /// Get a dataset owner account
-    pub async fn get_dataset_owner(
-        &self,
-        dataset_id: &str,
-    ) -> TeeResult<AttestatedEthereumAccount> {
+    pub async fn get_dataset_owner(&self, dataset_id: &str) -> Result<EthereumAccount> {
         let context = format!("{}/{}", KEY_CTX_DATASET_OWNER_PREFIX, dataset_id);
         self.get_account(&context).await
     }
 
     /// Sign a message with the specified account
-    pub async fn sign_message(&self, context: &str, message: &[u8]) -> TeeResult<Bytes> {
+    pub async fn sign_message(&self, context: &str, message: &[u8]) -> Result<Bytes> {
         let cache = self.account_cache.read().await;
         let tee_key = cache
             .get(context)
-            .ok_or_else(|| TeeError::AccountNotFound(context.to_string()))?;
+            .ok_or_else(|| Error::AccountNotFound(context.to_string()))?;
 
-        // Recreate signer from TeeKey
+        // Recreate signer from Key
         let key_response = dstack_sdk::dstack_client::GetKeyResponse {
             key: tee_key.key.clone(),
             signature_chain: tee_key.signature_chain.clone(),
@@ -141,26 +137,25 @@ impl TeeEthereumService {
         let signer = tee_key_to_ethereum_account(&key_response)?;
 
         // Sign the message
-        let signature =
-            signer
-                .sign_message(message)
-                .await
-                .map_err(|e| TeeError::SigningFailed {
-                    operation: SigningOperation::Message,
-                    reason: format!("{:?}", e),
-                })?;
+        let signature = signer
+            .sign_message(message)
+            .await
+            .map_err(|e| Error::SigningFailed {
+                operation: SigningOperation::Message,
+                reason: format!("{:?}", e),
+            })?;
 
         Ok(signature.as_bytes().into())
     }
 
     /// Sign a transaction hash with the specified account
-    pub async fn sign_hash(&self, context: &str, hash: &B256) -> TeeResult<Bytes> {
+    pub async fn sign_hash(&self, context: &str, hash: &B256) -> Result<Bytes> {
         let cache = self.account_cache.read().await;
         let tee_key = cache
             .get(context)
-            .ok_or_else(|| TeeError::AccountNotFound(context.to_string()))?;
+            .ok_or_else(|| Error::AccountNotFound(context.to_string()))?;
 
-        // Recreate signer from TeeKey
+        // Recreate signer from Key
         let key_response = dstack_sdk::dstack_client::GetKeyResponse {
             key: tee_key.key.clone(),
             signature_chain: tee_key.signature_chain.clone(),
@@ -171,7 +166,7 @@ impl TeeEthereumService {
         let signature = signer
             .sign_hash(hash)
             .await
-            .map_err(|e| TeeError::SigningFailed {
+            .map_err(|e| Error::SigningFailed {
                 operation: SigningOperation::Hash,
                 reason: format!("{:?}", e),
             })?;
@@ -184,13 +179,13 @@ impl TeeEthereumService {
         &self,
         context: &str,
         payload: &T,
-    ) -> TeeResult<Bytes> {
+    ) -> Result<Bytes> {
         let cache = self.account_cache.read().await;
         let tee_key = cache
             .get(context)
-            .ok_or_else(|| TeeError::AccountNotFound(context.to_string()))?;
+            .ok_or_else(|| Error::AccountNotFound(context.to_string()))?;
 
-        // Recreate signer from TeeKey
+        // Recreate signer from Key
         let key_response = dstack_sdk::dstack_client::GetKeyResponse {
             key: tee_key.key.clone(),
             signature_chain: tee_key.signature_chain.clone(),
@@ -198,7 +193,7 @@ impl TeeEthereumService {
         let signer = tee_key_to_ethereum_account(&key_response)?;
 
         // Convert the payload to bytes and sign it as a message
-        let payload_bytes = serde_json::to_vec(&payload).map_err(|e| TeeError::Serialization {
+        let payload_bytes = serde_json::to_vec(&payload).map_err(|e| Error::Serialization {
             operation: "typed data payload".to_string(),
             details: e.to_string(),
         })?;
@@ -206,7 +201,7 @@ impl TeeEthereumService {
             signer
                 .sign_message(&payload_bytes)
                 .await
-                .map_err(|e| TeeError::SigningFailed {
+                .map_err(|e| Error::SigningFailed {
                     operation: SigningOperation::TypedData,
                     reason: format!("{:?}", e),
                 })?;
@@ -216,16 +211,16 @@ impl TeeEthereumService {
 
     /// Get the private key signer for advanced operations
     /// Note: Use with caution, prefer the sign_* methods when possible
-    pub async fn get_signer(&self, context: &str) -> TeeResult<PrivateKeySigner> {
+    pub async fn get_signer(&self, context: &str) -> Result<PrivateKeySigner> {
         // Ensure account is loaded
         let _ = self.get_account(context).await?;
 
         let cache = self.account_cache.read().await;
         let tee_key = cache
             .get(context)
-            .ok_or_else(|| TeeError::AccountNotFound(context.to_string()))?;
+            .ok_or_else(|| Error::AccountNotFound(context.to_string()))?;
 
-        // Recreate signer from TeeKey
+        // Recreate signer from Key
         let key_response = dstack_sdk::dstack_client::GetKeyResponse {
             key: tee_key.key.clone(),
             signature_chain: tee_key.signature_chain.clone(),
@@ -249,29 +244,28 @@ impl TeeEthereumService {
     }
 }
 
-/// Builder for creating a TEE Ethereum service
-pub struct TeeEthereumServiceBuilder {
-    tee_service: Option<Arc<TeeService>>,
+/// Builder for creating an Ethereum manager
+pub struct EthereumBuilder {
+    client: Option<Arc<Client>>,
 }
 
-impl TeeEthereumServiceBuilder {
+impl EthereumBuilder {
     pub fn new() -> Self {
-        Self { tee_service: None }
+        Self { client: None }
     }
 
-    pub fn tee_service(mut self, service: Arc<TeeService>) -> Self {
-        self.tee_service = Some(service);
+    pub fn client(mut self, client: Arc<Client>) -> Self {
+        self.client = Some(client);
         self
     }
 
-    pub fn build(self) -> TeeResult<TeeEthereumService> {
-        let tee_service = self.tee_service.ok_or(TeeError::ServiceUnavailable)?;
-
-        Ok(TeeEthereumService::new(tee_service))
+    pub fn build(self) -> Result<Ethereum> {
+        let client = self.client.ok_or(Error::ServiceUnavailable)?;
+        Ok(Ethereum::new(client))
     }
 }
 
-impl Default for TeeEthereumServiceBuilder {
+impl Default for EthereumBuilder {
     fn default() -> Self {
         Self::new()
     }
@@ -280,22 +274,21 @@ impl Default for TeeEthereumServiceBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::infra::tee::test_helpers;
 
     #[tokio::test]
     async fn test_account_derivation() {
-        let tee_service = Arc::new(test_helpers::create_test_tee_service());
-        let eth_service = TeeEthereumService::new(tee_service);
+        let client = Arc::new(super::super::test_helpers::create_test_client());
+        let eth_manager = Ethereum::new(client);
 
         // Test deriving contract owner account
-        let owner = eth_service.get_contract_owner().await;
+        let owner = eth_manager.get_contract_owner().await;
         if let Err(ref e) = owner {
             eprintln!("Failed to get contract owner: {:?}", e);
         }
         assert!(owner.is_ok());
 
         if let Ok(account) = owner {
-            assert_eq!(account.context, KEY_CTX_TEE_CONTRACT_OWNER);
+            assert_eq!(account.context, KEY_CTX_CONTRACT_OWNER);
             // Address should be valid (non-zero)
             assert_ne!(account.address, Address::ZERO);
         }
@@ -303,17 +296,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_account_caching() {
-        let tee_service = Arc::new(test_helpers::create_test_tee_service());
-        let eth_service = TeeEthereumService::new(tee_service);
+        let client = Arc::new(super::super::test_helpers::create_test_client());
+        let eth_manager = Ethereum::new(client);
 
         let context = "test-context";
 
         // First call should derive new account
-        let account1 = eth_service.get_account(context).await;
+        let account1 = eth_manager.get_account(context).await;
         assert!(account1.is_ok());
 
         // Second call should use cached account
-        let account2 = eth_service.get_account(context).await;
+        let account2 = eth_manager.get_account(context).await;
         assert!(account2.is_ok());
 
         if let (Ok(acc1), Ok(acc2)) = (account1, account2) {
@@ -324,11 +317,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_algorithm_owner_account() {
-        let tee_service = Arc::new(test_helpers::create_test_tee_service());
-        let eth_service = TeeEthereumService::new(tee_service);
+        let client = Arc::new(super::super::test_helpers::create_test_client());
+        let eth_manager = Ethereum::new(client);
 
         let algo_id = "algo-123";
-        let account = eth_service.get_algorithm_owner(algo_id).await;
+        let account = eth_manager.get_algorithm_owner(algo_id).await;
 
         assert!(account.is_ok());
         if let Ok(acc) = account {
@@ -339,11 +332,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_dataset_owner_account() {
-        let tee_service = Arc::new(test_helpers::create_test_tee_service());
-        let eth_service = TeeEthereumService::new(tee_service);
+        let client = Arc::new(super::super::test_helpers::create_test_client());
+        let eth_manager = Ethereum::new(client);
 
         let dataset_id = "dataset-456";
-        let account = eth_service.get_dataset_owner(dataset_id).await;
+        let account = eth_manager.get_dataset_owner(dataset_id).await;
 
         assert!(account.is_ok());
         if let Ok(acc) = account {

@@ -5,11 +5,14 @@
 
 use axum::{body::Body, http::Response, Router};
 use ipfs_api_backend_hyper::TryFromUri;
-use secure::{config::Config, infra::db::Database, routes};
+use secure::{
+    config::Config,
+    infra::{contracts::ContractCaller, db::Database, Notifier, TeeClientBuilder, TeeEthereum},
+    routes,
+};
 use serde_json::Value;
 use std::sync::Arc;
 use tracing::{info, warn};
-
 /// Set up a test database connection
 ///
 /// This function creates a database connection for testing purposes
@@ -65,7 +68,55 @@ pub async fn setup_test_app() -> Router {
     let db = setup_test_db().await;
     let config = setup_test_config();
 
-    routes::create_app(db, config).await
+    // Initialize IPFS client
+    let ipfs_client = Arc::new(
+        ipfs_api_backend_hyper::IpfsClient::from_str(&config.ipfs.api_url)
+            .expect("Failed to create IPFS client"),
+    );
+
+    // Initialize TEE services for testing
+    let tee_endpoint = std::env::var("DSTACK_SIMULATOR_ENDPOINT")
+        .unwrap_or_else(|_| "http://localhost:11010".to_string());
+    let tee_client = Arc::new(TeeClientBuilder::new().endpoint(tee_endpoint).build());
+    let tee_ethereum = Arc::new(TeeEthereum::new(tee_client.clone()));
+
+    // Initialize contract caller with TEE service
+    let contract_caller = ContractCaller::new(config.chain.clone(), db.clone())
+        .await
+        .expect("Failed to create contract caller");
+
+    // For testing, we may skip TEE initialization if not available
+    let contract_caller = if std::env::var("SKIP_TEE_INIT").is_ok() {
+        info!("Skipping TEE initialization for tests");
+        Arc::new(contract_caller)
+    } else {
+        match contract_caller.with_tee(tee_ethereum.clone()).await {
+            Ok(caller) => Arc::new(caller),
+            Err(e) => {
+                warn!("Failed to initialize TEE service for tests: {}", e);
+                // Continue without TEE - create a new instance
+                Arc::new(
+                    ContractCaller::new(config.chain.clone(), db.clone())
+                        .await
+                        .expect("Failed to create contract caller"),
+                )
+            }
+        }
+    };
+
+    // Create notifier
+    let notifier = Arc::new(Notifier::new());
+
+    routes::create_app(
+        db,
+        config,
+        ipfs_client,
+        contract_caller,
+        notifier,
+        tee_client,
+        tee_ethereum,
+    )
+    .await
 }
 
 /// Set up a test application with a clean database
@@ -88,7 +139,55 @@ pub async fn setup_clean_test_app() -> Router {
     // Clean up any existing test data before running tests
     cleanup_test_db(&db).await;
 
-    routes::create_app(db, config).await
+    // Initialize IPFS client
+    let ipfs_client = Arc::new(
+        ipfs_api_backend_hyper::IpfsClient::from_str(&config.ipfs.api_url)
+            .expect("Failed to create IPFS client"),
+    );
+
+    // Initialize TEE services for testing
+    let tee_endpoint = std::env::var("DSTACK_SIMULATOR_ENDPOINT")
+        .unwrap_or_else(|_| "http://localhost:11010".to_string());
+    let tee_client = Arc::new(TeeClientBuilder::new().endpoint(tee_endpoint).build());
+    let tee_ethereum = Arc::new(TeeEthereum::new(tee_client.clone()));
+
+    // Initialize contract caller with TEE service
+    let contract_caller = ContractCaller::new(config.chain.clone(), db.clone())
+        .await
+        .expect("Failed to create contract caller");
+
+    // For testing, we may skip TEE initialization if not available
+    let contract_caller = if std::env::var("SKIP_TEE_INIT").is_ok() {
+        info!("Skipping TEE initialization for tests");
+        Arc::new(contract_caller)
+    } else {
+        match contract_caller.with_tee(tee_ethereum.clone()).await {
+            Ok(caller) => Arc::new(caller),
+            Err(e) => {
+                warn!("Failed to initialize TEE service for tests: {}", e);
+                // Continue without TEE - create a new instance
+                Arc::new(
+                    ContractCaller::new(config.chain.clone(), db.clone())
+                        .await
+                        .expect("Failed to create contract caller"),
+                )
+            }
+        }
+    };
+
+    // Create notifier
+    let notifier = Arc::new(Notifier::new());
+
+    routes::create_app(
+        db,
+        config,
+        ipfs_client,
+        contract_caller,
+        notifier,
+        tee_client,
+        tee_ethereum,
+    )
+    .await
 }
 
 /// Extract JSON body from response
@@ -122,22 +221,38 @@ pub async fn create_test_state() -> secure::routes::AppState {
     let ipfs_client = ipfs_api_backend_hyper::IpfsClient::from_str(&config.ipfs.api_url)
         .expect("Failed to create IPFS client");
 
-    // Initialize TEE service
-    let tee_config = secure::infra::tee::TeeConfig {
-        endpoint: config
-            .tee
-            .enabled
-            .then(|| "/var/run/dstack.sock".to_string()),
-    };
-    let tee_service = Arc::new(secure::infra::tee::TeeService::new(tee_config));
+    // Initialize TEE services for testing
+    let tee_endpoint = std::env::var("DSTACK_SIMULATOR_ENDPOINT")
+        .unwrap_or_else(|_| "http://localhost:11010".to_string());
+    let tee_client = Arc::new(TeeClientBuilder::new().endpoint(tee_endpoint).build());
+    let tee_ethereum = Arc::new(TeeEthereum::new(tee_client.clone()));
 
-    // Initialize contract caller
-    let contract_caller = secure::infra::contracts::ContractCaller::new(config.chain.clone())
+    // Initialize contract caller with TEE service
+    let contract_caller = ContractCaller::new(config.chain.clone(), db.clone())
         .await
         .expect("Failed to create contract caller");
 
+    // For testing, we may skip TEE initialization if not available
+    let contract_caller = if std::env::var("SKIP_TEE_INIT").is_ok() {
+        info!("Skipping TEE initialization for tests");
+        Arc::new(contract_caller)
+    } else {
+        match contract_caller.with_tee(tee_ethereum.clone()).await {
+            Ok(caller) => Arc::new(caller),
+            Err(e) => {
+                warn!("Failed to initialize TEE service for tests: {}", e);
+                // Continue without TEE - create a new instance
+                Arc::new(
+                    ContractCaller::new(config.chain.clone(), db.clone())
+                        .await
+                        .expect("Failed to create contract caller"),
+                )
+            }
+        }
+    };
+
     // Create notifier
-    let notifier = Arc::new(secure::infra::Notifier::new());
+    let notifier = Arc::new(Notifier::new());
 
     secure::routes::AppState::new(
         db,
@@ -145,7 +260,8 @@ pub async fn create_test_state() -> secure::routes::AppState {
         ipfs_client,
         contract_caller,
         notifier,
-        tee_service,
+        tee_client,
+        tee_ethereum,
     )
 }
 
