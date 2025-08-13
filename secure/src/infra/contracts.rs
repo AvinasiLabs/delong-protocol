@@ -19,7 +19,7 @@ use alloy::{
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use std::sync::Arc;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 // Load contract ABIs
 sol!(
@@ -190,6 +190,15 @@ impl ContractCaller {
 
         self.tee_wallet = Some(tee_wallet);
         self.tee_ethereum = Some(tee_ethereum);
+
+        // Ensure TEE wallet has sufficient balance for operations
+        // Fund with a reasonable amount for testing/operations
+        if let Err(e) = self.ensure_sufficient_balance(1.0).await {
+            warn!("Failed to fund TEE wallet: {}. Continuing anyway.", e);
+        } else {
+            info!("TEE wallet funded successfully");
+        }
+
         Ok(self)
     }
 
@@ -264,11 +273,42 @@ impl ContractCaller {
                 });
             }
 
-            // TODO: Implement transfer from official wallet to TEE wallet
-            // This would involve creating and sending a transaction
+            // Transfer ETH from official wallet to TEE wallet
+            let transfer_amount_wei = U256::from((transfer_amount * 1e18) as u128);
+
             debug!(
-                "Would transfer {} ETH from official wallet {} to TEE wallet {}",
+                "Transferring {} ETH from official wallet {} to TEE wallet {}",
                 transfer_amount, official_address, tee_address
+            );
+
+            // Build and send the transfer transaction
+            let tx = alloy::rpc::types::TransactionRequest::default()
+                .to(tee_address)
+                .value(transfer_amount_wei)
+                .from(official_address);
+
+            let pending_tx = provider.send_transaction(tx).await.map_err(|e| {
+                ContractError::TransactionFailed(format!(
+                    "Failed to send funding transaction: {}",
+                    e
+                ))
+            })?;
+
+            // Wait for transaction confirmation
+            let receipt = pending_tx
+                .with_required_confirmations(self.config.confirmations)
+                .get_receipt()
+                .await
+                .map_err(|e| {
+                    ContractError::TransactionFailed(format!(
+                        "Failed to confirm funding transaction: {}",
+                        e
+                    ))
+                })?;
+
+            info!(
+                "Successfully funded TEE wallet with {} ETH. Tx hash: {:?}",
+                transfer_amount, receipt.transaction_hash
             );
         } else {
             debug!(
@@ -435,6 +475,9 @@ impl ContractCaller {
         algorithm_cid: String,
         dataset_name: String,
     ) -> Result<String> {
+        // Ensure TEE wallet has sufficient balance for the transaction
+        self.ensure_sufficient_balance(0.1).await?;
+
         let provider = self.create_tee_provider().await?;
         let contract = AlgorithmReview::new(self.addresses.algorithm_review, provider);
 
@@ -462,6 +505,9 @@ impl ContractCaller {
 
     /// Add a committee member
     pub async fn add_committee_member(&self, member: Address) -> Result<String> {
+        // Ensure TEE wallet has sufficient balance for the transaction
+        self.ensure_sufficient_balance(0.1).await?;
+
         let provider = self.create_tee_provider().await?;
         let contract = AlgorithmReview::new(self.addresses.algorithm_review, provider);
 
@@ -482,6 +528,9 @@ impl ContractCaller {
 
     /// Remove a committee member
     pub async fn remove_committee_member(&self, member: Address) -> Result<String> {
+        // Ensure TEE wallet has sufficient balance for the transaction
+        self.ensure_sufficient_balance(0.1).await?;
+
         let provider = self.create_tee_provider().await?;
         let contract = AlgorithmReview::new(self.addresses.algorithm_review, provider);
 
@@ -504,11 +553,14 @@ impl ContractCaller {
     }
 
     /// Set voting duration
-    pub async fn set_voting_duration(&self, duration_seconds: U256) -> Result<String> {
+    pub async fn set_voting_duration(&self, duration: U256) -> Result<String> {
+        // Ensure TEE wallet has sufficient balance for the transaction
+        self.ensure_sufficient_balance(0.1).await?;
+
         let provider = self.create_tee_provider().await?;
         let contract = AlgorithmReview::new(self.addresses.algorithm_review, provider);
 
-        let call = contract.setVotingDuration(duration_seconds);
+        let call = contract.setVotingDuration(duration);
 
         let pending_tx = call.send().await?;
         let receipt = pending_tx
@@ -518,10 +570,7 @@ impl ContractCaller {
             .map_err(|e| ContractError::TransactionFailed(e.to_string()))?;
 
         let tx_hash = format!("{:?}", receipt.transaction_hash);
-        info!(
-            "Voting duration set: duration={}, tx={}",
-            duration_seconds, tx_hash
-        );
+        info!("Voting duration set: duration={}, tx={}", duration, tx_hash);
 
         Ok(tx_hash)
     }

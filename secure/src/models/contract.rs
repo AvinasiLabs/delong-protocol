@@ -11,15 +11,30 @@ pub struct ContractMeta {
     pub id: i64,
     pub name: String,
     pub address: String,
+    pub chain_id: String,
+    pub deployed_at: DateTime<Utc>,
+    pub deployed_by: Option<String>,
+    pub tx_hash: Option<String>,
+    pub block_number: Option<i64>,
+    pub metadata: Option<serde_json::Value>,
     pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 impl ContractMeta {
-    /// Get contract address by name
-    pub async fn get_contract_address(pool: &PgPool, name: &str) -> Result<Option<String>> {
-        let result = sqlx::query!("SELECT address FROM contract_meta WHERE name = $1", name)
-            .fetch_optional(pool)
-            .await?;
+    /// Get contract address by name and chain_id
+    pub async fn get_contract_address(
+        pool: &PgPool,
+        name: &str,
+        chain_id: &str,
+    ) -> Result<Option<String>> {
+        let result = sqlx::query!(
+            "SELECT address FROM contract_meta WHERE name = $1 AND chain_id = $2",
+            name,
+            chain_id
+        )
+        .fetch_optional(pool)
+        .await?;
 
         Ok(result.map(|r| r.address))
     }
@@ -29,7 +44,9 @@ impl ContractMeta {
         let contracts = sqlx::query_as!(
             ContractMeta,
             r#"
-            SELECT * FROM contract_meta
+            SELECT id, name, address, chain_id, deployed_at, deployed_by, tx_hash, block_number,
+                   metadata as "metadata: serde_json::Value", created_at, updated_at
+            FROM contract_meta
             ORDER BY created_at DESC
             "#
         )
@@ -40,16 +57,29 @@ impl ContractMeta {
     }
 
     /// Save a new contract address
-    pub async fn save_contract_address(pool: &PgPool, name: &str, address: &str) -> Result<Self> {
+    pub async fn save_contract_address(
+        pool: &PgPool,
+        name: &str,
+        address: &str,
+        chain_id: &str,
+        deployed_by: Option<&str>,
+        tx_hash: Option<&str>,
+        block_number: Option<i64>,
+    ) -> Result<Self> {
         let contract = sqlx::query_as!(
             ContractMeta,
             r#"
-            INSERT INTO contract_meta (name, address)
-            VALUES ($1, $2)
-            RETURNING *
+            INSERT INTO contract_meta (name, address, chain_id, deployed_by, tx_hash, block_number)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING id, name, address, chain_id, deployed_at, deployed_by, tx_hash, block_number,
+                      metadata as "metadata: serde_json::Value", created_at, updated_at
             "#,
             name,
-            address
+            address,
+            chain_id,
+            deployed_by,
+            tx_hash,
+            block_number
         )
         .fetch_one(pool)
         .await?;
@@ -57,12 +87,19 @@ impl ContractMeta {
         Ok(contract)
     }
 
-    /// Find by name
-    pub async fn find_by_name(pool: &PgPool, name: &str) -> Result<Option<Self>> {
+    /// Find by name and chain_id
+    pub async fn find_by_name_and_chain(
+        pool: &PgPool,
+        name: &str,
+        chain_id: &str,
+    ) -> Result<Option<Self>> {
         let contract = sqlx::query_as!(
             ContractMeta,
-            "SELECT * FROM contract_meta WHERE name = $1",
-            name
+            r#"SELECT id, name, address, chain_id, deployed_at, deployed_by, tx_hash, block_number,
+                      metadata as "metadata: serde_json::Value", created_at, updated_at
+               FROM contract_meta WHERE name = $1 AND chain_id = $2"#,
+            name,
+            chain_id
         )
         .fetch_optional(pool)
         .await?;
@@ -71,17 +108,24 @@ impl ContractMeta {
     }
 
     /// Update contract address
-    pub async fn update_address(pool: &PgPool, name: &str, address: &str) -> Result<Self> {
+    pub async fn update_address(
+        pool: &PgPool,
+        name: &str,
+        chain_id: &str,
+        address: &str,
+    ) -> Result<Self> {
         let contract = sqlx::query_as!(
             ContractMeta,
             r#"
             UPDATE contract_meta
-            SET address = $1
-            WHERE name = $2
-            RETURNING *
+            SET address = $1, updated_at = NOW()
+            WHERE name = $2 AND chain_id = $3
+            RETURNING id, name, address, chain_id, deployed_at, deployed_by, tx_hash, block_number,
+                      metadata as "metadata: serde_json::Value", created_at, updated_at
             "#,
             address,
-            name
+            name,
+            chain_id
         )
         .fetch_one(pool)
         .await?;
@@ -96,8 +140,7 @@ impl Timestamped for ContractMeta {
     }
 
     fn updated_at(&self) -> &DateTime<Utc> {
-        // ContractMeta doesn't have updated_at, so we return created_at
-        &self.created_at
+        &self.updated_at
     }
 }
 
@@ -106,6 +149,10 @@ impl Timestamped for ContractMeta {
 pub struct CreateContractMetaRequest {
     pub name: String,
     pub address: String,
+    pub chain_id: String,
+    pub deployed_by: Option<String>,
+    pub tx_hash: Option<String>,
+    pub block_number: Option<i64>,
 }
 
 #[async_trait::async_trait]
@@ -113,7 +160,16 @@ impl Create for ContractMeta {
     type Request = CreateContractMetaRequest;
 
     async fn create(pool: &PgPool, request: Self::Request) -> Result<Self> {
-        Self::save_contract_address(pool, &request.name, &request.address).await
+        Self::save_contract_address(
+            pool,
+            &request.name,
+            &request.address,
+            &request.chain_id,
+            request.deployed_by.as_deref(),
+            request.tx_hash.as_deref(),
+            request.block_number,
+        )
+        .await
     }
 }
 
@@ -122,7 +178,9 @@ impl FindById for ContractMeta {
     async fn find_by_id(pool: &PgPool, id: i64) -> Result<Option<Self>> {
         let contract = sqlx::query_as!(
             ContractMeta,
-            "SELECT * FROM contract_meta WHERE id = $1",
+            r#"SELECT id, name, address, chain_id, deployed_at, deployed_by, tx_hash, block_number,
+                      metadata as "metadata: serde_json::Value", created_at, updated_at
+               FROM contract_meta WHERE id = $1"#,
             id
         )
         .fetch_optional(pool)

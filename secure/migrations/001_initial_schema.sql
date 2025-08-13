@@ -26,7 +26,7 @@ COMMENT ON COLUMN algo.cid IS 'IPFS CID for algorithm source code';
 -- Create algo_exe table (algorithm executions)
 CREATE TABLE IF NOT EXISTS algo_exe (
     id BIGSERIAL PRIMARY KEY,
-    algo_id BIGINT NOT NULL REFERENCES algo(id),
+    algo_id BIGINT NOT NULL,  -- References algo.id but no FK constraint
     used_dataset VARCHAR(255) NOT NULL,
     scientist_wallet VARCHAR(255) NOT NULL,
     review_status algo_review_status NOT NULL DEFAULT 'reviewing',
@@ -111,21 +111,40 @@ CREATE TABLE IF NOT EXISTS committee_member (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_committee_member_wallet ON committee_member(member_wallet);
 CREATE INDEX IF NOT EXISTS idx_committee_member_created_at ON committee_member(created_at);
 
--- Create contract_meta table (smart contract metadata)
+-- Create contract_meta table to store deployed contract addresses
 CREATE TABLE IF NOT EXISTS contract_meta (
     id BIGSERIAL PRIMARY KEY,
-    name VARCHAR(255) NOT NULL,
-    address VARCHAR(255) NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    name VARCHAR(255) NOT NULL,           -- Contract name (e.g., 'DataContribution', 'AlgorithmReview')
+    address VARCHAR(42) NOT NULL,          -- Ethereum address in hex format (0x...)
+    chain_id VARCHAR(20) NOT NULL,         -- Chain ID (e.g., '1' for mainnet, '31337' for local)
+    deployed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,  -- When the contract was deployed
+    deployed_by VARCHAR(42),               -- Optional: Address that deployed the contract
+    tx_hash VARCHAR(66),                   -- Optional: Transaction hash of deployment
+    block_number BIGINT,                   -- Optional: Block number of deployment
+    metadata JSONB,                        -- Optional: Additional metadata
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    -- Ensure unique contract per chain
+    CONSTRAINT unique_contract_per_chain UNIQUE (name, chain_id)
 );
 
 -- Create indexes for contract_meta
-CREATE UNIQUE INDEX IF NOT EXISTS idx_contract_name ON contract_meta(name);
-CREATE INDEX IF NOT EXISTS idx_contract_address ON contract_meta(address);
+CREATE INDEX IF NOT EXISTS idx_contract_meta_name ON contract_meta(name);
+CREATE INDEX IF NOT EXISTS idx_contract_meta_chain_id ON contract_meta(chain_id);
+CREATE INDEX IF NOT EXISTS idx_contract_meta_address ON contract_meta(address);
 CREATE INDEX IF NOT EXISTS idx_contract_meta_created_at ON contract_meta(created_at);
 
--- Add comments for contract_meta
-COMMENT ON COLUMN contract_meta.name IS 'Contract identifier (data_contribution, algorithm_review, etc.)';
+-- Add comments for documentation
+COMMENT ON TABLE contract_meta IS 'Stores deployed smart contract addresses per blockchain network';
+COMMENT ON COLUMN contract_meta.name IS 'Contract identifier name (e.g., DataContribution, AlgorithmReview)';
+COMMENT ON COLUMN contract_meta.address IS 'Ethereum address of the deployed contract';
+COMMENT ON COLUMN contract_meta.chain_id IS 'Blockchain network ID where contract is deployed';
+COMMENT ON COLUMN contract_meta.deployed_at IS 'Timestamp when the contract was deployed on-chain';
+COMMENT ON COLUMN contract_meta.deployed_by IS 'Address of the account that deployed the contract';
+COMMENT ON COLUMN contract_meta.tx_hash IS 'Transaction hash of the contract deployment';
+COMMENT ON COLUMN contract_meta.block_number IS 'Block number where the contract was deployed';
+COMMENT ON COLUMN contract_meta.metadata IS 'Additional metadata about the contract deployment';
 
 -- Create data_usage table
 CREATE TABLE IF NOT EXISTS data_usage (
@@ -197,4 +216,7 @@ CREATE TRIGGER update_data_usage_updated_at BEFORE UPDATE ON data_usage
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 CREATE TRIGGER update_vote_updated_at BEFORE UPDATE ON vote
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_contract_meta_updated_at BEFORE UPDATE ON contract_meta
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
