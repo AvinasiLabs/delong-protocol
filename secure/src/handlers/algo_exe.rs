@@ -117,7 +117,7 @@ pub async fn submit_algo_exe(
             // Create an algorithm record
             let create_algo = CreateAlgo {
                 name: repo_name,
-                algo_link: algo_link,
+                algo_link,
                 cid: algo_cid.clone(),
             };
 
@@ -142,7 +142,12 @@ pub async fn submit_algo_exe(
     // Submit to blockchain with execution_id
     let tx_hash = state
         .contract_caller
-        .submit_algorithm(algo_exe.id, scientist_address, algo.cid.clone(), req.dataset.clone())
+        .submit_algorithm(
+            algo_exe.id,
+            scientist_address,
+            algo.cid.clone(),
+            req.dataset.clone(),
+        )
         .await
         .map_err(|e| AppError::Internal(format!("Failed to submit to blockchain: {}", e)))?;
 

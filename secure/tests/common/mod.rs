@@ -3,15 +3,7 @@
 //! This module provides common test setup functionality to ensure
 //! consistent test environments across all test suites.
 
-use axum::{body::Body, http::Response, Router};
-use ipfs_api_backend_hyper::TryFromUri;
-use secure::{
-    config::Config,
-    infra::{contracts::ContractCaller, db::Database, Notifier, TeeClientBuilder, TeeEthereum},
-    routes,
-};
-use serde_json::Value;
-use std::sync::Arc;
+use secure::{config::Config, infra::db::Database};
 use tracing::{info, warn};
 /// Set up a test database connection
 ///
@@ -52,188 +44,11 @@ pub fn setup_test_config() -> Config {
     Config::load().expect("Failed to load config")
 }
 
-/// Set up a test application with all required dependencies
-///
-/// This function creates a complete test application with database,
-/// configuration, and all routes configured
-pub async fn setup_test_app() -> Router {
-    // Initialize logging for tests
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("secure=debug".parse().unwrap()),
-        )
-        .try_init();
-
-    let db = setup_test_db().await;
-    let config = setup_test_config();
-
-    // Initialize IPFS client
-    let ipfs_client = Arc::new(
-        ipfs_api_backend_hyper::IpfsClient::from_str(&config.ipfs.api_url)
-            .expect("Failed to create IPFS client"),
-    );
-
-    // Initialize TEE services for testing
-    let tee_endpoint = std::env::var("DSTACK_SIMULATOR_ENDPOINT")
-        .unwrap_or_else(|_| "http://localhost:11010".to_string());
-    let tee_client = Arc::new(TeeClientBuilder::new().endpoint(tee_endpoint).build());
-    let tee_ethereum = Arc::new(TeeEthereum::new(tee_client.clone()));
-
-    // Initialize contract caller with TEE service
-    let contract_caller = ContractCaller::new(config.chain.clone(), db.clone())
-        .await
-        .expect("Failed to create contract caller");
-
-    // For testing, we may skip TEE initialization if not available
-    let contract_caller = if std::env::var("SKIP_TEE_INIT").is_ok() {
-        info!("Skipping TEE initialization for tests");
-        Arc::new(contract_caller)
-    } else {
-        match contract_caller.with_tee(tee_ethereum.clone()).await {
-            Ok(caller) => Arc::new(caller),
-            Err(e) => {
-                warn!("Failed to initialize TEE service for tests: {}", e);
-                // Continue without TEE - create a new instance
-                Arc::new(
-                    ContractCaller::new(config.chain.clone(), db.clone())
-                        .await
-                        .expect("Failed to create contract caller"),
-                )
-            }
-        }
-    };
-
-    // Create notifier
-    let notifier = Arc::new(Notifier::new());
-
-    routes::create_app(
-        db,
-        config,
-        ipfs_client,
-        contract_caller,
-        notifier,
-        tee_client,
-        tee_ethereum,
-    )
-    .await
-}
-
-/// Set up a test application with a clean database
-///
-/// This function creates a test application and cleans up any existing test data.
-/// Use this when you need to ensure a clean database state for your test.
-pub async fn setup_clean_test_app() -> Router {
-    // Initialize logging for tests
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("secure=debug".parse().unwrap()),
-        )
-        .try_init();
-
-    let db = setup_test_db().await;
-    let config = setup_test_config();
-
-    // Clean up any existing test data before running tests
-    cleanup_test_db(&db).await;
-
-    // Initialize IPFS client
-    let ipfs_client = Arc::new(
-        ipfs_api_backend_hyper::IpfsClient::from_str(&config.ipfs.api_url)
-            .expect("Failed to create IPFS client"),
-    );
-
-    // Initialize TEE services for testing
-    let tee_endpoint = std::env::var("DSTACK_SIMULATOR_ENDPOINT")
-        .unwrap_or_else(|_| "http://localhost:11010".to_string());
-    let tee_client = Arc::new(TeeClientBuilder::new().endpoint(tee_endpoint).build());
-    let tee_ethereum = Arc::new(TeeEthereum::new(tee_client.clone()));
-
-    // Initialize contract caller with TEE service
-    let contract_caller = ContractCaller::new(config.chain.clone(), db.clone())
-        .await
-        .expect("Failed to create contract caller");
-
-    // For testing, we may skip TEE initialization if not available
-    let contract_caller = if std::env::var("SKIP_TEE_INIT").is_ok() {
-        info!("Skipping TEE initialization for tests");
-        Arc::new(contract_caller)
-    } else {
-        match contract_caller.with_tee(tee_ethereum.clone()).await {
-            Ok(caller) => Arc::new(caller),
-            Err(e) => {
-                warn!("Failed to initialize TEE service for tests: {}", e);
-                // Continue without TEE - create a new instance
-                Arc::new(
-                    ContractCaller::new(config.chain.clone(), db.clone())
-                        .await
-                        .expect("Failed to create contract caller"),
-                )
-            }
-        }
-    };
-
-    // Create notifier
-    let notifier = Arc::new(Notifier::new());
-
-    routes::create_app(
-        db,
-        config,
-        ipfs_client,
-        contract_caller,
-        notifier,
-        tee_client,
-        tee_ethereum,
-    )
-    .await
-}
-
-/// Extract JSON body from response
-///
-/// Helper function to extract and parse JSON body from an HTTP response
-pub async fn extract_json_body(response: Response<Body>) -> Value {
-    let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("Failed to read response body");
-
-    serde_json::from_slice(&body_bytes).expect("Failed to parse JSON response")
-}
-
 /// Generate a test Ethereum wallet address
 ///
 /// Creates a valid format Ethereum address for testing
 pub fn generate_test_wallet_address(index: u32) -> String {
     format!("0x{:040x}", index)
-}
-
-
-/// Clean up test database
-///
-/// Removes test data before or after tests
-pub async fn cleanup_test_db(db: &Database) {
-    // Clean up test data in reverse dependency order
-    let tables = [
-        "data_usage",
-        "vote",
-        "committee_member",
-        "blockchain_transaction",
-        "algo_exe",
-        "algo",
-        "dataset",
-        "contract_meta",
-    ];
-
-    for table in &tables {
-        let query = format!("DELETE FROM {}", table);
-        sqlx::query(&query)
-            .execute(db.pool())
-            .await
-            .unwrap_or_else(|e| {
-                warn!("Failed to clean up table {}: {}", table, e);
-                Default::default()
-            });
-    }
 }
 
 /// Create a multipart form body for file upload
@@ -276,7 +91,6 @@ pub fn create_multipart_body(
 
     (format!("multipart/form-data; boundary={}", boundary), body)
 }
-
 
 #[cfg(test)]
 mod tests {
