@@ -13,7 +13,7 @@ pub use committee::{
     get_committee_member, is_committee_member, list_committee_members, set_committee_member,
 };
 pub use contract::list_contracts;
-pub use dataset::{create_dataset, list_datasets};
+pub use dataset::{create_dataset, delete_dataset, get_dataset, list_datasets, update_dataset};
 pub use health::health_check;
 pub use not_found::handler as not_found_handler;
 pub use vote::{list_votes, set_voting_duration};

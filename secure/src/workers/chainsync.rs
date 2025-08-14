@@ -2,6 +2,7 @@
 //! Monitors blockchain events and updates database accordingly
 
 use crate::{
+    config::Config,
     error::{Result as AppResult, TimestampExt},
     infra::{
         contracts::{ContractCaller, ParsedEvent},
@@ -29,6 +30,8 @@ pub struct ChainSyncWorker {
     notifier: Arc<Notifier>,
     /// Algorithm executor
     algo_executor: Arc<AlgoExecutor>,
+    /// Configuration
+    config: Arc<Config>,
 }
 
 impl ChainSyncWorker {
@@ -38,12 +41,14 @@ impl ChainSyncWorker {
         contract_caller: Arc<ContractCaller>,
         notifier: Arc<Notifier>,
         algo_executor: Arc<AlgoExecutor>,
+        config: Arc<Config>,
     ) -> Self {
         Self {
             db,
             contract_caller,
             notifier,
             algo_executor,
+            config,
         }
     }
 
@@ -79,27 +84,85 @@ impl ChainSyncWorker {
 
     /// Process blockchain events
     async fn process_events(&self) -> AppResult<()> {
-        // Subscribe to events
-        let worker = self.clone();
-        self.contract_caller
-            .subscribe_events(move |log| {
-                let worker = worker.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = worker.handle_log(log).await {
-                        error!("Failed to handle log: {}", e);
-                    }
-                });
-            })
-            .await?;
+        // Check if we should use polling mode (for test environments)
+        let use_polling = std::env::var("USE_POLLING_MODE")
+            .unwrap_or_else(|_| "false".to_string())
+            .parse::<bool>()
+            .unwrap_or(false);
 
-        // Keep the task alive
+        if use_polling {
+            info!("Using polling mode for event processing");
+            self.process_events_polling().await
+        } else {
+            info!("Using WebSocket subscription for event processing");
+            // Subscribe to events
+            let worker = self.clone();
+            self.contract_caller
+                .subscribe_events(move |log| {
+                    let worker = worker.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = worker.handle_log(log).await {
+                            error!("Failed to handle log: {}", e);
+                        }
+                    });
+                })
+                .await?;
+
+            // Keep the task alive
+            loop {
+                time::sleep(Duration::from_secs(60)).await;
+            }
+        }
+    }
+
+    /// Process blockchain events using polling (for test environments)
+    async fn process_events_polling(&self) -> AppResult<()> {
+        let polling_interval = std::env::var("POLLING_INTERVAL_MS")
+            .unwrap_or_else(|_| "1000".to_string())
+            .parse::<u64>()
+            .unwrap_or(1000);
+
+        let mut last_block = 0u64;
+
         loop {
-            time::sleep(Duration::from_secs(60)).await;
+            // Poll for new events
+            match self
+                .contract_caller
+                .get_past_events(Some(last_block + 1), None)
+                .await
+            {
+                Ok(logs) => {
+                    let log_count = logs.len();
+                    for log in logs {
+                        // Update last_block if we have a new one
+                        if let Some(block_number) = log.block_number {
+                            if block_number > last_block {
+                                last_block = block_number;
+                            }
+                        }
+
+                        // Process the log
+                        if let Err(e) = self.handle_log(log).await {
+                            error!("Failed to handle log in polling mode: {}", e);
+                        }
+                    }
+
+                    if log_count > 0 {
+                        debug!("Processed {} events, last block: {}", log_count, last_block);
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to poll for events: {}", e);
+                }
+            }
+
+            // Wait before next poll
+            time::sleep(Duration::from_millis(polling_interval)).await;
         }
     }
 
     /// Handle a single log entry
-    async fn handle_log(&self, log: Log) -> AppResult<()> {
+    pub async fn handle_log(&self, log: Log) -> AppResult<()> {
         debug!("Processing log: {:?}", log);
 
         // Parse the event from the log
@@ -708,8 +771,8 @@ impl ChainSyncWorker {
 
         if let Some(exe) = execution {
             // Check if we have enough votes (simple majority)
-            // Note: In production, committee size should be fetched from contract
-            let committee_size = 3i64; // Minimum committee size
+            // Get committee size from configuration
+            let committee_size = self.config.committee.size;
             let required_votes = (committee_size / 2) + 1;
 
             if approve_count >= required_votes || reject_count >= required_votes {

@@ -471,6 +471,7 @@ impl ContractCaller {
     /// Submit an algorithm for review
     pub async fn submit_algorithm(
         &self,
+        execution_id: i64,
         scientist_wallet: Address,
         algorithm_cid: String,
         dataset_name: String,
@@ -481,8 +482,7 @@ impl ContractCaller {
         let provider = self.create_tee_provider().await?;
         let contract = AlgorithmReview::new(self.addresses.algorithm_review, provider);
 
-        // TODO: Get proper execution_id from somewhere
-        let execution_id = U256::from(1);
+        let execution_id = U256::from(execution_id as u64);
         let call = contract.submitAlgorithm(
             execution_id,
             scientist_wallet,

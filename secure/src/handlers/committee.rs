@@ -12,8 +12,7 @@ use tracing::{info, instrument};
 use crate::{
     models::{
         blockchain_transaction::{CreateTransaction, EntityType},
-        committee::{CommitteeMember, CreateCommitteeMemberRequest},
-        Create,
+        committee::CommitteeMember,
     },
     routes::AppState,
 };
@@ -68,17 +67,27 @@ pub async fn set_committee_member(
     let member_address = Address::from_str(&req.member_wallet)
         .map_err(|_| AppError::Validation("Invalid wallet address".into()))?;
 
-    // Upsert committee member in database
-    let member = if let Some(existing) =
-        CommitteeMember::get_by_wallet(state.db.pool(), &req.member_wallet).await?
-    {
+    // Start database transaction
+    let mut tx = state.db.pool().begin().await?;
+
+    // Upsert committee member in database within transaction
+    // First check if member exists
+    let existing = sqlx::query_as!(
+        CommitteeMember,
+        "SELECT * FROM committee_member WHERE member_wallet = $1",
+        req.member_wallet.to_lowercase()
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+
+    let member = if let Some(existing) = existing {
         // Update existing member
         sqlx::query!(
             "UPDATE committee_member SET is_approved = $1, updated_at = NOW() WHERE id = $2",
             req.is_approved,
             existing.id
         )
-        .execute(state.db.pool())
+        .execute(&mut *tx)
         .await?;
 
         CommitteeMember {
@@ -90,16 +99,19 @@ pub async fn set_committee_member(
         }
     } else {
         // Create new member
-        let create_req = CreateCommitteeMemberRequest {
-            member_wallet: req.member_wallet.to_lowercase(),
-            is_approved: req.is_approved,
-        };
-
-        CommitteeMember::create(state.db.pool(), create_req).await?
+        sqlx::query_as!(
+            CommitteeMember,
+            r#"
+            INSERT INTO committee_member (member_wallet, is_approved)
+            VALUES ($1, $2)
+            RETURNING *
+            "#,
+            req.member_wallet.to_lowercase(),
+            req.is_approved
+        )
+        .fetch_one(&mut *tx)
+        .await?
     };
-
-    // Start database transaction
-    let mut tx = state.db.pool().begin().await?;
 
     // Submit to blockchain
     let tx_receipt = if req.is_approved {

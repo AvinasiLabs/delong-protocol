@@ -22,8 +22,8 @@ pub async fn setup_test_db() -> Database {
         warn!("Failed to load .env: {}. Using environment variables.", e);
     }
 
-    // Initialize configuration
-    let config = Config::from_env().expect("Failed to load config");
+    // Initialize configuration - use Config::load() for consistency
+    let config = Config::load().expect("Failed to load config");
 
     // Initialize database
     let db = Database::new(&config.database)
@@ -48,8 +48,8 @@ pub fn setup_test_config() -> Config {
         warn!("Failed to load .env: {}. Using environment variables.", e);
     }
 
-    // Initialize and return configuration
-    Config::from_env().expect("Failed to load config")
+    // Initialize and return configuration - use Config::load() for consistency
+    Config::load().expect("Failed to load config")
 }
 
 /// Set up a test application with all required dependencies
@@ -123,7 +123,6 @@ pub async fn setup_test_app() -> Router {
 ///
 /// This function creates a test application and cleans up any existing test data.
 /// Use this when you need to ensure a clean database state for your test.
-#[allow(dead_code)]
 pub async fn setup_clean_test_app() -> Router {
     // Initialize logging for tests
     let _ = tracing_subscriber::fmt()
@@ -193,7 +192,6 @@ pub async fn setup_clean_test_app() -> Router {
 /// Extract JSON body from response
 ///
 /// Helper function to extract and parse JSON body from an HTTP response
-#[allow(dead_code)]
 pub async fn extract_json_body(response: Response<Body>) -> Value {
     let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
@@ -209,61 +207,6 @@ pub fn generate_test_wallet_address(index: u32) -> String {
     format!("0x{:040x}", index)
 }
 
-/// Create test application state
-///
-/// Creates an AppState instance for unit testing handlers
-#[allow(dead_code)]
-pub async fn create_test_state() -> secure::routes::AppState {
-    let db = setup_test_db().await;
-    let config = setup_test_config();
-
-    // Initialize IPFS client
-    let ipfs_client = ipfs_api_backend_hyper::IpfsClient::from_str(&config.ipfs.api_url)
-        .expect("Failed to create IPFS client");
-
-    // Initialize TEE services for testing
-    let tee_endpoint = std::env::var("DSTACK_SIMULATOR_ENDPOINT")
-        .unwrap_or_else(|_| "http://localhost:11010".to_string());
-    let tee_client = Arc::new(TeeClientBuilder::new().endpoint(tee_endpoint).build());
-    let tee_ethereum = Arc::new(TeeEthereum::new(tee_client.clone()));
-
-    // Initialize contract caller with TEE service
-    let contract_caller = ContractCaller::new(config.chain.clone(), db.clone())
-        .await
-        .expect("Failed to create contract caller");
-
-    // For testing, we may skip TEE initialization if not available
-    let contract_caller = if std::env::var("SKIP_TEE_INIT").is_ok() {
-        info!("Skipping TEE initialization for tests");
-        Arc::new(contract_caller)
-    } else {
-        match contract_caller.with_tee(tee_ethereum.clone()).await {
-            Ok(caller) => Arc::new(caller),
-            Err(e) => {
-                warn!("Failed to initialize TEE service for tests: {}", e);
-                // Continue without TEE - create a new instance
-                Arc::new(
-                    ContractCaller::new(config.chain.clone(), db.clone())
-                        .await
-                        .expect("Failed to create contract caller"),
-                )
-            }
-        }
-    };
-
-    // Create notifier
-    let notifier = Arc::new(Notifier::new());
-
-    secure::routes::AppState::new(
-        db,
-        config,
-        ipfs_client,
-        contract_caller,
-        notifier,
-        tee_client,
-        tee_ethereum,
-    )
-}
 
 /// Clean up test database
 ///
@@ -334,32 +277,6 @@ pub fn create_multipart_body(
     (format!("multipart/form-data; boundary={}", boundary), body)
 }
 
-/// Assert API response success
-///
-/// Helper to verify successful API responses
-#[allow(dead_code)]
-pub fn assert_success_response(body: &Value) {
-    assert_eq!(
-        body["code"].as_str().unwrap(),
-        "SUCCESS",
-        "Expected success response, got: {}",
-        body
-    );
-}
-
-/// Assert API response error
-///
-/// Helper to verify error API responses
-#[allow(dead_code)]
-pub fn assert_error_response(body: &Value, expected_code: &str) {
-    assert_eq!(
-        body["code"].as_str().unwrap(),
-        expected_code,
-        "Expected error code {}, got: {}",
-        expected_code,
-        body
-    );
-}
 
 #[cfg(test)]
 mod tests {

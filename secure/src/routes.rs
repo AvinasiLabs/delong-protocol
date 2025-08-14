@@ -90,7 +90,10 @@ pub async fn create_app(
     // Dataset routes
     let dataset_routes = Router::new()
         .route("/", post(handlers::create_dataset))
-        .route("/", get(handlers::list_datasets));
+        .route("/", get(handlers::list_datasets))
+        .route("/{id}", get(handlers::get_dataset))
+        .route("/{id}", axum::routing::put(handlers::update_dataset))
+        .route("/{id}", axum::routing::delete(handlers::delete_dataset));
 
     // Committee and voting routes
     let committee_routes = Router::new()

@@ -11,6 +11,7 @@ use tokio::signal;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
+use secure::config::Config;
 use secure::infra::contracts::ContractCaller;
 use secure::infra::db::Database;
 use secure::infra::Notifier;
@@ -31,7 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Starting DeLong Protocol Secure Service");
 
     // Load configuration from environment variables (supports .env file)
-    let config = secure::config::init_config()?;
+    let config = secure::Config::load()?;
     info!("Configuration loaded successfully");
 
     // Initialize database
@@ -101,6 +102,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         contract_caller.clone(),
         notifier.clone(),
         algo_executor.clone(),
+        Arc::new(config.clone()),
         shutdown_token.clone(),
     );
 
@@ -144,6 +146,7 @@ fn spawn_chainsync_task(
     contract_caller: Arc<ContractCaller>,
     notifier: Arc<Notifier>,
     algo_executor: Arc<AlgoExecutor>,
+    config: Arc<Config>,
     shutdown_token: CancellationToken,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
@@ -156,6 +159,7 @@ fn spawn_chainsync_task(
             contract_caller,
             notifier,
             algo_executor,
+            config,
         ));
 
         tokio::select! {

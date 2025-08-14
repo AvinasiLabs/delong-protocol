@@ -1,6 +1,8 @@
 use alloy::primitives::Address;
-use avinapi::prelude::{AppError, JsonResult, PaginatedResult, PaginationQuery, ValidatedQuery};
-use axum::extract::{Multipart, State};
+use avinapi::prelude::{
+    data, AppError, JsonResult, PaginatedResult, PaginationQuery, ValidatedJson, ValidatedQuery,
+};
+use axum::extract::{Multipart, Path, State};
 use ipfs_api_backend_hyper::IpfsApi;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -12,7 +14,7 @@ use crate::{
     models::{
         blockchain_transaction::{CreateTransaction, EntityType},
         dataset::{CreateDatasetRequest, Dataset},
-        Create,
+        Create, FindById,
     },
     routes::AppState,
 };
@@ -32,7 +34,20 @@ pub struct DatasetResponse {
 /// Response for dataset creation
 #[derive(Debug, Serialize)]
 pub struct CreateDatasetResponse {
+    pub id: i64,
     pub tx_hash: String,
+}
+
+/// Request for updating dataset
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+pub struct UpdateDatasetRequest {
+    #[validate(length(
+        min = 1,
+        max = 100,
+        message = "Name must be between 1 and 100 characters"
+    ))]
+    pub name: String,
+    pub desc: Option<String>,
 }
 
 /// Form data for creating dataset (for validation after multipart parsing)
@@ -225,7 +240,10 @@ pub async fn create_dataset(
 
     info!("Dataset {} registered successfully", dataset.id);
 
-    avinapi::data!(CreateDatasetResponse { tx_hash })
+    avinapi::data!(CreateDatasetResponse { 
+        id: dataset.id,
+        tx_hash 
+    })
 }
 
 /// List datasets with pagination
@@ -233,22 +251,7 @@ pub async fn list_datasets(
     State(state): State<AppState>,
     ValidatedQuery(query): ValidatedQuery<PaginationQuery>,
 ) -> PaginatedResult<DatasetResponse> {
-    let page = query.page;
-    let per_page = query.per_page;
-
-    // Validate pagination
-    if page == 0 {
-        return Err(AppError::Validation(
-            "Page must be greater than 0".to_string(),
-        ));
-    }
-    if per_page == 0 || per_page > 100 {
-        return Err(AppError::Validation(
-            "Per page must be between 1 and 100".to_string(),
-        ));
-    }
-
-    let (datasets, total) = Dataset::find_all_confirmed(state.db.pool(), page, per_page).await?;
+    let (datasets, total) = Dataset::find_all_confirmed(state.db.pool(), query.page, query.per_page).await?;
 
     let items: Vec<DatasetResponse> = datasets
         .into_iter()
@@ -263,5 +266,96 @@ pub async fn list_datasets(
         })
         .collect();
 
-    avinapi::paginated!(items, total, page, per_page)
+    avinapi::paginated!(items, total, query.page, query.per_page)
+}
+
+/// Update an existing dataset (requires admin)
+pub async fn update_dataset(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    ValidatedJson(req): ValidatedJson<UpdateDatasetRequest>,
+) -> JsonResult<DatasetResponse> {
+    // TODO: Check admin permission from request headers
+    // For now, we'll skip this check in development
+
+    // Find existing dataset
+    let _dataset = Dataset::find_by_id(state.db.pool(), id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Dataset {} not found", id)))?;
+
+    // Update dataset
+    let updated = sqlx::query_as!(
+        Dataset,
+        r#"
+        UPDATE dataset
+        SET name = $1, ui_name = $2, "desc" = $3, updated_at = NOW()
+        WHERE id = $4
+        RETURNING *
+        "#,
+        req.name.clone(),
+        req.name,
+        req.desc,
+        id
+    )
+    .fetch_one(state.db.pool())
+    .await?;
+
+    info!("Dataset {} updated successfully", id);
+
+    let response = DatasetResponse {
+        id: updated.id as u64,
+        name: updated.name,
+        file_hash: updated.file_hash,
+        ipfs_cid: updated.ipfs_cid,
+        author_wallet: updated.author_wallet,
+        created_at: updated.created_at,
+        updated_at: updated.updated_at,
+    };
+
+    data!(response)
+}
+
+/// Delete a dataset (requires admin)
+pub async fn delete_dataset(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> JsonResult<()> {
+    // TODO: Check admin permission from request headers
+    // For now, we'll skip this check in development
+
+    // Check if dataset exists
+    let _dataset = Dataset::find_by_id(state.db.pool(), id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Dataset {} not found", id)))?;
+
+    // Delete dataset (this should cascade to related records based on DB constraints)
+    sqlx::query!("DELETE FROM dataset WHERE id = $1", id)
+        .execute(state.db.pool())
+        .await?;
+
+    info!("Dataset {} deleted successfully", id);
+
+    avinapi::data!(())
+}
+
+/// Get a specific dataset by ID
+pub async fn get_dataset(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> JsonResult<DatasetResponse> {
+    let dataset = Dataset::find_by_id(state.db.pool(), id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Dataset {} not found", id)))?;
+
+    let response = DatasetResponse {
+        id: dataset.id as u64,
+        name: dataset.name,
+        file_hash: dataset.file_hash,
+        ipfs_cid: dataset.ipfs_cid,
+        author_wallet: dataset.author_wallet,
+        created_at: dataset.created_at,
+        updated_at: dataset.updated_at,
+    };
+
+    data!(response)
 }
