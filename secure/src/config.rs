@@ -19,6 +19,7 @@ pub struct Config {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatasetConfig {
     pub sample_size: usize,
+    pub sample_api_url: String,
 }
 
 /// Server configuration
@@ -243,6 +244,8 @@ impl Config {
                     .unwrap_or_else(|_| "100".to_string())
                     .parse()
                     .map_err(|_| "Invalid DATASET_SAMPLE_SIZE")?,
+                sample_api_url: env::var("DATASET_SAMPLE_API_URL")
+                    .unwrap_or_else(|_| "http://localhost:11008".to_string()),
             },
         })
     }
@@ -305,11 +308,10 @@ impl Default for Config {
                 enabled: false,
                 client_kind: "SGX".to_string(),
             },
-            committee: CommitteeConfig {
-                size: 3,
-            },
+            committee: CommitteeConfig { size: 3 },
             dataset: DatasetConfig {
                 sample_size: 100,
+                sample_api_url: "http://localhost:11008".to_string(),
             },
         }
     }

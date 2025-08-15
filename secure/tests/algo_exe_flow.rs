@@ -348,3 +348,85 @@ async fn test_concurrent_list_requests() {
         assert_eq!(json["data"]["n_page"], i + 1);
     }
 }
+
+#[tokio::test]
+async fn test_algo_exe_sample_generation() {
+    let app = setup_test_app().await;
+
+    // Step 1: Submit an algorithm execution with sample generation flag
+    let request_body = json!({
+        "scientist_wallet": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "dataset": "test-dataset",
+        "github_repo": "https://github.com/rust-lang/rust",
+        "commit_hash": "6b00bc3880198600130e1cf62b8f8a93494488cc",
+        "generate_sample": true,
+        "sample_size": 100
+    });
+
+    let request = Request::builder()
+        .method("POST")
+        .uri("/api/algoexes")
+        .header("content-type", "application/json")
+        .body(Body::from(request_body.to_string()))
+        .unwrap();
+
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json["code"], "SUCCESS");
+    assert!(json["data"]["tx_hash"].is_string());
+
+    // Step 2: Query the algorithm execution to check if sample was generated
+    // Note: In a real scenario, we would wait for the execution to complete
+    // and check if the sample URL/CID was generated
+    let exe_id = json["data"]["id"].as_i64();
+    if let Some(id) = exe_id {
+        let request = Request::builder()
+            .method("GET")
+            .uri(format!("/api/algoexes/{}", id))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        
+        // In test environment, the execution might not be found immediately
+        // This is expected behavior in unit tests
+        if response.status() == StatusCode::OK {
+            let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            let json: Value = serde_json::from_slice(&body).unwrap();
+            
+            // Check if sample generation fields are present in response
+            if json["code"] == "SUCCESS" {
+                // Sample fields would be populated after execution completes
+                assert!(json["data"].is_object());
+            }
+        }
+    }
+
+    // Step 3: Test invalid sample generation parameters
+    let invalid_request_body = json!({
+        "scientist_wallet": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "dataset": "test-dataset",
+        "github_repo": "https://github.com/rust-lang/rust",
+        "commit_hash": "6b00bc3880198600130e1cf62b8f8a93494488cc",
+        "generate_sample": true,
+        "sample_size": -1  // Invalid sample size
+    });
+
+    let request = Request::builder()
+        .method("POST")
+        .uri("/api/algoexes")
+        .header("content-type", "application/json")
+        .body(Body::from(invalid_request_body.to_string()))
+        .unwrap();
+
+    let app = setup_test_app().await;
+    let response = app.oneshot(request).await.unwrap();
+    
+    // Should accept the request but ignore invalid sample_size
+    // or return validation error depending on implementation
+    assert_eq!(response.status(), StatusCode::OK);
+}

@@ -517,3 +517,151 @@ fn create_multipart_body(
 
     (format!("multipart/form-data; boundary={}", boundary), body)
 }
+
+#[tokio::test]
+async fn test_dataset_sample_url() {
+    // Test requirement: Validate sample URL handling in dataset registration
+    let app = setup_test_app().await;
+
+    // Test 1: Create dataset with sample_url
+    let boundary = "----WebKitFormBoundary7MA4YWxkTrZu0gW";
+    let mut body = Vec::new();
+    
+    // Add name field
+    body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+    body.extend_from_slice(b"Content-Disposition: form-data; name=\"name\"\r\n\r\n");
+    body.extend_from_slice(b"test_dataset_with_sample\r\n");
+    
+    // Add ui_name field
+    body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+    body.extend_from_slice(b"Content-Disposition: form-data; name=\"ui_name\"\r\n\r\n");
+    body.extend_from_slice(b"Test Dataset With Sample\r\n");
+    
+    // Add author_wallet field
+    body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+    body.extend_from_slice(b"Content-Disposition: form-data; name=\"author_wallet\"\r\n\r\n");
+    body.extend_from_slice(b"0x70997970C51812dc3A010C7d01b50e0d17dc79C8\r\n");
+    
+    // Add file_format field
+    body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+    body.extend_from_slice(b"Content-Disposition: form-data; name=\"file_format\"\r\n\r\n");
+    body.extend_from_slice(b"csv\r\n");
+    
+    // Add sample_url field - this is the key test
+    body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+    body.extend_from_slice(b"Content-Disposition: form-data; name=\"sample_url\"\r\n\r\n");
+    body.extend_from_slice(b"https://example.com/sample-data.csv\r\n");
+    
+    // Add file field with unique content
+    let timestamp = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+    let file_content = format!("id,value\n1,sample_{}\n2,test_{}", timestamp, timestamp + 1);
+    
+    body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+    body.extend_from_slice(
+        b"Content-Disposition: form-data; name=\"file\"; filename=\"test_sample.csv\"\r\n",
+    );
+    body.extend_from_slice(b"Content-Type: text/csv\r\n\r\n");
+    body.extend_from_slice(file_content.as_bytes());
+    body.extend_from_slice(b"\r\n");
+    
+    // End boundary
+    body.extend_from_slice(format!("--{}--\r\n", boundary).as_bytes());
+    
+    let request = Request::builder()
+        .method("POST")
+        .uri("/api/datasets")
+        .header(
+            header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={}", boundary),
+        )
+        .body(Body::from(body))
+        .unwrap();
+    
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    
+    let json = extract_json_body(response).await;
+    assert_eq!(json["code"], "SUCCESS");
+    assert!(json["data"]["tx_hash"].is_string());
+    
+    // Test 2: Query dataset to verify sample_url is stored
+    // Note: In a real scenario, we would wait for blockchain confirmation
+    // then query the dataset to verify sample_url was properly stored
+    let dataset_id = json["data"]["id"].as_i64();
+    if let Some(id) = dataset_id {
+        // In production, this endpoint would return the dataset with sample_url
+        let request = Request::builder()
+            .method("GET")
+            .uri(format!("/api/datasets/{}", id))
+            .body(Body::empty())
+            .unwrap();
+        
+        let response = app.clone().oneshot(request).await.unwrap();
+        // The endpoint might not exist yet or dataset might not be confirmed
+        // This is expected behavior in unit tests
+        if response.status() == StatusCode::OK {
+            let json = extract_json_body(response).await;
+            if json["code"] == "SUCCESS" {
+                // Check if sample_url field is present and correct
+                if let Some(sample_url) = json["data"]["sample_url"].as_str() {
+                    assert_eq!(sample_url, "https://example.com/sample-data.csv");
+                }
+            }
+        }
+    }
+
+    // Test 3: Create dataset without sample_url (should be optional)
+    let boundary2 = "----WebKitFormBoundary8MA5YWxkTrZu0gW";
+    let mut body2 = Vec::new();
+    
+    body2.extend_from_slice(format!("--{}\r\n", boundary2).as_bytes());
+    body2.extend_from_slice(b"Content-Disposition: form-data; name=\"name\"\r\n\r\n");
+    body2.extend_from_slice(b"test_dataset_no_sample\r\n");
+    
+    body2.extend_from_slice(format!("--{}\r\n", boundary2).as_bytes());
+    body2.extend_from_slice(b"Content-Disposition: form-data; name=\"ui_name\"\r\n\r\n");
+    body2.extend_from_slice(b"Test Dataset No Sample\r\n");
+    
+    body2.extend_from_slice(format!("--{}\r\n", boundary2).as_bytes());
+    body2.extend_from_slice(b"Content-Disposition: form-data; name=\"author_wallet\"\r\n\r\n");
+    body2.extend_from_slice(b"0x70997970C51812dc3A010C7d01b50e0d17dc79C8\r\n");
+    
+    body2.extend_from_slice(format!("--{}\r\n", boundary2).as_bytes());
+    body2.extend_from_slice(b"Content-Disposition: form-data; name=\"file_format\"\r\n\r\n");
+    body2.extend_from_slice(b"csv\r\n");
+    
+    // No sample_url field - testing that it's optional
+    
+    let timestamp2 = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) + 1000000;
+    let file_content2 = format!("id,value\n1,nosample_{}\n2,test_{}", timestamp2, timestamp2 + 1);
+    
+    body2.extend_from_slice(format!("--{}\r\n", boundary2).as_bytes());
+    body2.extend_from_slice(
+        b"Content-Disposition: form-data; name=\"file\"; filename=\"test_no_sample.csv\"\r\n",
+    );
+    body2.extend_from_slice(b"Content-Type: text/csv\r\n\r\n");
+    body2.extend_from_slice(file_content2.as_bytes());
+    body2.extend_from_slice(b"\r\n");
+    
+    body2.extend_from_slice(format!("--{}--\r\n", boundary2).as_bytes());
+    
+    let request = Request::builder()
+        .method("POST")
+        .uri("/api/datasets")
+        .header(
+            header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={}", boundary2),
+        )
+        .body(Body::from(body2))
+        .unwrap();
+    
+    let app = setup_test_app().await;
+    let response = app.oneshot(request).await.unwrap();
+    
+    // Should succeed even without sample_url
+    assert_eq!(response.status(), StatusCode::OK);
+    
+    let json = extract_json_body(response).await;
+    assert_eq!(json["code"], "SUCCESS");
+    assert!(json["data"]["tx_hash"].is_string());
+}

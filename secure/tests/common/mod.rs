@@ -3,7 +3,19 @@
 //! This module provides common test setup functionality to ensure
 //! consistent test environments across all test suites.
 
-use secure::{config::Config, infra::db::Database};
+use axum::Router;
+use ipfs_api_backend_hyper::TryFromUri;
+use secure::{
+    config::Config,
+    infra::{
+        contracts::ContractCaller,
+        db::Database,
+        tee::{Client as TeeClient, ClientConfig as TeeClientConfig, Ethereum as TeeEthereum},
+        Notifier,
+    },
+    routes::create_app,
+};
+use std::sync::Arc;
 use tracing::{info, warn};
 /// Set up a test database connection
 ///
@@ -90,6 +102,147 @@ pub fn create_multipart_body(
     body.extend_from_slice(format!("--{}--\r\n", boundary).as_bytes());
 
     (format!("multipart/form-data; boundary={}", boundary), body)
+}
+
+/// Set up a test application with all routes and dependencies
+///
+/// This function creates a complete test application instance
+pub async fn setup_test_app() -> Router {
+    // Initialize test environment
+    if let Err(e) = dotenvy::from_filename(".env") {
+        warn!("Failed to load .env: {}. Using environment variables.", e);
+    }
+
+    // Load configuration
+    let config = Config::load().expect("Failed to load config");
+
+    // Initialize database
+    let db = Database::new(&config.database)
+        .await
+        .expect("Failed to connect to database");
+
+    // Run migrations
+    db.run_migrations().await.expect("Failed to run migrations");
+
+    // Initialize IPFS client
+    let ipfs_client = Arc::new(
+        ipfs_api_backend_hyper::IpfsClient::from_str(&config.ipfs.api_url)
+            .expect("Failed to create IPFS client"),
+    );
+
+    // Initialize TEE service with proxy endpoint for testing
+    let tee_config = TeeClientConfig {
+        endpoint: Some("http://localhost:11010".to_string()),
+    };
+    let tee_service = Arc::new(TeeClient::new(tee_config));
+
+    // Initialize TEE Ethereum
+    let tee_ethereum = Arc::new(TeeEthereum::new(tee_service.clone()));
+
+    // Initialize contract caller with TEE support
+    let contract_caller = Arc::new(
+        ContractCaller::new(config.chain.clone(), db.clone())
+            .await
+            .expect("Failed to initialize contract caller")
+            .with_tee(tee_ethereum.clone())
+            .await
+            .expect("Failed to initialize TEE wallet"),
+    );
+
+    // Initialize notifier
+    let notifier = Arc::new(Notifier::new());
+
+    // Create router with full application setup
+    create_app(
+        db,
+        config,
+        ipfs_client,
+        contract_caller,
+        notifier,
+        tee_service,
+        tee_ethereum,
+    )
+    .await
+}
+
+/// Set up a clean test application (clears database before setup)
+///
+/// This function creates a test application with a fresh database state
+pub async fn setup_clean_test_app() -> Router {
+    // Initialize test environment
+    if let Err(e) = dotenvy::from_filename(".env") {
+        warn!("Failed to load .env: {}. Using environment variables.", e);
+    }
+
+    // Load configuration
+    let config = Config::load().expect("Failed to load config");
+
+    // Initialize database
+    let db = Database::new(&config.database)
+        .await
+        .expect("Failed to connect to database");
+
+    // Clear test data - only in test environments
+    // Check if we're in a test environment by looking at database name or other indicators
+    let _ = sqlx::query("TRUNCATE TABLE algo_exe, algo, dataset, vote, committee_member, blockchain_transaction CASCADE")
+        .execute(db.pool())
+        .await;
+
+    // Run migrations after clearing
+    db.run_migrations().await.expect("Failed to run migrations");
+
+    // Initialize IPFS client
+    let ipfs_client = Arc::new(
+        ipfs_api_backend_hyper::IpfsClient::from_str(&config.ipfs.api_url)
+            .expect("Failed to create IPFS client"),
+    );
+
+    // Initialize TEE service with proxy endpoint for testing
+    let tee_config = TeeClientConfig {
+        endpoint: Some("http://localhost:11010".to_string()),
+    };
+    let tee_service = Arc::new(TeeClient::new(tee_config));
+
+    // Initialize TEE Ethereum
+    let tee_ethereum = Arc::new(TeeEthereum::new(tee_service.clone()));
+
+    // Initialize contract caller with TEE support
+    let contract_caller = Arc::new(
+        ContractCaller::new(config.chain.clone(), db.clone())
+            .await
+            .expect("Failed to initialize contract caller")
+            .with_tee(tee_ethereum.clone())
+            .await
+            .expect("Failed to initialize TEE wallet"),
+    );
+
+    // Initialize notifier
+    let notifier = Arc::new(Notifier::new());
+
+    // Create router with full application setup
+    create_app(
+        db,
+        config,
+        ipfs_client,
+        contract_caller,
+        notifier,
+        tee_service,
+        tee_ethereum,
+    )
+    .await
+}
+
+/// Extract JSON body from an axum response
+///
+/// Helper function to extract and parse JSON body from test responses
+pub async fn extract_json_body(response: axum::response::Response) -> serde_json::Value {
+    use axum::body::to_bytes;
+
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("Failed to read response body");
+
+    serde_json::from_slice(&body).expect("Failed to parse JSON response")
 }
 
 #[cfg(test)]

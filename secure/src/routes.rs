@@ -13,7 +13,10 @@ use tower_http::cors::{Any, CorsLayer};
 use crate::{
     config::Config,
     handlers,
-    infra::{contracts::ContractCaller, db::Database, Notifier, TeeClient, TeeEthereum},
+    infra::{
+        contracts::ContractCaller, db::Database, Notifier, SampleGenerator, TeeClient,
+        TeeCryptoService, TeeEthereum,
+    },
 };
 
 /// Application state shared across handlers
@@ -33,6 +36,10 @@ pub struct AppState {
     pub tee_service: Arc<TeeClient>,
     /// TEE Ethereum manager for TEE-based Ethereum operations
     pub tee_ethereum: Arc<TeeEthereum>,
+    /// TEE cryptographic service for data encryption
+    pub tee_crypto: Arc<TeeCryptoService>,
+    /// Sample generator service for dataset sampling
+    pub sample_generator: Arc<SampleGenerator>,
 }
 
 impl AppState {
@@ -45,6 +52,8 @@ impl AppState {
         notifier: Arc<Notifier>,
         tee_service: Arc<TeeClient>,
         tee_ethereum: Arc<TeeEthereum>,
+        tee_crypto: Arc<TeeCryptoService>,
+        sample_generator: Arc<SampleGenerator>,
     ) -> Self {
         Self {
             db,
@@ -54,6 +63,8 @@ impl AppState {
             notifier,
             tee_service,
             tee_ethereum,
+            tee_crypto,
+            sample_generator,
         }
     }
 }
@@ -68,6 +79,12 @@ pub async fn create_app(
     tee_service: Arc<TeeClient>,
     tee_ethereum: Arc<TeeEthereum>,
 ) -> Router {
+    // Create the TEE crypto service
+    let tee_crypto = Arc::new(TeeCryptoService::new(tee_service.clone()));
+
+    // Create the sample generator service
+    let sample_generator = Arc::new(SampleGenerator::new(config.dataset.sample_api_url.clone()));
+
     let state = AppState::new(
         db,
         config,
@@ -76,6 +93,8 @@ pub async fn create_app(
         notifier.clone(),
         tee_service,
         tee_ethereum,
+        tee_crypto,
+        sample_generator,
     );
 
     // Health check routes (no authentication)

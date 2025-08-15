@@ -67,3 +67,6 @@ docker-compose.override.yml
 
 # Keep example files (these should be committed)
 !.env.example
+
+# vibe coding
+ClAUDE.md

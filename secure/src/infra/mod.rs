@@ -8,13 +8,17 @@ pub mod contracts;
 pub mod crypto;
 pub mod db;
 pub mod notifier;
+pub mod sample_generator;
 pub mod tee;
+pub mod tee_crypto;
 
 // Re-export commonly used items for convenience
 pub use contracts::{ContractAddresses, ContractCaller, ContractError};
 pub use crypto::{decrypt, decrypt_hex_key, encrypt, encrypt_hex_key, CryptoError};
 pub use db::{Database, DatabaseError};
 pub use notifier::Notifier;
+pub use sample_generator::{SampleGenerator, DEFAULT_SAMPLE_SIZE};
+pub use tee_crypto::{TeeCryptoService, PURPOSE_ENC_STATIC_DATASET};
 
 // Re-export TEE components with cleaner names
 pub use tee::{

@@ -7,7 +7,7 @@ use ipfs_api_backend_hyper::IpfsApi;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::str::FromStr;
-use tracing::info;
+use tracing::{info, warn};
 use validator::Validate;
 
 use crate::{
@@ -68,7 +68,6 @@ struct CreateDatasetForm {
     pub desc: Option<String>,
     pub file_format: String,
     pub author: Option<String>,
-    pub sample_url: Option<String>,
 }
 
 /// Create a new dataset
@@ -84,7 +83,6 @@ pub async fn create_dataset(
         desc: None,
         file_format: String::new(),
         author: None,
-        sample_url: None,
     };
 
     let mut file_data: Vec<u8> = Vec::new();
@@ -143,11 +141,6 @@ pub async fn create_dataset(
                         AppError::Validation(format!("Failed to read author: {}", e))
                     })?);
             }
-            "sample_url" => {
-                form_data.sample_url = Some(field.text().await.map_err(|e| {
-                    AppError::Validation(format!("Failed to read sample_url: {}", e))
-                })?);
-            }
             _ => {
                 // Ignore unknown fields
             }
@@ -176,16 +169,65 @@ pub async fn create_dataset(
         ));
     }
 
-    // Upload to IPFS
-    let ipfs_client = &state.ipfs_client;
+    // Get the author for key derivation (use author field if provided, otherwise use wallet address)
+    let key_author = form_data
+        .author
+        .as_ref()
+        .unwrap_or(&form_data.author_wallet);
 
-    let cursor = std::io::Cursor::new(bytes::Bytes::from(file_data.clone()));
+    // Encrypt the file data using TEE-derived key
+    info!("Encrypting dataset for author: {}", key_author);
+    let encrypted_data = state
+        .tee_crypto
+        .encrypt_dataset(&file_data, key_author)
+        .await
+        .map_err(|e| AppError::Internal(format!("Failed to encrypt dataset: {}", e)))?;
+
+    // Upload encrypted data to IPFS
+    info!("Uploading encrypted dataset to IPFS");
+    let ipfs_client = &state.ipfs_client;
+    let cursor = std::io::Cursor::new(bytes::Bytes::from(encrypted_data));
     let ipfs_result = ipfs_client
         .add(cursor)
         .await
         .map_err(|e| AppError::Internal(format!("Failed to upload to IPFS: {}", e)))?;
 
     let ipfs_cid = ipfs_result.hash;
+    info!("Dataset uploaded to IPFS with CID: {}", ipfs_cid);
+
+    // Generate sample URL for CSV files
+    let mut sample_url: Option<String> = None;
+    if form_data.file_format.to_lowercase() == "csv" {
+        info!("Generating sample data for CSV file");
+
+        match state
+            .sample_generator
+            .generate_csv_sample(&file_data, None)
+            .await
+        {
+            Ok(sample_csv) => {
+                // Upload sample to IPFS (without encryption)
+                info!("Uploading sample data to IPFS");
+                let sample_cursor =
+                    std::io::Cursor::new(bytes::Bytes::from(sample_csv.into_bytes()));
+                match ipfs_client.add(sample_cursor).await {
+                    Ok(sample_result) => {
+                        let sample_cid = sample_result.hash;
+                        sample_url = Some(format!("/api/sample/{}", sample_cid));
+                        info!("Sample uploaded with CID: {}", sample_cid);
+                    }
+                    Err(e) => {
+                        warn!("Failed to upload sample to IPFS: {}", e);
+                        // Don't fail the entire operation if sample upload fails
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("Failed to generate sample CSV: {}", e);
+                // Don't fail the entire operation if sample generation fails
+            }
+        }
+    }
 
     // Create dataset record
     let request = CreateDatasetRequest {
@@ -198,7 +240,7 @@ pub async fn create_dataset(
         file_format: form_data.file_format,
         author: form_data.author,
         author_wallet: form_data.author_wallet.clone(),
-        sample_url: form_data.sample_url,
+        sample_url,
         file_path,
     };
 
@@ -230,19 +272,18 @@ pub async fn create_dataset(
         entity_type: EntityType::Dataset,
     };
 
-    // Start database transaction for blockchain transaction record
-    let mut tx = state.db.pool().begin().await?;
+    let mut db_tx = state.db.pool().begin().await?;
 
-    CreateTransaction::create(&mut tx, create_tx).await?;
+    CreateTransaction::create(&mut db_tx, create_tx).await?;
 
     // Commit transaction
-    tx.commit().await?;
+    db_tx.commit().await?;
 
     info!("Dataset {} registered successfully", dataset.id);
 
-    avinapi::data!(CreateDatasetResponse { 
+    avinapi::data!(CreateDatasetResponse {
         id: dataset.id,
-        tx_hash 
+        tx_hash
     })
 }
 
@@ -251,7 +292,8 @@ pub async fn list_datasets(
     State(state): State<AppState>,
     ValidatedQuery(query): ValidatedQuery<PaginationQuery>,
 ) -> PaginatedResult<DatasetResponse> {
-    let (datasets, total) = Dataset::find_all_confirmed(state.db.pool(), query.page, query.per_page).await?;
+    let (datasets, total) =
+        Dataset::find_all_confirmed(state.db.pool(), query.page, query.per_page).await?;
 
     let items: Vec<DatasetResponse> = datasets
         .into_iter()
@@ -316,10 +358,7 @@ pub async fn update_dataset(
 }
 
 /// Delete a dataset (requires admin)
-pub async fn delete_dataset(
-    State(state): State<AppState>,
-    Path(id): Path<i64>,
-) -> JsonResult<()> {
+pub async fn delete_dataset(State(state): State<AppState>, Path(id): Path<i64>) -> JsonResult<()> {
     // TODO: Check admin permission from request headers
     // For now, we'll skip this check in development
 
