@@ -1,5 +1,5 @@
 [workspace]
-members = ["common", "secure", "core", "gateway"]
+members = ["secure", "core"]
 resolver = "2"
 
 [workspace.package]

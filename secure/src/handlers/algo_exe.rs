@@ -64,7 +64,6 @@ pub struct SubmitAlgoExeResponse {
 
 /// Submit a new algorithm execution
 #[instrument(skip(state))]
-#[axum::debug_handler]
 pub async fn submit_algo_exe(
     State(state): State<AppState>,
     ValidatedJson(req): ValidatedJson<SubmitAlgoExeRequest>,

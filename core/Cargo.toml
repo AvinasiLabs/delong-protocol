@@ -6,29 +6,30 @@ edition = { workspace = true }
 
 [dependencies]
 # HTTP framework and async runtime
-axum = { workspace = true }
-tokio = { workspace = true, features = ["full"] }
+axum = { version = "0.8", features = ["multipart", "ws"] }
+tokio = { version = "1.39", features = ["full"] }
+async-trait = { version = "0.1" }
 
 # Serialization
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0" }
 
 # UUID generation
-uuid = { workspace = true, features = ["v4", "serde"] }
+uuid = { version = "1.10", features = ["v4", "serde"] }
 
 # Time and date handling
-chrono = { workspace = true, features = ["serde"] }
+chrono = { version = "0.4", features = ["serde"] }
 
 # Tracing and observability
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
+tracing = { version = "0.1" }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 # Error handling
-anyhow = { workspace = true }
-thiserror = { workspace = true }
+anyhow = { version = "1.0" }
+thiserror = { version = "1.0" }
 
 # Database operations
-sqlx = { workspace = true, features = [
+sqlx = { version = "0.8", features = [
     "runtime-tokio-rustls",
     "postgres",
     "mysql",
@@ -42,18 +43,21 @@ sqlx = { workspace = true, features = [
 ] }
 
 # Password hashing and authentication
-argon2 = { workspace = true }
-bcrypt = { workspace = true }
+argon2 = { version = "0.5" }
+bcrypt = { version = "0.15" }
+
+# Binary data handling
+bytes = { version = "1.5" }
 
 # JWT authentication
-jsonwebtoken = { workspace = true }
+jsonwebtoken = { version = "9.3" }
 
 # Cryptographic hashing
-sha2 = { workspace = true }
+sha2 = { version = "0.10" }
 
 # HTTP middleware and utilities
-tower = { workspace = true }
-tower-http = { workspace = true, features = [
+tower = "0.5"
+tower-http = { version = "0.6", features = [
     "cors",
     "trace",
     "auth",
@@ -63,10 +67,10 @@ tower-http = { workspace = true, features = [
 ] }
 
 # Redis caching
-redis = { workspace = true, features = ["tokio-comp", "connection-manager"] }
+redis = { version = "0.25", features = ["tokio-comp", "connection-manager"] }
 
 # Email sending
-lettre = { workspace = true, default-features = false, features = [
+lettre = { version = "0.11", default-features = false, features = [
     "tokio1-rustls-tls",
     "smtp-transport",
     "pool",
@@ -75,40 +79,40 @@ lettre = { workspace = true, default-features = false, features = [
 ] }
 
 # File upload handling
-multer = { workspace = true }
-mime = { workspace = true }
+multer = { version = "3.1" }
+mime = { version = "0.3" }
 
 # HTTP client
-reqwest = { workspace = true, features = ["json", "multipart", "stream"] }
+reqwest = { version = "0.12", features = ["json", "multipart", "stream"] }
 
 # URL encoding
-urlencoding = { workspace = true }
+urlencoding = { version = "2.1" }
 
 # Data validation
 validator = { workspace = true, features = ["derive"] }
 
 # Configuration
-config = { workspace = true }
+config = { version = "0.14" }
 
 # Environment variables
-dotenvy = { workspace = true }
+dotenvy = { version = "0.15" }
 
-# Common utilities and middleware
-common = { path = "../common" }
+# Local dependencies
+avinapi = { path = "../../avinapi", features = ["axum", "sqlx"] }
 
 # API Documentation
-utoipa = { workspace = true }
-utoipa-swagger-ui = { workspace = true }
-utoipa-scalar = { workspace = true }
+utoipa = { version = "4.2" }
+utoipa-swagger-ui = { version = "7.1" }
+utoipa-scalar = { version = "0.1" }
 
 # Random number generation
-rand = { workspace = true }
+rand = { version = "0.8" }
 
 # Decimal number handling
-bigdecimal = { workspace = true }
-num-traits = { workspace = true }
-regex.workspace = true
+bigdecimal = { version = "0.4", features = ["serde"] }
+num-traits = { version = "0.2" }
+regex = { version = "1.10" }
 
 [dev-dependencies]
 tokio-test = "0.4"
-axum-test = "15.0"
+# axum-test = "15"  # Commented out due to version conflict with axum 0.8

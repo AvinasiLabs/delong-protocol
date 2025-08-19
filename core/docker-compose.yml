@@ -1,0 +1,46 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: core-postgres-test
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: test_password
+      POSTGRES_DB: db_core_test
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "11021:5432"
+    volumes:
+      - core_postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d db_core_test"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - core_network
+
+  redis:
+    image: redis:7-alpine
+    container_name: core-redis-test
+    restart: unless-stopped
+    ports:
+      - "11022:6379"
+    volumes:
+      - core_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - core_network
+
+volumes:
+  core_postgres_data:
+  core_redis_data:
+
+networks:
+  core_network:
+    driver: bridge

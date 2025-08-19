@@ -9,12 +9,14 @@ async-trait = "0.1.81"
 
 # Local dependencies
 avinapi = { path = "../../avinapi", features = ["axum", "sqlx"] }
-common = { path = "../common" }
 
 # HTTP framework
 axum = { version = "0.8", features = ["multipart", "ws"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["trace", "cors"] }
+
+# Authentication
+jsonwebtoken = { version = "9.3" }
 
 # Async runtime
 tokio = { version = "1.39.2", features = ["full"] }

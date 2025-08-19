@@ -4,29 +4,144 @@
 //! including registration, login, verification code management,
 //! and Google OAuth integration.
 
-use axum::{
-    extract::{Query, State},
-    http::StatusCode,
-    response::Json,
-};
-use common::{ApiError, ApiResponse, ResponseCode};
+use avinapi::prelude::{AppError, JsonResult, ValidatedJson, data};
+use axum::extract::{Query, State};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::sync::Arc;
+
+use regex::Regex;
+use std::sync::LazyLock;
 use tracing::{error, info, warn};
 use validator::Validate;
 
 use crate::{
-    AppState,
-    models::{
-        auth::{AuthResponse, SendVerificationCodeRequest, UpdateWalletRequest},
-        user::{CreateUserRequest, LoginRequest, RegisterRequest, User, UserResponse},
-    },
+    middleware::AuthUser,
+    models::{auth::VerificationType, user::User},
+    routes::AppState,
     utils::jwt::{self},
 };
 
+// ===== Validation Regex =====
+
+/// Regex for validating Ethereum wallet addresses
+pub static WALLET_ADDRESS_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^0x[a-fA-F0-9]{40}$").expect("Invalid wallet address regex"));
+
+/// Regex for validating usernames
+pub static USERNAME_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[a-zA-Z0-9_]{3,20}$").expect("Invalid username regex"));
+
+// ===== Request Structures =====
+
+/// Login request
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+pub struct LoginRequest {
+    #[validate(email(message = "Invalid email format"))]
+    pub email: String,
+    #[validate(length(min = 6, message = "Password must be at least 6 characters"))]
+    pub password: String,
+}
+
+/// User registration request
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+pub struct RegisterRequest {
+    #[validate(
+        length(min = 3, max = 20, message = "Username must be 3-20 characters"),
+        regex(
+            path = "crate::handlers::auth::USERNAME_REGEX",
+            message = "Username must contain only letters, numbers, and underscores"
+        )
+    )]
+    pub username: String,
+    #[validate(email(message = "Invalid email format"))]
+    pub email: String,
+    #[validate(length(min = 8, max = 128, message = "Password must be 8-128 characters"))]
+    pub password: String,
+    #[validate(length(min = 4, max = 6, message = "Verification code must be 4-6 characters"))]
+    pub verification_code: Option<String>,
+}
+
+/// Send verification code request
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+pub struct SendVerificationCodeRequest {
+    #[validate(email(message = "Invalid email format"))]
+    pub email: String,
+    pub verification_type: VerificationType,
+    pub language: Option<String>,
+}
+
+/// Update wallet address request
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+pub struct UpdateWalletRequest {
+    #[validate(
+        length(
+            min = 42,
+            max = 42,
+            message = "Wallet address must be exactly 42 characters"
+        ),
+        regex(
+            path = "crate::handlers::auth::WALLET_ADDRESS_REGEX",
+            message = "Invalid wallet address format (must be 0x followed by 40 hex characters)"
+        )
+    )]
+    pub wallet_address: String,
+}
+
+/// Google OAuth login request
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+pub struct GoogleLoginRequest {
+    pub access_token: String,
+    pub id_token: Option<String>,
+}
+
+// ===== Response Structures =====
+
+/// User response model for API responses
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserResponse {
+    pub id: i32,
+    pub email: String,
+    pub username: String,
+    pub role: String,
+    pub status: String,
+    pub wallet_address: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub last_login: Option<DateTime<Utc>>,
+    pub google_id: Option<String>,
+    pub avatar_url: Option<String>,
+    pub provider: String,
+}
+
+impl From<User> for UserResponse {
+    fn from(user: User) -> Self {
+        Self {
+            id: user.id,
+            email: user.email,
+            username: user.username,
+            role: user.role,
+            status: user.status,
+            wallet_address: user.wallet_address,
+            created_at: user.created_at,
+            last_login: user.last_login,
+            google_id: user.google_id,
+            avatar_url: user.avatar_url,
+            provider: user.provider,
+        }
+    }
+}
+
+/// Authentication response
+#[derive(Debug, Serialize)]
+pub struct AuthResponse {
+    pub access_token: String,
+    pub refresh_token: String,
+    pub user: UserResponse,
+    pub expires_at: DateTime<Utc>,
+}
+
 /// Google auth URL query parameters
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct GoogleAuthQuery {
     #[serde(rename = "returnTo")]
     pub return_to: Option<String>,
@@ -41,67 +156,40 @@ pub struct GoogleAuthUrlResponse {
 }
 
 /// Google callback query parameters
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct GoogleCallbackQuery {
     pub code: Option<String>,
     pub state: Option<String>,
     pub error: Option<String>,
 }
 
-/// Google callback request body
-#[derive(Debug, Deserialize)]
+/// Google callback request
+#[derive(Debug, Serialize, Deserialize, Validate)]
 pub struct GoogleCallbackRequest {
     pub code: String,
     pub state: String,
-}
-
-/// Refresh token request
-#[derive(Debug, Deserialize, Validate)]
-pub struct RefreshTokenRequest {
-    #[validate(length(min = 1))]
-    pub refresh_token: String,
+    pub error: Option<String>,
 }
 
 /// User login handler
+/// Login user
 /// POST /auth/login
 pub async fn login_user(
-    State(state): State<Arc<AppState>>,
-    Json(payload): Json<LoginRequest>,
-) -> Result<Json<ApiResponse<AuthResponse>>, (StatusCode, Json<ApiResponse<()>>)> {
+    State(state): State<AppState>,
+    ValidatedJson(payload): ValidatedJson<LoginRequest>,
+) -> JsonResult<AuthResponse> {
     info!("User login request for email: {}", payload.email);
-
-    // Validate input
-    if let Err(validation_errors) = payload.validate() {
-        warn!("Login validation failed: {:?}", validation_errors);
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiResponse::error(ResponseCode::BadRequest)),
-        ));
-    }
-
-    if payload.email.is_empty() || payload.password.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiResponse::error(ResponseCode::BadRequest)),
-        ));
-    }
 
     // Find user by email
     let user = match User::find_by_email(&state.db, &payload.email).await {
         Ok(Some(user)) => user,
         Ok(None) => {
             warn!("Login failed: User not found for email: {}", payload.email);
-            return Err((
-                StatusCode::NOT_FOUND,
-                Json(ApiResponse::error(ResponseCode::NotFound)),
-            ));
+            return Err(AppError::Authentication("Invalid credentials".to_string()));
         }
         Err(e) => {
             error!("Database error during login: {:?}", e);
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiResponse::error(ResponseCode::InternalServerError)),
-            ));
+            return Err(e);
         }
     };
 
@@ -111,10 +199,7 @@ pub async fn login_user(
             "Login failed: Invalid password for email: {}",
             payload.email
         );
-        return Err((
-            StatusCode::UNAUTHORIZED,
-            Json(ApiResponse::error(ResponseCode::Unauthorized)),
-        ));
+        return Err(AppError::Authentication("Invalid credentials".to_string()));
     }
 
     // Check if user is active
@@ -123,9 +208,8 @@ pub async fn login_user(
             "Login failed: Account not active for email: {}",
             payload.email
         );
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(ApiResponse::error(ResponseCode::Forbidden)),
+        return Err(AppError::Authentication(
+            "Account is not active".to_string(),
         ));
     }
 
@@ -134,10 +218,7 @@ pub async fn login_user(
         Ok(token) => token,
         Err(e) => {
             error!("Failed to generate JWT token: {:?}", e);
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiResponse::error(ResponseCode::InternalServerError)),
-            ));
+            return Err(AppError::Internal("Failed to generate token".to_string()));
         }
     };
 
@@ -155,64 +236,21 @@ pub async fn login_user(
     };
 
     info!("User logged in successfully: {}", payload.email);
-    Ok(Json(ApiResponse::success(auth_response)))
+    data!(auth_response)
 }
 
 /// User registration handler
+/// Register a new user
 /// POST /auth/register
 pub async fn register_user(
-    State(state): State<Arc<AppState>>,
-    Json(payload): Json<RegisterRequest>,
-) -> Result<Json<ApiResponse<AuthResponse>>, (StatusCode, Json<ApiResponse<()>>)> {
+    State(state): State<AppState>,
+    ValidatedJson(payload): ValidatedJson<RegisterRequest>,
+) -> JsonResult<AuthResponse> {
     info!("User registration request for email: {}", payload.email);
 
-    // Validate input
-    if let Err(validation_errors) = payload.validate() {
-        warn!("Registration validation failed: {:?}", validation_errors);
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiResponse::error(ResponseCode::BadRequest)),
-        ));
-    }
-
-    // Validate required fields
-    if payload.username.is_empty() || payload.email.is_empty() || payload.password.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiResponse::error(ResponseCode::BadRequest)),
-        ));
-    }
-
     if payload.verification_code.is_none() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiResponse::error(ResponseCode::BadRequest)),
-        ));
-    }
-
-    // Validate email format
-    let email_regex = regex::Regex::new(r"^[^\s@]+@[^\s@]+\.[^\s@]+$").unwrap();
-    if !email_regex.is_match(&payload.email) {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiResponse::error(ResponseCode::BadRequest)),
-        ));
-    }
-
-    // Validate password strength (6-10 characters as per frontend logic)
-    if payload.password.len() < 6 || payload.password.len() > 10 {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiResponse::error(ResponseCode::BadRequest)),
-        ));
-    }
-
-    // Validate username format
-    let username_regex = regex::Regex::new(r"^[a-zA-Z0-9_]{3,20}$").unwrap();
-    if !username_regex.is_match(&payload.username) {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiResponse::error(ResponseCode::BadRequest)),
+        return Err(AppError::Validation(
+            "Verification code is required".to_string(),
         ));
     }
 
@@ -228,17 +266,13 @@ pub async fn register_user(
         }
         Ok(false) => {
             warn!("Invalid verification code for email: {}", payload.email);
-            return Err((
-                StatusCode::BAD_REQUEST,
-                Json(ApiResponse::error(ResponseCode::BadRequest)),
+            return Err(AppError::Validation(
+                "Invalid or expired verification code".to_string(),
             ));
         }
         Err(e) => {
             error!("Error verifying verification code: {:?}", e);
-            return Err((
-                StatusCode::BAD_REQUEST,
-                Json(ApiResponse::error(ResponseCode::BadRequest)),
-            ));
+            return Err(e);
         }
     }
 
@@ -248,29 +282,24 @@ pub async fn register_user(
             "Registration failed: User already exists for email: {}",
             payload.email
         );
-        return Err((
-            StatusCode::CONFLICT,
-            Json(ApiResponse::error(ResponseCode::BadRequest)),
-        ));
+        return Err(AppError::Conflict("Email already registered".to_string()));
     }
 
     // Create user
-    let create_request = CreateUserRequest {
-        username: payload.username,
-        email: payload.email.clone(),
-        password: Some(payload.password),
-        role: Some("scientist".to_string()), // Default role
-        wallet_address: None,
-    };
-
-    let user = match User::create(&state.db, create_request).await {
+    let user = match User::create(
+        &state.db,
+        &payload.username,
+        &payload.email,
+        Some(&payload.password),
+        Some("scientist"),
+        None,
+    )
+    .await
+    {
         Ok(user) => user,
         Err(e) => {
             error!("Failed to create user: {:?}", e);
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiResponse::error(ResponseCode::InternalServerError)),
-            ));
+            return Err(e);
         }
     };
 
@@ -279,10 +308,7 @@ pub async fn register_user(
         Ok(token) => token,
         Err(e) => {
             error!("Failed to generate JWT token: {:?}", e);
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiResponse::error(ResponseCode::InternalServerError)),
-            ));
+            return Err(AppError::Internal("Failed to generate token".to_string()));
         }
     };
 
@@ -297,43 +323,29 @@ pub async fn register_user(
     };
 
     info!("User registered successfully: {}", payload.email);
-    Ok(Json(ApiResponse::success(auth_response)))
+    data!(auth_response)
 }
 
 /// Send verification code handler
+/// Send verification code
 /// POST /auth/send-code
 pub async fn send_verification_code(
-    State(state): State<Arc<AppState>>,
-    Json(payload): Json<SendVerificationCodeRequest>,
-) -> Result<Json<ApiResponse<serde_json::Value>>, (StatusCode, Json<ApiResponse<()>>)> {
+    State(state): State<AppState>,
+    ValidatedJson(payload): ValidatedJson<SendVerificationCodeRequest>,
+) -> JsonResult<serde_json::Value> {
     info!(
         "Send verification code request for email: {}",
         payload.email
     );
 
-    // Validate input
-    if let Err(validation_errors) = payload.validate() {
-        warn!("Send code validation failed: {:?}", validation_errors);
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiResponse::error(ResponseCode::BadRequest)),
-        ));
-    }
-
     if payload.email.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiResponse::error(ResponseCode::BadRequest)),
-        ));
+        return Err(AppError::Validation("Email is required".to_string()));
     }
 
     // Validate email format
     let email_regex = regex::Regex::new(r"^[^\s@]+@[^\s@]+\.[^\s@]+$").unwrap();
     if !email_regex.is_match(&payload.email) {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiResponse::error(ResponseCode::BadRequest)),
-        ));
+        return Err(AppError::Validation("Invalid email format".to_string()));
     }
 
     // Check if code already sent recently
@@ -347,9 +359,8 @@ pub async fn send_verification_code(
             "Verification code already sent recently for: {}",
             payload.email
         );
-        return Err((
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(ApiResponse::error(ResponseCode::TooManyRequests)),
+        return Err(AppError::Conflict(
+            "Verification code already sent. Please wait before requesting again".to_string(),
         ));
     }
 
@@ -365,10 +376,7 @@ pub async fn send_verification_code(
         .await
     {
         error!("Failed to store verification code: {:?}", e);
-        return Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiResponse::error(ResponseCode::InternalServerError)),
-        ));
+        return Err(e);
     }
 
     // In development mode, include the code in response
@@ -377,11 +385,11 @@ pub async fn send_verification_code(
             "Development mode: Verification code for {}: {}",
             payload.email, verification_code
         );
-        return Ok(Json(ApiResponse::success(json!({
+        return data!(json!({
             "message": "Verification code sent successfully",
             "dev_mode": true,
             "dev_code": verification_code
-        }))));
+        }));
     }
 
     // TODO: Send email via email service
@@ -391,17 +399,17 @@ pub async fn send_verification_code(
         payload.email, verification_code
     );
 
-    Ok(Json(ApiResponse::success(json!({
+    data!(json!({
         "message": "Verification code sent successfully"
-    }))))
+    }))
 }
 
 /// Get Google OAuth URL handler
 /// GET /auth/google
 pub async fn google_auth_url(
-    State(_state): State<Arc<AppState>>,
-    Query(_params): Query<GoogleAuthQuery>,
-) -> Result<Json<ApiResponse<GoogleAuthUrlResponse>>, (StatusCode, Json<ApiResponse<()>>)> {
+    State(_state): State<AppState>,
+    Query(_query): Query<GoogleAuthQuery>,
+) -> JsonResult<GoogleAuthUrlResponse> {
     info!("Google OAuth URL request");
 
     // TODO: Implement Google OAuth URL generation
@@ -415,40 +423,31 @@ pub async fn google_auth_url(
         state: generate_state_parameter(),
     };
 
-    Ok(Json(ApiResponse::success(mock_response)))
+    data!(mock_response)
 }
 
 /// Google OAuth callback handler
 /// GET /auth/google/callback
 pub async fn google_auth_callback(
-    State(state): State<Arc<AppState>>,
+    State(state): State<AppState>,
     Query(params): Query<GoogleCallbackQuery>,
-) -> Result<Json<ApiResponse<AuthResponse>>, (StatusCode, Json<ApiResponse<()>>)> {
+) -> JsonResult<AuthResponse> {
     info!("Google OAuth callback request");
 
     // Check for error parameter
     if let Some(error) = params.error {
         warn!("Google OAuth error: {}", error);
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiResponse::error(ResponseCode::BadRequest)),
-        ));
+        return Err(AppError::Authentication(format!("OAuth error: {}", error)));
     }
 
     let _code = params.code.ok_or_else(|| {
         warn!("Missing authorization code");
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiResponse::error(ResponseCode::BadRequest)),
-        )
+        AppError::Validation("Missing authorization code".to_string())
     })?;
 
     let _state_param = params.state.ok_or_else(|| {
         warn!("Missing state parameter");
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiResponse::error(ResponseCode::BadRequest)),
-        )
+        AppError::Validation("Missing state parameter".to_string())
     })?;
 
     // TODO: Implement Google OAuth callback
@@ -489,48 +488,37 @@ pub async fn google_auth_callback(
         expires_at: chrono::Utc::now() + chrono::Duration::hours(24),
     };
 
-    Ok(Json(ApiResponse::success(auth_response)))
+    data!(auth_response)
 }
 
 /// Update wallet address handler
 /// POST /auth/update-wallet
+/// Update wallet address
 pub async fn update_wallet_address(
-    State(state): State<Arc<AppState>>,
-    Json(payload): Json<UpdateWalletRequest>,
-) -> Result<Json<ApiResponse<UserResponse>>, (StatusCode, Json<ApiResponse<()>>)> {
+    State(state): State<AppState>,
+    auth_user: AuthUser,
+    ValidatedJson(payload): ValidatedJson<UpdateWalletRequest>,
+) -> JsonResult<UserResponse> {
     info!("Update wallet address request");
-
-    // Validate input
-    if let Err(validation_errors) = payload.validate() {
-        warn!("Update wallet validation failed: {:?}", validation_errors);
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiResponse::error(ResponseCode::BadRequest)),
-        ));
-    }
 
     // Validate wallet address format
     let wallet_regex = regex::Regex::new(r"^0x[a-fA-F0-9]{40}$").unwrap();
     if !wallet_regex.is_match(&payload.wallet_address) {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiResponse::error(ResponseCode::BadRequest)),
+        return Err(AppError::Validation(
+            "Invalid wallet address format".to_string(),
         ));
     }
 
-    // TODO: Extract user ID from JWT token in authentication middleware
-    // For now, we'll use a mock user ID
-    let user_id = 1;
+    let user_id = auth_user
+        .user_id()
+        .map_err(|e| AppError::Internal(e.to_string()))?;
 
     // Update wallet address
     if let Err(e) =
         User::update_wallet_address(&state.db, user_id, Some(payload.wallet_address)).await
     {
         error!("Failed to update wallet address: {:?}", e);
-        return Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiResponse::error(ResponseCode::InternalServerError)),
-        ));
+        return Err(e);
     }
 
     // Get updated user
@@ -538,151 +526,16 @@ pub async fn update_wallet_address(
         Ok(Some(user)) => user,
         Ok(None) => {
             warn!("User not found after wallet update");
-            return Err((
-                StatusCode::NOT_FOUND,
-                Json(ApiResponse::error(ResponseCode::NotFound)),
-            ));
+            return Err(AppError::NotFound("User not found".to_string()));
         }
         Err(e) => {
             error!("Database error retrieving updated user: {:?}", e);
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiResponse::error(ResponseCode::InternalServerError)),
-            ));
+            return Err(e);
         }
     };
 
     info!("Wallet address updated successfully");
-    Ok(Json(ApiResponse::success(UserResponse::from(user))))
-}
-
-/// Get current user handler
-/// GET /auth/me
-pub async fn get_current_user(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<ApiResponse<UserResponse>>, (StatusCode, Json<ApiResponse<()>>)> {
-    info!("Get current user request");
-
-    // TODO: Extract user ID from JWT token in authentication middleware
-    let user_id = 1;
-
-    match User::find_by_id(&state.db, user_id).await {
-        Ok(Some(user)) => {
-            info!("Current user retrieved successfully");
-            Ok(Json(ApiResponse::success(UserResponse::from(user))))
-        }
-        Ok(None) => {
-            warn!("Current user not found");
-            Err((
-                StatusCode::NOT_FOUND,
-                Json(ApiResponse::error(ResponseCode::NotFound)),
-            ))
-        }
-        Err(e) => {
-            error!("Database error retrieving current user: {:?}", e);
-            Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiResponse::error(ResponseCode::InternalServerError)),
-            ))
-        }
-    }
-}
-
-/// Refresh token handler
-/// POST /auth/refresh
-pub async fn refresh_token(
-    State(state): State<Arc<AppState>>,
-    Json(payload): Json<RefreshTokenRequest>,
-) -> Result<Json<ApiResponse<AuthResponse>>, (StatusCode, Json<ApiResponse<()>>)> {
-    info!("Refresh token request");
-
-    // Validate input
-    if let Err(validation_errors) = payload.validate() {
-        warn!("Refresh token validation failed: {:?}", validation_errors);
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiResponse::error(ResponseCode::BadRequest)),
-        ));
-    }
-
-    // Refresh the token
-    let new_token = match jwt::refresh_token(&payload.refresh_token, &state.jwt_config) {
-        Ok(token) => token,
-        Err(ApiError::InvalidToken) => {
-            warn!("Invalid refresh token");
-            return Err((
-                StatusCode::UNAUTHORIZED,
-                Json(ApiResponse::error(ResponseCode::Unauthorized)),
-            ));
-        }
-        Err(e) => {
-            error!("Failed to refresh token: {:?}", e);
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiResponse::error(ResponseCode::InternalServerError)),
-            ));
-        }
-    };
-
-    // Extract user info from the new token to create response
-    let claims = match jwt::verify_token(&new_token, &state.jwt_config) {
-        Ok(claims) => claims,
-        Err(e) => {
-            error!("Failed to verify refreshed token: {:?}", e);
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiResponse::error(ResponseCode::InternalServerError)),
-            ));
-        }
-    };
-
-    let auth_response = AuthResponse {
-        access_token: new_token.clone(),
-        refresh_token: new_token,
-        user: UserResponse {
-            id: claims.sub.parse().unwrap_or(0),
-            email: claims.email,
-            username: "".to_string(), // We don't have username in JWT claims
-            role: claims.role,
-            status: "active".to_string(),
-            wallet_address: None,
-            created_at: chrono::Utc::now(),
-            last_login: None,
-            google_id: None,
-            avatar_url: None,
-            provider: "jwt".to_string(),
-        },
-        expires_at: chrono::Utc::now() + chrono::Duration::hours(24),
-    };
-
-    info!("Token refreshed successfully");
-    Ok(Json(ApiResponse::success(auth_response)))
-}
-
-/// Logout user handler
-/// POST /auth/logout
-pub async fn logout_user(
-    State(_state): State<Arc<AppState>>,
-) -> Result<Json<ApiResponse<serde_json::Value>>, (StatusCode, Json<ApiResponse<()>>)> {
-    info!("User logout request");
-
-    // TODO: Implement token blacklisting or other logout logic
-    // For stateless JWT tokens, logout is typically handled client-side
-    // by removing the token from storage
-
-    Ok(Json(ApiResponse::success(json!({
-        "message": "Logged out successfully"
-    }))))
-}
-
-/// Health check for auth endpoints
-/// GET /auth/health
-pub async fn health_check() -> Json<ApiResponse<serde_json::Value>> {
-    Json(ApiResponse::success(json!({
-        "status": "healthy",
-        "service": "auth",
-        "timestamp": chrono::Utc::now()
-    })))
+    data!(UserResponse::from(user))
 }
 
 /// Generate a 6-digit verification code

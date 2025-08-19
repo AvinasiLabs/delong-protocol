@@ -26,6 +26,9 @@ pub async fn setup_test_db() -> Database {
         warn!("Failed to load .env: {}. Using environment variables.", e);
     }
 
+    // Set TEST_MODE to skip JWT verification in tests
+    std::env::set_var("TEST_MODE", "true");
+
     // Initialize configuration - use Config::load() for consistency
     let config = Config::load().expect("Failed to load config");
 
@@ -46,6 +49,7 @@ pub async fn setup_test_db() -> Database {
 /// Set up a test configuration
 ///
 /// This function loads configuration from environment for testing
+#[allow(dead_code)]
 pub fn setup_test_config() -> Config {
     // Initialize test environment - load from secure/.env
     if let Err(e) = dotenvy::from_filename(".env") {
@@ -107,11 +111,15 @@ pub fn create_multipart_body(
 /// Set up a test application with all routes and dependencies
 ///
 /// This function creates a complete test application instance
+#[allow(dead_code)]
 pub async fn setup_test_app() -> Router {
     // Initialize test environment
     if let Err(e) = dotenvy::from_filename(".env") {
         warn!("Failed to load .env: {}. Using environment variables.", e);
     }
+
+    // Set TEST_MODE to skip JWT verification in tests
+    std::env::set_var("TEST_MODE", "true");
 
     // Load configuration
     let config = Config::load().expect("Failed to load config");
@@ -168,11 +176,15 @@ pub async fn setup_test_app() -> Router {
 /// Set up a clean test application (clears database before setup)
 ///
 /// This function creates a test application with a fresh database state
+#[allow(dead_code)]
 pub async fn setup_clean_test_app() -> Router {
     // Initialize test environment
     if let Err(e) = dotenvy::from_filename(".env") {
         warn!("Failed to load .env: {}. Using environment variables.", e);
     }
+
+    // Set TEST_MODE to skip JWT verification in tests
+    std::env::set_var("TEST_MODE", "true");
 
     // Load configuration
     let config = Config::load().expect("Failed to load config");
@@ -235,6 +247,7 @@ pub async fn setup_clean_test_app() -> Router {
 /// Extract JSON body from an axum response
 ///
 /// Helper function to extract and parse JSON body from test responses
+#[allow(dead_code)]
 pub async fn extract_json_body(response: axum::response::Response) -> serde_json::Value {
     use axum::body::to_bytes;
 

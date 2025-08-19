@@ -249,11 +249,6 @@ impl Config {
             },
         })
     }
-
-    /// Alias for load() to maintain compatibility
-    pub fn from_env() -> Result<Self, String> {
-        Self::load()
-    }
 }
 
 impl Default for Config {

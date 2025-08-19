@@ -3,12 +3,15 @@
 //! This module contains all data structures related to user management,
 //! including user accounts, authentication, and user operations.
 
+use crate::{
+    AppError,
+    handlers::{admin::UserListResponse, auth::UserResponse},
+    models::PaginationResponse,
+};
 use bcrypt::{DEFAULT_COST, hash, verify};
 use chrono::{DateTime, Utc};
-use common::ApiError;
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, PgPool};
-use validator::Validate;
 
 /// User role enumeration
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, sqlx::Type)]
@@ -39,7 +42,7 @@ impl std::fmt::Display for UserRole {
 }
 
 impl std::str::FromStr for UserRole {
-    type Err = ApiError;
+    type Err = AppError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
@@ -47,7 +50,7 @@ impl std::str::FromStr for UserRole {
             "admin" => Ok(UserRole::Admin),
             "moderator" => Ok(UserRole::Moderator),
             "guest" => Ok(UserRole::Guest),
-            _ => Err(ApiError::InvalidInput(format!("Invalid role: {}", s))),
+            _ => Err(AppError::Validation(format!("Invalid role: {}", s))),
         }
     }
 }
@@ -81,7 +84,7 @@ impl std::fmt::Display for UserStatus {
 }
 
 impl std::str::FromStr for UserStatus {
-    type Err = ApiError;
+    type Err = AppError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
@@ -89,7 +92,7 @@ impl std::str::FromStr for UserStatus {
             "inactive" => Ok(UserStatus::Inactive),
             "suspended" => Ok(UserStatus::Suspended),
             "pending" => Ok(UserStatus::Pending),
-            _ => Err(ApiError::InvalidInput(format!("Invalid status: {}", s))),
+            _ => Err(AppError::Validation(format!("Invalid status: {}", s))),
         }
     }
 }
@@ -130,95 +133,6 @@ pub struct User {
     pub profile_data: serde_json::Value,
 }
 
-/// User response model for API responses
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UserResponse {
-    pub id: i32,
-    pub email: String,
-    pub username: String,
-    pub role: String,
-    pub status: String,
-    pub wallet_address: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub last_login: Option<DateTime<Utc>>,
-    pub google_id: Option<String>,
-    pub avatar_url: Option<String>,
-    pub provider: String,
-}
-
-impl From<User> for UserResponse {
-    fn from(user: User) -> Self {
-        Self {
-            id: user.id,
-            email: user.email,
-            username: user.username,
-            role: user.role,
-            status: user.status,
-            wallet_address: user.wallet_address,
-            created_at: user.created_at,
-            last_login: user.last_login,
-            google_id: user.google_id,
-            avatar_url: user.avatar_url,
-            provider: user.provider,
-        }
-    }
-}
-
-/// Request model for creating a new user
-#[derive(Debug, Serialize, Deserialize, Validate)]
-pub struct CreateUserRequest {
-    #[validate(length(min = 2, max = 50))]
-    pub username: String,
-    #[validate(email)]
-    pub email: String,
-    #[validate(length(min = 8, max = 128))]
-    pub password: Option<String>,
-    pub role: Option<String>,
-    pub wallet_address: Option<String>,
-}
-
-/// Request model for updating user information
-#[derive(Debug, Serialize, Deserialize, Validate)]
-pub struct UpdateUserRequest {
-    #[validate(length(min = 2, max = 50))]
-    pub username: Option<String>,
-    #[validate(email)]
-    pub email: Option<String>,
-    pub role: Option<String>,
-    pub status: Option<String>,
-    pub wallet_address: Option<String>,
-    pub avatar_url: Option<String>,
-    pub email_verified: Option<bool>,
-}
-
-/// Request model for user login
-#[derive(Debug, Serialize, Deserialize, Validate)]
-pub struct LoginRequest {
-    #[validate(email)]
-    pub email: String,
-    #[validate(length(min = 8, max = 128))]
-    pub password: String,
-}
-
-/// Request model for user registration
-#[derive(Debug, Serialize, Deserialize, Validate)]
-pub struct RegisterRequest {
-    #[validate(length(min = 2, max = 50))]
-    pub username: String,
-    #[validate(email)]
-    pub email: String,
-    #[validate(length(min = 8, max = 128))]
-    pub password: String,
-    pub verification_code: Option<String>,
-}
-
-/// Request model for Google OAuth login
-#[derive(Debug, Serialize, Deserialize)]
-pub struct GoogleLoginRequest {
-    pub access_token: String,
-    pub id_token: Option<String>,
-}
-
 /// Query parameters for user list endpoints
 #[derive(Debug, Serialize, Deserialize)]
 pub struct UserQueryParams {
@@ -227,22 +141,6 @@ pub struct UserQueryParams {
     pub role: Option<String>,
     pub status: Option<String>,
     pub search: Option<String>,
-}
-
-/// Response model for user list with pagination
-#[derive(Debug, Serialize, Deserialize)]
-pub struct UserListResponse {
-    pub users: Vec<UserResponse>,
-    pub pagination: PaginationResponse,
-}
-
-/// Pagination response model
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PaginationResponse {
-    pub page: i32,
-    pub limit: i32,
-    pub total: i64,
-    pub total_pages: i32,
 }
 
 /// Role information model
@@ -254,7 +152,6 @@ pub struct RoleInfo {
     pub description: Option<String>,
     pub level: i32,
     pub is_system: Option<bool>,
-    pub permissions: serde_json::Value,
 }
 
 /// Permission information model
@@ -267,18 +164,18 @@ pub struct PermissionInfo {
     pub action: String,
 }
 
-/// Combined roles and permissions response
-#[derive(Debug, Serialize, Deserialize)]
-pub struct RolesPermissionsResponse {
-    pub roles: Vec<RoleInfo>,
-    pub permissions: Vec<PermissionInfo>,
-}
-
 impl User {
     /// Create a new user
-    pub async fn create(pool: &PgPool, data: CreateUserRequest) -> Result<Self, ApiError> {
-        let password_hash = if let Some(password) = &data.password {
-            Some(hash_password(password)?)
+    pub async fn create(
+        pool: &PgPool,
+        username: &str,
+        email: &str,
+        password: Option<&str>,
+        role: Option<&str>,
+        wallet_address: Option<&str>,
+    ) -> Result<Self, AppError> {
+        let password_hash = if let Some(pwd) = password {
+            Some(hash_password(pwd)?)
         } else {
             None
         };
@@ -293,11 +190,11 @@ impl User {
                       two_factor_enabled, profile_data
             "#,
         )
-        .bind(&data.username)
-        .bind(&data.email)
+        .bind(username)
+        .bind(email)
         .bind(password_hash)
-        .bind(data.role.as_deref().unwrap_or("scientist"))
-        .bind(&data.wallet_address)
+        .bind(role.unwrap_or("scientist"))
+        .bind(wallet_address)
         .fetch_one(pool)
         .await?;
 
@@ -305,7 +202,7 @@ impl User {
     }
 
     /// Find user by email
-    pub async fn find_by_email(pool: &PgPool, email: &str) -> Result<Option<Self>, ApiError> {
+    pub async fn find_by_email(pool: &PgPool, email: &str) -> Result<Option<Self>, AppError> {
         let user = sqlx::query_as::<_, User>(
             r#"
             SELECT id, username, email, password_hash, role, status, wallet_address,
@@ -324,7 +221,7 @@ impl User {
     }
 
     /// Find user by ID
-    pub async fn find_by_id(pool: &PgPool, id: i32) -> Result<Option<Self>, ApiError> {
+    pub async fn find_by_id(pool: &PgPool, id: i32) -> Result<Option<Self>, AppError> {
         let user = sqlx::query_as::<_, User>(
             r#"
             SELECT id, username, email, password_hash, role, status, wallet_address,
@@ -346,7 +243,7 @@ impl User {
     pub async fn find_by_google_id(
         pool: &PgPool,
         google_id: &str,
-    ) -> Result<Option<Self>, ApiError> {
+    ) -> Result<Option<Self>, AppError> {
         let user = sqlx::query_as::<_, User>(
             r#"
             SELECT id, username, email, password_hash, role, status, wallet_address,
@@ -365,7 +262,17 @@ impl User {
     }
 
     /// Update user
-    pub async fn update(pool: &PgPool, id: i32, data: UpdateUserRequest) -> Result<Self, ApiError> {
+    pub async fn update(
+        pool: &PgPool,
+        id: i32,
+        username: Option<&str>,
+        email: Option<&str>,
+        role: Option<&str>,
+        status: Option<&str>,
+        wallet_address: Option<&str>,
+        avatar_url: Option<&str>,
+        email_verified: Option<bool>,
+    ) -> Result<Self, AppError> {
         let user = sqlx::query_as::<_, User>(
             r#"
             UPDATE users
@@ -384,13 +291,13 @@ impl User {
                       two_factor_enabled, profile_data
             "#,
         )
-        .bind(&data.username)
-        .bind(&data.email)
-        .bind(&data.role)
-        .bind(&data.status)
-        .bind(&data.wallet_address)
-        .bind(&data.avatar_url)
-        .bind(data.email_verified)
+        .bind(username)
+        .bind(email)
+        .bind(role)
+        .bind(status)
+        .bind(wallet_address)
+        .bind(avatar_url)
+        .bind(email_verified)
         .bind(id)
         .fetch_one(pool)
         .await?;
@@ -399,7 +306,7 @@ impl User {
     }
 
     /// Update last login time
-    pub async fn update_last_login(pool: &PgPool, id: i32) -> Result<(), ApiError> {
+    pub async fn update_last_login(pool: &PgPool, id: i32) -> Result<(), AppError> {
         sqlx::query("UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = $1")
             .bind(id)
             .execute(pool)
@@ -413,7 +320,7 @@ impl User {
         pool: &PgPool,
         id: i32,
         wallet_address: Option<String>,
-    ) -> Result<(), ApiError> {
+    ) -> Result<(), AppError> {
         sqlx::query(
             "UPDATE users SET wallet_address = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
         )
@@ -429,7 +336,7 @@ impl User {
     pub async fn create_google_user(
         pool: &PgPool,
         google_data: GoogleUserData,
-    ) -> Result<Self, ApiError> {
+    ) -> Result<Self, AppError> {
         let user = sqlx::query_as::<_, User>(
             r#"
             INSERT INTO users (username, email, google_id, avatar_url, provider,
@@ -458,7 +365,7 @@ impl User {
         pool: &PgPool,
         user_id: i32,
         google_data: GoogleUserData,
-    ) -> Result<(), ApiError> {
+    ) -> Result<(), AppError> {
         sqlx::query(
             r#"
             UPDATE users
@@ -484,7 +391,7 @@ impl User {
     pub async fn get_users(
         pool: &PgPool,
         params: UserQueryParams,
-    ) -> Result<UserListResponse, ApiError> {
+    ) -> Result<UserListResponse, AppError> {
         let page = params.page.unwrap_or(1).max(1);
         let limit = params.limit.unwrap_or(10).clamp(1, 100);
         let offset = (page - 1) * limit;
@@ -546,7 +453,7 @@ impl User {
     }
 
     /// Delete user
-    pub async fn delete(pool: &PgPool, id: i32) -> Result<(), ApiError> {
+    pub async fn delete(pool: &PgPool, id: i32) -> Result<(), AppError> {
         sqlx::query("DELETE FROM users WHERE id = $1")
             .bind(id)
             .execute(pool)
@@ -584,17 +491,18 @@ impl User {
 }
 
 /// Hash password using bcrypt
-pub fn hash_password(password: &str) -> Result<String, ApiError> {
-    hash(password, DEFAULT_COST).map_err(|_| ApiError::AuthenticationFailed)
+pub fn hash_password(password: &str) -> Result<String, AppError> {
+    hash(password, DEFAULT_COST)
+        .map_err(|e| AppError::Internal(format!("Failed to hash password: {}", e)))
 }
 
 /// Get roles and permissions
 pub async fn get_roles_and_permissions(
     pool: &PgPool,
-) -> Result<RolesPermissionsResponse, ApiError> {
+) -> Result<(Vec<RoleInfo>, Vec<PermissionInfo>), AppError> {
     let roles = sqlx::query_as::<_, RoleInfo>(
         r#"
-        SELECT id, name, display_name, description, level, is_system, permissions
+        SELECT id, name, display_name, description, level, is_system
         FROM roles
         ORDER BY level
         "#,
@@ -612,7 +520,7 @@ pub async fn get_roles_and_permissions(
     .fetch_all(pool)
     .await?;
 
-    Ok(RolesPermissionsResponse { roles, permissions })
+    Ok((roles, permissions))
 }
 
 #[cfg(test)]

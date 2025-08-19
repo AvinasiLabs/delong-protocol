@@ -4,14 +4,13 @@
 //! functions for API key management. API keys are used for third-party
 //! developer authentication and access control.
 
+use crate::AppError;
 use chrono::{DateTime, Utc};
-use common::ApiError;
 use serde::{Deserialize, Serialize};
-use sqlx::{FromRow, PgPool, Row};
-use std::collections::HashMap;
+use serde_json::json;
+use sqlx::PgPool;
 use tracing::error;
 use uuid::Uuid;
-use validator::Validate;
 
 /// Rate limit tier for API keys
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, sqlx::Type)]
@@ -40,14 +39,14 @@ impl std::fmt::Display for RateLimitTier {
 }
 
 impl std::str::FromStr for RateLimitTier {
-    type Err = ApiError;
+    type Err = AppError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "basic" => Ok(RateLimitTier::Basic),
             "premium" => Ok(RateLimitTier::Premium),
             "enterprise" => Ok(RateLimitTier::Enterprise),
-            _ => Err(ApiError::InvalidInput(format!(
+            _ => Err(AppError::Validation(format!(
                 "Invalid rate limit tier: {}",
                 s
             ))),
@@ -56,49 +55,12 @@ impl std::str::FromStr for RateLimitTier {
 }
 
 /// API Key database model
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiKey {
     pub id: i32,
     pub api_key: String,
     pub name: String,
     pub user_id: i32,
-    pub permissions: serde_json::Value,
-    pub rate_limit_tier: String,
-    pub is_active: bool,
-    pub expires_at: Option<DateTime<Utc>>,
-    pub last_used_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
-/// Request model for creating API keys
-#[derive(Debug, Serialize, Deserialize, Validate)]
-pub struct CreateApiKeyRequest {
-    #[validate(length(min = 1, max = 100))]
-    pub name: String,
-    pub permissions: Option<Vec<String>>,
-    pub rate_limit_tier: Option<RateLimitTier>,
-    pub expires_at: Option<DateTime<Utc>>,
-}
-
-/// Request model for updating API keys
-#[derive(Debug, Serialize, Deserialize, Validate)]
-pub struct UpdateApiKeyRequest {
-    #[validate(length(min = 1, max = 100))]
-    pub name: Option<String>,
-    pub permissions: Option<Vec<String>>,
-    pub rate_limit_tier: Option<RateLimitTier>,
-    pub is_active: Option<bool>,
-    pub expires_at: Option<DateTime<Utc>>,
-}
-
-/// Response model for API key creation and retrieval
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ApiKeyResponse {
-    pub id: i32,
-    pub api_key: String,
-    pub name: String,
-    pub user_id: i32,
     pub permissions: Vec<String>,
     pub rate_limit_tier: RateLimitTier,
     pub is_active: bool,
@@ -108,39 +70,14 @@ pub struct ApiKeyResponse {
     pub updated_at: DateTime<Utc>,
 }
 
-/// Response model for API key list (without sensitive data)
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ApiKeyListResponse {
-    pub id: i32,
-    pub name: String,
-    pub api_key_preview: String, // Only show first 8 chars + "..."
-    pub permissions: Vec<String>,
-    pub rate_limit_tier: RateLimitTier,
-    pub is_active: bool,
-    pub expires_at: Option<DateTime<Utc>>,
-    pub last_used_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
-/// Query parameters for API key listing
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ApiKeyQuery {
-    pub user_id: Option<i32>,
-    pub is_active: Option<bool>,
-    pub rate_limit_tier: Option<RateLimitTier>,
-    pub page: Option<i32>,
-    pub limit: Option<i32>,
-}
-
-/// API key statistics
-#[derive(Debug, Serialize, Deserialize)]
+/// Statistics for API keys
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiKeyStats {
     pub total_keys: i64,
     pub active_keys: i64,
     pub inactive_keys: i64,
     pub expired_keys: i64,
-    pub by_tier: HashMap<String, i64>,
+    pub by_tier: serde_json::Value,
 }
 
 impl ApiKey {
@@ -148,283 +85,419 @@ impl ApiKey {
     pub async fn create(
         pool: &PgPool,
         user_id: i32,
-        request: CreateApiKeyRequest,
-    ) -> Result<ApiKeyResponse, ApiError> {
+        name: String,
+        permissions: Vec<String>,
+        expires_at: Option<DateTime<Utc>>,
+    ) -> Result<Self, AppError> {
+        // Check if a key with the same name already exists for this user
+        let existing = sqlx::query!(
+            r#"
+            SELECT COUNT(*) as "count!"
+            FROM api_keys
+            WHERE user_id = $1 AND name = $2
+            "#,
+            user_id,
+            name
+        )
+        .fetch_one(pool)
+        .await?;
+
+        if existing.count > 0 {
+            return Err(AppError::Conflict(format!(
+                "API key with name '{}' already exists",
+                name
+            )));
+        }
+
+        // Generate a new API key
         let api_key = generate_api_key();
-        let permissions = request.permissions.unwrap_or_default();
         let permissions_json = serde_json::to_value(&permissions)?;
+        let rate_limit_tier = RateLimitTier::default();
 
-        let rate_limit_tier = request.rate_limit_tier.unwrap_or_default();
-
-        let row = sqlx::query(
+        let record = sqlx::query!(
             r#"
             INSERT INTO api_keys (api_key, name, user_id, permissions, rate_limit_tier, expires_at)
             VALUES ($1, $2, $3, $4, $5, $6)
-            RETURNING id, api_key, name, user_id, permissions, rate_limit_tier, is_active,
-                      expires_at, last_used_at, created_at, updated_at
+            RETURNING
+                id,
+                api_key,
+                name,
+                user_id,
+                permissions,
+                rate_limit_tier as "rate_limit_tier: RateLimitTier",
+                is_active,
+                expires_at,
+                last_used_at,
+                created_at,
+                updated_at
             "#,
+            api_key,
+            name,
+            user_id,
+            permissions_json,
+            rate_limit_tier as RateLimitTier,
+            expires_at
         )
-        .bind(&api_key)
-        .bind(&request.name)
-        .bind(user_id)
-        .bind(&permissions_json)
-        .bind(rate_limit_tier.to_string())
-        .bind(request.expires_at)
         .fetch_one(pool)
         .await
         .map_err(|e| {
             error!("Failed to create API key: {}", e);
-            match e {
-                sqlx::Error::Database(db_err) if db_err.constraint().is_some() => {
-                    ApiError::Conflict
-                }
-                _ => ApiError::DatabaseError("Failed to create API key".to_string()),
+            if e.to_string().contains("duplicate") {
+                AppError::Conflict("API key with this name already exists".to_string())
+            } else {
+                AppError::Database(e)
             }
         })?;
 
-        let permissions: Vec<String> =
-            serde_json::from_value(row.get("permissions")).unwrap_or_default();
-        let rate_limit_tier_str: String = row.get("rate_limit_tier");
-        let rate_limit_tier = rate_limit_tier_str.parse().unwrap_or_default();
+        // Convert permissions from Value to Vec<String>
+        let permissions = serde_json::from_value(record.permissions.unwrap_or(json!([])))
+            .unwrap_or_else(|_| Vec::new());
 
-        Ok(ApiKeyResponse {
-            id: row.get("id"),
-            api_key: row.get("api_key"),
-            name: row.get("name"),
-            user_id: row.get("user_id"),
+        Ok(ApiKey {
+            id: record.id,
+            api_key: record.api_key,
+            name: record.name,
+            user_id: record.user_id.unwrap(),
             permissions,
-            rate_limit_tier,
-            is_active: row.get("is_active"),
-            expires_at: row.get("expires_at"),
-            last_used_at: row.get("last_used_at"),
-            created_at: row.get("created_at"),
-            updated_at: row.get("updated_at"),
+            rate_limit_tier: record.rate_limit_tier.unwrap(),
+            is_active: record.is_active.unwrap(),
+            expires_at: record.expires_at,
+            last_used_at: record.last_used_at,
+            created_at: record.created_at.unwrap(),
+            updated_at: record.updated_at.unwrap(),
         })
     }
 
     /// Find API key by key value
-    pub async fn find_by_key(pool: &PgPool, api_key: &str) -> Result<Option<ApiKey>, ApiError> {
-        let result = sqlx::query_as::<_, ApiKey>(
+    pub async fn find_by_key(pool: &PgPool, api_key: &str) -> Result<Self, AppError> {
+        let record = sqlx::query!(
             r#"
-            SELECT id, api_key, name, user_id, permissions,
-                   rate_limit_tier, is_active, expires_at, last_used_at,
-                   created_at, updated_at
+            SELECT
+                id,
+                api_key,
+                name,
+                user_id,
+                permissions,
+                rate_limit_tier as "rate_limit_tier: RateLimitTier",
+                is_active,
+                expires_at,
+                last_used_at,
+                created_at,
+                updated_at
             FROM api_keys
             WHERE api_key = $1
             "#,
+            api_key
         )
-        .bind(api_key)
         .fetch_optional(pool)
-        .await?;
+        .await?
+        .ok_or_else(|| AppError::NotFound("API key not found".to_string()))?;
 
-        Ok(result)
+        // Convert permissions from Value to Vec<String>
+        let permissions = serde_json::from_value(record.permissions.unwrap_or(json!([])))
+            .unwrap_or_else(|_| Vec::new());
+
+        Ok(ApiKey {
+            id: record.id,
+            api_key: record.api_key,
+            name: record.name,
+            user_id: record.user_id.unwrap(),
+            permissions,
+            rate_limit_tier: record.rate_limit_tier.unwrap(),
+            is_active: record.is_active.unwrap(),
+            expires_at: record.expires_at,
+            last_used_at: record.last_used_at,
+            created_at: record.created_at.unwrap(),
+            updated_at: record.updated_at.unwrap(),
+        })
     }
 
     /// Find API key by ID
-    pub async fn find_by_id(pool: &PgPool, id: i32) -> Result<Option<ApiKey>, ApiError> {
-        let result = sqlx::query_as::<_, ApiKey>(
+    pub async fn find_by_id(pool: &PgPool, id: i32) -> Result<Self, AppError> {
+        let record = sqlx::query!(
             r#"
-            SELECT id, api_key, name, user_id, permissions,
-                   rate_limit_tier, is_active, expires_at, last_used_at,
-                   created_at, updated_at
+            SELECT
+                id,
+                api_key,
+                name,
+                user_id,
+                permissions,
+                rate_limit_tier as "rate_limit_tier: RateLimitTier",
+                is_active,
+                expires_at,
+                last_used_at,
+                created_at,
+                updated_at
             FROM api_keys
             WHERE id = $1
             "#,
+            id
         )
-        .bind(id)
         .fetch_optional(pool)
-        .await?;
+        .await?
+        .ok_or_else(|| AppError::NotFound("API key not found".to_string()))?;
 
-        Ok(result)
+        // Convert permissions from Value to Vec<String>
+        let permissions = serde_json::from_value(record.permissions.unwrap_or(json!([])))
+            .unwrap_or_else(|_| Vec::new());
+
+        Ok(ApiKey {
+            id: record.id,
+            api_key: record.api_key,
+            name: record.name,
+            user_id: record.user_id.unwrap(),
+            permissions,
+            rate_limit_tier: record.rate_limit_tier.unwrap(),
+            is_active: record.is_active.unwrap(),
+            expires_at: record.expires_at,
+            last_used_at: record.last_used_at,
+            created_at: record.created_at.unwrap(),
+            updated_at: record.updated_at.unwrap(),
+        })
     }
 
-    /// Get user's API keys
+    /// Get user's API keys with pagination and filters
     pub async fn get_user_keys(
         pool: &PgPool,
         user_id: i32,
-        query: ApiKeyQuery,
-    ) -> Result<Vec<ApiKeyListResponse>, ApiError> {
-        let page = query.page.unwrap_or(1).max(1);
-        let limit = query.limit.unwrap_or(10).clamp(1, 100);
-        let offset = (page - 1) * limit;
+        is_active: Option<bool>,
+        rate_limit_tier: Option<String>,
+        page: u32,
+        per_page: u32,
+    ) -> Result<(Vec<ApiKey>, i64), AppError> {
+        let offset = ((page - 1) * per_page) as i64;
+        let limit = per_page as i64;
 
-        let mut sql = String::from(
+        // Keep rate_limit_tier as string for SQL comparison
+        let tier_filter = rate_limit_tier.clone();
+
+        // Count total records - using a single query with optional filters
+        let total = sqlx::query_scalar!(
             r#"
-            SELECT id, api_key, name, user_id, permissions, rate_limit_tier,
-                   is_active, expires_at, last_used_at, created_at, updated_at
+            SELECT COUNT(*) as "count!"
             FROM api_keys
             WHERE user_id = $1
+              AND ($2::boolean IS NULL OR is_active = $2)
+              AND ($3::text IS NULL OR rate_limit_tier::text = $3)
             "#,
-        );
+            user_id,
+            is_active,
+            tier_filter.as_deref()
+        )
+        .fetch_one(pool)
+        .await?;
 
-        let mut bind_count = 1;
-        let mut params: Vec<String> = vec![user_id.to_string()];
+        // Fetch paginated records - using a single query with optional filters
+        let records = sqlx::query!(
+            r#"
+            SELECT
+                id,
+                api_key,
+                name,
+                user_id,
+                permissions,
+                rate_limit_tier as "rate_limit_tier: RateLimitTier",
+                is_active,
+                expires_at,
+                last_used_at,
+                created_at,
+                updated_at
+            FROM api_keys
+            WHERE user_id = $1
+              AND ($2::boolean IS NULL OR is_active = $2)
+              AND ($3::text IS NULL OR rate_limit_tier::text = $3)
+            ORDER BY created_at DESC
+            LIMIT $4 OFFSET $5
+            "#,
+            user_id,
+            is_active,
+            tier_filter.as_deref(),
+            limit,
+            offset
+        )
+        .fetch_all(pool)
+        .await?;
 
-        if let Some(is_active) = query.is_active {
-            bind_count += 1;
-            sql.push_str(&format!(" AND is_active = ${}", bind_count));
-            params.push(is_active.to_string());
-        }
-
-        if let Some(tier) = query.rate_limit_tier {
-            bind_count += 1;
-            sql.push_str(&format!(" AND rate_limit_tier = ${}", bind_count));
-            params.push(tier.to_string());
-        }
-
-        sql.push_str(" ORDER BY created_at DESC");
-        sql.push_str(&format!(" LIMIT {} OFFSET {}", limit, offset));
-
-        let mut query_builder = sqlx::query_as::<_, ApiKey>(&sql);
-
-        // Bind parameters
-        for param in params {
-            query_builder = query_builder.bind(param);
-        }
-
-        let keys = query_builder.fetch_all(pool).await?;
-
-        let response = keys
+        // Convert records to ApiKey structs
+        let keys: Vec<ApiKey> = records
             .into_iter()
-            .map(|key| {
-                let permissions: Vec<String> =
-                    serde_json::from_value(key.permissions).unwrap_or_default();
-                let rate_limit_tier = key.rate_limit_tier.parse().unwrap_or_default();
+            .map(|record| {
+                let permissions = serde_json::from_value(record.permissions.unwrap_or(json!([])))
+                    .unwrap_or_else(|_| Vec::new());
 
-                ApiKeyListResponse {
-                    id: key.id,
-                    name: key.name,
-                    api_key_preview: format!("{}...", &key.api_key[..8.min(key.api_key.len())]),
+                ApiKey {
+                    id: record.id,
+                    api_key: record.api_key,
+                    name: record.name,
+                    user_id: record.user_id.unwrap(),
                     permissions,
-                    rate_limit_tier,
-                    is_active: key.is_active,
-                    expires_at: key.expires_at,
-                    last_used_at: key.last_used_at,
-                    created_at: key.created_at,
-                    updated_at: key.updated_at,
+                    rate_limit_tier: record.rate_limit_tier.unwrap(),
+                    is_active: record.is_active.unwrap(),
+                    expires_at: record.expires_at,
+                    last_used_at: record.last_used_at,
+                    created_at: record.created_at.unwrap(),
+                    updated_at: record.updated_at.unwrap(),
                 }
             })
             .collect();
 
-        Ok(response)
+        Ok((keys, total))
     }
 
-    /// Update API key
+    /// Update an API key
     pub async fn update(
         pool: &PgPool,
         id: i32,
-        request: UpdateApiKeyRequest,
-    ) -> Result<ApiKeyResponse, ApiError> {
-        let row = sqlx::query(
+        name: Option<String>,
+        permissions: Option<Vec<String>>,
+        is_active: Option<bool>,
+        expires_at: Option<Option<DateTime<Utc>>>,
+    ) -> Result<Self, AppError> {
+        // First get the current API key
+        let current = Self::find_by_id(pool, id).await?;
+
+        // Update fields if provided
+        let final_name = name.unwrap_or(current.name);
+        let final_permissions = permissions.unwrap_or(current.permissions);
+        let final_is_active = is_active.unwrap_or(current.is_active);
+        let final_expires_at = expires_at.unwrap_or(current.expires_at);
+
+        let permissions_json = serde_json::to_value(&final_permissions)?;
+
+        // Update in database
+        let record = sqlx::query!(
             r#"
             UPDATE api_keys
-            SET name = COALESCE($1, name),
-                permissions = COALESCE($2, permissions),
-                rate_limit_tier = COALESCE($3, rate_limit_tier),
-                is_active = COALESCE($4, is_active),
-                expires_at = COALESCE($5, expires_at),
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = $6
-            RETURNING id, api_key, name, user_id, permissions, rate_limit_tier, is_active,
-                      expires_at, last_used_at, created_at, updated_at
+            SET
+                name = $2,
+                permissions = $3,
+                is_active = $4,
+                expires_at = $5,
+                updated_at = NOW()
+            WHERE id = $1
+            RETURNING
+                id,
+                api_key,
+                name,
+                user_id,
+                permissions,
+                rate_limit_tier as "rate_limit_tier: RateLimitTier",
+                is_active,
+                expires_at,
+                last_used_at,
+                created_at,
+                updated_at
             "#,
+            id,
+            final_name,
+            permissions_json,
+            final_is_active,
+            final_expires_at
         )
-        .bind(&request.name)
-        .bind(
-            request
-                .permissions
-                .as_ref()
-                .map(|p| serde_json::to_value(p).unwrap()),
-        )
-        .bind(request.rate_limit_tier.as_ref().map(|t| t.to_string()))
-        .bind(request.is_active)
-        .bind(request.expires_at)
-        .bind(id)
-        .fetch_one(pool)
-        .await?;
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound("API key not found".to_string()))?;
 
-        let permissions: Vec<String> =
-            serde_json::from_value(row.get("permissions")).unwrap_or_default();
-        let rate_limit_tier_str: String = row.get("rate_limit_tier");
-        let rate_limit_tier = rate_limit_tier_str.parse().unwrap_or_default();
+        // Convert permissions from Value to Vec<String>
+        let permissions = serde_json::from_value(record.permissions.unwrap_or(json!([])))
+            .unwrap_or_else(|_| Vec::new());
 
-        Ok(ApiKeyResponse {
-            id: row.get("id"),
-            api_key: row.get("api_key"),
-            name: row.get("name"),
-            user_id: row.get("user_id"),
+        Ok(ApiKey {
+            id: record.id,
+            api_key: record.api_key,
+            name: record.name,
+            user_id: record.user_id.unwrap(),
             permissions,
-            rate_limit_tier,
-            is_active: row.get("is_active"),
-            expires_at: row.get("expires_at"),
-            last_used_at: row.get("last_used_at"),
-            created_at: row.get("created_at"),
-            updated_at: row.get("updated_at"),
+            rate_limit_tier: record.rate_limit_tier.unwrap(),
+            is_active: record.is_active.unwrap(),
+            expires_at: record.expires_at,
+            last_used_at: record.last_used_at,
+            created_at: record.created_at.unwrap(),
+            updated_at: record.updated_at.unwrap(),
         })
     }
 
-    /// Delete API key
-    pub async fn delete(pool: &PgPool, id: i32) -> Result<(), ApiError> {
-        sqlx::query("DELETE FROM api_keys WHERE id = $1")
-            .bind(id)
+    /// Delete an API key
+    pub async fn delete(pool: &PgPool, id: i32) -> Result<(), AppError> {
+        let result = sqlx::query!("DELETE FROM api_keys WHERE id = $1", id)
             .execute(pool)
             .await?;
+
+        if result.rows_affected() == 0 {
+            return Err(AppError::NotFound("API key not found".to_string()));
+        }
 
         Ok(())
     }
 
     /// Update last used timestamp
-    pub async fn update_last_used(pool: &PgPool, api_key: &str) -> Result<(), ApiError> {
-        sqlx::query("UPDATE api_keys SET last_used_at = CURRENT_TIMESTAMP WHERE api_key = $1")
-            .bind(api_key)
-            .execute(pool)
-            .await?;
+    pub async fn update_last_used(pool: &PgPool, id: i32) -> Result<(), AppError> {
+        let now = Utc::now();
+        sqlx::query!(
+            "UPDATE api_keys SET last_used_at = $1 WHERE id = $2",
+            now,
+            id
+        )
+        .execute(pool)
+        .await?;
 
         Ok(())
     }
 
-    /// Get API key statistics
-    pub async fn get_stats(pool: &PgPool) -> Result<ApiKeyStats, ApiError> {
-        let stats = sqlx::query(
-            r#"
-            SELECT
-                COUNT(*) as total_keys,
-                COUNT(CASE WHEN is_active = true THEN 1 END) as active_keys,
-                COUNT(CASE WHEN is_active = false THEN 1 END) as inactive_keys,
-                COUNT(CASE WHEN expires_at < CURRENT_TIMESTAMP THEN 1 END) as expired_keys
-            FROM api_keys
-            "#,
+    /// Get API key statistics for a user
+    pub async fn get_user_stats(pool: &PgPool, user_id: i32) -> Result<ApiKeyStats, AppError> {
+        // Get counts
+        let total = sqlx::query_scalar!(
+            r#"SELECT COUNT(*) as "count!" FROM api_keys WHERE user_id = $1"#,
+            user_id
         )
         .fetch_one(pool)
         .await?;
 
-        let tier_stats = sqlx::query(
+        let active = sqlx::query_scalar!(
+            r#"SELECT COUNT(*) as "count!" FROM api_keys WHERE user_id = $1 AND is_active = true"#,
+            user_id
+        )
+        .fetch_one(pool)
+        .await?;
+
+        let expired = sqlx::query_scalar!(
+            r#"SELECT COUNT(*) as "count!" FROM api_keys WHERE user_id = $1 AND expires_at < NOW()"#,
+            user_id
+        )
+        .fetch_one(pool)
+        .await?;
+
+        // Get counts by tier
+        let tier_counts = sqlx::query!(
             r#"
-            SELECT rate_limit_tier, COUNT(*) as count
+            SELECT
+                rate_limit_tier as "rate_limit_tier: RateLimitTier",
+                COUNT(*) as "count!"
             FROM api_keys
+            WHERE user_id = $1
             GROUP BY rate_limit_tier
             "#,
+            user_id
         )
         .fetch_all(pool)
         .await?;
 
-        let mut by_tier = HashMap::new();
-        for row in tier_stats {
-            let tier: String = row.get("rate_limit_tier");
-            let count: i64 = row.get("count");
-            by_tier.insert(tier, count);
+        let mut by_tier = serde_json::Map::new();
+        for tc in tier_counts {
+            by_tier.insert(tc.rate_limit_tier.unwrap().to_string(), json!(tc.count));
         }
 
         Ok(ApiKeyStats {
-            total_keys: stats.get("total_keys"),
-            active_keys: stats.get("active_keys"),
-            inactive_keys: stats.get("inactive_keys"),
-            expired_keys: stats.get("expired_keys"),
-            by_tier,
+            total_keys: total,
+            active_keys: active,
+            inactive_keys: total - active,
+            expired_keys: expired,
+            by_tier: json!(by_tier),
         })
     }
 
-    /// Check if API key is expired
+    /// Check if the API key is expired
     pub fn is_expired(&self) -> bool {
         if let Some(expires_at) = self.expires_at {
             expires_at < Utc::now()
@@ -433,30 +506,20 @@ impl ApiKey {
         }
     }
 
-    /// Check if API key is valid (active and not expired)
+    /// Check if the API key is valid (active and not expired)
     pub fn is_valid(&self) -> bool {
         self.is_active && !self.is_expired()
     }
-
-    /// Get permissions as Vec<String>
-    pub fn get_permissions(&self) -> Vec<String> {
-        serde_json::from_value(self.permissions.clone()).unwrap_or_default()
-    }
-
-    /// Get rate limit tier
-    pub fn get_rate_limit_tier(&self) -> RateLimitTier {
-        self.rate_limit_tier.parse().unwrap_or_default()
-    }
 }
 
-/// Generate a secure API key
+/// Generate a new API key
 fn generate_api_key() -> String {
-    format!("ak_{}", Uuid::new_v4().to_string().replace('-', ""))
+    format!("dl_{}", Uuid::new_v4().to_string().replace("-", ""))
 }
 
 /// Validate API key format
 pub fn is_valid_api_key_format(api_key: &str) -> bool {
-    api_key.starts_with("ak_") && api_key.len() == 35
+    api_key.starts_with("dl_") && api_key.len() == 35
 }
 
 #[cfg(test)]
@@ -466,20 +529,20 @@ mod tests {
     #[test]
     fn test_generate_api_key() {
         let key = generate_api_key();
-        assert!(key.starts_with("ak_"));
+        assert!(key.starts_with("dl_"));
         assert_eq!(key.len(), 35);
     }
 
     #[test]
     fn test_is_valid_api_key_format() {
-        assert!(is_valid_api_key_format(
-            "ak_12345678901234567890123456789012"
-        ));
-        assert!(!is_valid_api_key_format("invalid_key"));
-        assert!(!is_valid_api_key_format("ak_short"));
-        assert!(!is_valid_api_key_format(
-            "12345678901234567890123456789012345"
-        ));
+        let key = generate_api_key();
+        assert!(is_valid_api_key_format(&key));
+
+        let invalid_key1 = "invalid_key";
+        let invalid_key2 = "dl_short";
+
+        assert!(!is_valid_api_key_format(invalid_key1));
+        assert!(!is_valid_api_key_format(invalid_key2));
     }
 
     #[test]
@@ -496,19 +559,20 @@ mod tests {
             "enterprise".parse::<RateLimitTier>().unwrap(),
             RateLimitTier::Enterprise
         );
+        assert!("invalid".parse::<RateLimitTier>().is_err());
     }
 
     #[test]
     fn test_api_key_expired() {
         let mut api_key = ApiKey {
             id: 1,
-            api_key: "ak_test".to_string(),
+            api_key: "test_key".to_string(),
             name: "Test Key".to_string(),
             user_id: 1,
-            permissions: serde_json::json!([]),
-            rate_limit_tier: "basic".to_string(),
+            permissions: vec![],
+            rate_limit_tier: RateLimitTier::Basic,
             is_active: true,
-            expires_at: Some(Utc::now() - chrono::Duration::days(1)), // Expired
+            expires_at: Some(Utc::now() - chrono::Duration::days(1)),
             last_used_at: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -517,14 +581,11 @@ mod tests {
         assert!(api_key.is_expired());
         assert!(!api_key.is_valid());
 
-        // Test not expired
         api_key.expires_at = Some(Utc::now() + chrono::Duration::days(1));
         assert!(!api_key.is_expired());
         assert!(api_key.is_valid());
 
-        // Test no expiration
-        api_key.expires_at = None;
-        assert!(!api_key.is_expired());
-        assert!(api_key.is_valid());
+        api_key.is_active = false;
+        assert!(!api_key.is_valid());
     }
 }

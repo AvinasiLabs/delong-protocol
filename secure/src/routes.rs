@@ -4,6 +4,7 @@
 //! for the secure service running in the TEE environment.
 
 use axum::{
+    middleware,
     routing::{get, post},
     Router,
 };
@@ -17,6 +18,7 @@ use crate::{
         contracts::ContractCaller, db::Database, Notifier, SampleGenerator, TeeClient,
         TeeCryptoService, TeeEthereum,
     },
+    middleware::internal_jwt_middleware,
 };
 
 /// Application state shared across handlers
@@ -144,7 +146,9 @@ pub async fn create_app(
         .nest("/datasets", dataset_routes)
         .nest("/committee", committee_routes)
         .nest("/votes", vote_routes)
-        .nest("/contracts", contract_routes);
+        .nest("/contracts", contract_routes)
+        // Apply internal JWT verification middleware from Core service
+        .layer(middleware::from_fn(internal_jwt_middleware));
 
     // Build the complete application
     Router::new()

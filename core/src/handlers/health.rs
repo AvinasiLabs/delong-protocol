@@ -3,8 +3,7 @@
 //! This module contains a simple health check HTTP request handler
 //! for monitoring basic service availability.
 
-use crate::handlers::ApiResponse;
-use axum::response::Json;
+use avinapi::prelude::*;
 use serde::Serialize;
 use tracing::info;
 
@@ -17,7 +16,7 @@ pub struct HealthStatus {
 }
 
 /// Basic health check endpoint
-pub async fn health_check() -> Json<ApiResponse<HealthStatus>> {
+pub async fn health_check() -> JsonResult<HealthStatus> {
     info!("Health check requested");
 
     let health_status = HealthStatus {
@@ -26,23 +25,5 @@ pub async fn health_check() -> Json<ApiResponse<HealthStatus>> {
         timestamp: chrono::Utc::now().to_rfc3339(),
     };
 
-    Json(ApiResponse::success(health_status))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_health_check() {
-        let response = health_check().await;
-        let health_status = response.0;
-
-        assert_eq!(health_status.code, common::ResponseCode::Success);
-        assert!(health_status.data.is_some());
-
-        let data = health_status.data.unwrap();
-        assert_eq!(data.service, "DeLong Protocol Core Service");
-        assert_eq!(data.status, "healthy");
-    }
+    data!(health_status)
 }

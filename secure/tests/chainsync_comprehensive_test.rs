@@ -31,6 +31,7 @@ struct TestEnvironment {
     app: axum::Router,
     worker: Arc<ChainSyncWorker>,
     pool: PgPool,
+    #[allow(dead_code)]
     config: secure::Config,
 }
 

@@ -29,15 +29,6 @@ notes
 prompt/
 RULES.md
 
-# Gateway monitoring stack
-# Keep configuration files, ignore runtime data
-gateway/grafana-storage/
-gateway/loki-storage/
-gateway/jaeger-storage/
-gateway/vector-data/
-gateway/*.log
-gateway/grafana/provisioning/notifiers/*
-gateway/grafana/provisioning/access-control/*
 
 # Docker volumes (if running locally)
 volumes/
@@ -70,3 +61,4 @@ docker-compose.override.yml
 
 # vibe coding
 ClAUDE.md
+.claude/

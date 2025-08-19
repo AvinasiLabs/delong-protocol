@@ -4,5 +4,6 @@
 //! used throughout the application.
 
 pub mod jwt;
+pub mod validation;
 
 pub use jwt::*;

@@ -1,389 +1,401 @@
 //! AI audit-related models for the DeLong Protocol
 //!
-//! This module contains all data structures related to AI audit functionality,
-//! including audit reports, audit requests, and audit results.
+//! This module contains the database model and operations for AI audit functionality.
 
-use bigdecimal::BigDecimal;
+use crate::AppError;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::FromRow;
-use uuid::Uuid;
-use validator::Validate;
-
-/// AI audit status enumeration
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "ai_audit_status", rename_all = "snake_case")]
-#[serde(rename_all = "snake_case")]
-pub enum AiAuditStatus {
-    Pending,
-    Completed,
-    Failed,
-    InProgress,
-}
+use serde_json::Value;
+use sqlx::PgPool;
 
 /// AI audit report model matching PostgreSQL schema
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiAuditReport {
-    pub id: Uuid,
-    pub dataset_id: Option<Uuid>,
-    pub algorithm_id: Option<Uuid>,
-    pub user_id: Option<Uuid>,
-    pub report_type: String,
-    pub status: AiAuditStatus,
-    pub findings: serde_json::Value,
-    pub recommendations: serde_json::Value,
-    pub risk_score: Option<BigDecimal>,
-    pub confidence_score: Option<BigDecimal>,
+    pub id: i32,
+    pub github_url: String,
+    pub commit_hash: String,
+    pub repo_url: String,
+    pub algorithm_id: Option<i32>,
+    pub execution_id: Option<i32>,
+    pub audit_status: String,
+    pub audit_score: Option<i32>,
+    pub audit_result: Option<Value>,
+    pub error_message: Option<String>,
     pub created_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
-    pub metadata: serde_json::Value,
 }
 
-/// AI audit report response (without sensitive data)
-#[derive(Debug, Clone, Serialize)]
-pub struct AiAuditReportResponse {
-    pub id: Uuid,
-    pub dataset_id: Option<Uuid>,
-    pub algorithm_id: Option<Uuid>,
-    pub report_type: String,
-    pub status: AiAuditStatus,
-    pub findings: serde_json::Value,
-    pub recommendations: serde_json::Value,
-    pub risk_score: Option<BigDecimal>,
-    pub confidence_score: Option<BigDecimal>,
-    pub created_at: DateTime<Utc>,
-    pub completed_at: Option<DateTime<Utc>>,
-    pub metadata: serde_json::Value,
-}
+impl AiAuditReport {
+    /// Create a new audit report
+    pub async fn create(
+        pool: &PgPool,
+        github_url: &str,
+        commit_hash: &str,
+        repo_url: &str,
+        algorithm_id: Option<i32>,
+        execution_id: Option<i32>,
+    ) -> Result<i32, AppError> {
+        let result = sqlx::query!(
+            r#"
+            INSERT INTO ai_audit_reports (
+                github_url, commit_hash, repo_url, algorithm_id, execution_id,
+                audit_status, created_at, updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, 'processing', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            RETURNING id
+            "#,
+            github_url,
+            commit_hash,
+            repo_url,
+            algorithm_id,
+            execution_id
+        )
+        .fetch_one(pool)
+        .await?;
 
-impl From<AiAuditReport> for AiAuditReportResponse {
-    fn from(report: AiAuditReport) -> Self {
-        Self {
-            id: report.id,
-            dataset_id: report.dataset_id,
-            algorithm_id: report.algorithm_id,
-            report_type: report.report_type,
-            status: report.status,
-            findings: report.findings,
-            recommendations: report.recommendations,
-            risk_score: report.risk_score,
-            confidence_score: report.confidence_score,
-            created_at: report.created_at,
-            completed_at: report.completed_at,
-            metadata: report.metadata,
+        Ok(result.id)
+    }
+
+    /// Find an existing audit report by GitHub URL and commit hash
+    pub async fn find_by_github_and_commit(
+        pool: &PgPool,
+        github_url: &str,
+        commit_hash: &str,
+    ) -> Result<Option<Self>, AppError> {
+        let record = sqlx::query!(
+            r#"
+            SELECT id, github_url, commit_hash, repo_url, algorithm_id, execution_id,
+                   audit_status, audit_score, audit_result, error_message,
+                   created_at, completed_at
+            FROM ai_audit_reports
+            WHERE github_url = $1 AND commit_hash = $2
+            ORDER BY created_at DESC
+            LIMIT 1
+            "#,
+            github_url,
+            commit_hash
+        )
+        .fetch_optional(pool)
+        .await?;
+
+        Ok(record.map(|r| AiAuditReport {
+            id: r.id,
+            github_url: r.github_url,
+            commit_hash: r.commit_hash,
+            repo_url: r.repo_url,
+            algorithm_id: r.algorithm_id,
+            execution_id: r.execution_id,
+            audit_status: r.audit_status.unwrap_or_else(|| "pending".to_string()),
+            audit_score: r.audit_score,
+            audit_result: r.audit_result,
+            error_message: r.error_message,
+            created_at: r.created_at.unwrap_or_else(|| Utc::now()),
+            completed_at: r.completed_at,
+        }))
+    }
+
+    /// Find audit report by ID
+    pub async fn find_by_id(pool: &PgPool, id: i32) -> Result<Option<Self>, AppError> {
+        let record = sqlx::query!(
+            r#"
+            SELECT id, github_url, commit_hash, repo_url, algorithm_id, execution_id,
+                   audit_status, audit_score, audit_result, error_message,
+                   created_at, completed_at
+            FROM ai_audit_reports
+            WHERE id = $1
+            "#,
+            id
+        )
+        .fetch_optional(pool)
+        .await?;
+
+        Ok(record.map(|r| AiAuditReport {
+            id: r.id,
+            github_url: r.github_url,
+            commit_hash: r.commit_hash,
+            repo_url: r.repo_url,
+            algorithm_id: r.algorithm_id,
+            execution_id: r.execution_id,
+            audit_status: r.audit_status.unwrap_or_else(|| "pending".to_string()),
+            audit_score: r.audit_score,
+            audit_result: r.audit_result,
+            error_message: r.error_message,
+            created_at: r.created_at.unwrap_or_else(|| Utc::now()),
+            completed_at: r.completed_at,
+        }))
+    }
+
+    /// Find audit reports by algorithm ID
+    pub async fn find_by_algorithm_id(
+        pool: &PgPool,
+        algorithm_id: i32,
+    ) -> Result<Vec<Self>, AppError> {
+        let records = sqlx::query!(
+            r#"
+            SELECT id, github_url, commit_hash, repo_url, algorithm_id, execution_id,
+                   audit_status, audit_score, audit_result, error_message,
+                   created_at, completed_at
+            FROM ai_audit_reports
+            WHERE algorithm_id = $1
+            ORDER BY created_at DESC
+            "#,
+            algorithm_id
+        )
+        .fetch_all(pool)
+        .await?;
+
+        Ok(records
+            .into_iter()
+            .map(|r| AiAuditReport {
+                id: r.id,
+                github_url: r.github_url,
+                commit_hash: r.commit_hash,
+                repo_url: r.repo_url,
+                algorithm_id: r.algorithm_id,
+                execution_id: r.execution_id,
+                audit_status: r.audit_status.unwrap_or_else(|| "pending".to_string()),
+                audit_score: r.audit_score,
+                audit_result: r.audit_result,
+                error_message: r.error_message,
+                created_at: r.created_at.unwrap_or_else(|| Utc::now()),
+                completed_at: r.completed_at,
+            })
+            .collect())
+    }
+
+    /// Find audit reports by execution ID
+    pub async fn find_by_execution_id(
+        pool: &PgPool,
+        execution_id: i32,
+    ) -> Result<Vec<Self>, AppError> {
+        let records = sqlx::query!(
+            r#"
+            SELECT id, github_url, commit_hash, repo_url, algorithm_id, execution_id,
+                   audit_status, audit_score, audit_result, error_message,
+                   created_at, completed_at
+            FROM ai_audit_reports
+            WHERE execution_id = $1
+            ORDER BY created_at DESC
+            "#,
+            execution_id
+        )
+        .fetch_all(pool)
+        .await?;
+
+        Ok(records
+            .into_iter()
+            .map(|r| AiAuditReport {
+                id: r.id,
+                github_url: r.github_url,
+                commit_hash: r.commit_hash,
+                repo_url: r.repo_url,
+                algorithm_id: r.algorithm_id,
+                execution_id: r.execution_id,
+                audit_status: r.audit_status.unwrap_or_else(|| "pending".to_string()),
+                audit_score: r.audit_score,
+                audit_result: r.audit_result,
+                error_message: r.error_message,
+                created_at: r.created_at.unwrap_or_else(|| Utc::now()),
+                completed_at: r.completed_at,
+            })
+            .collect())
+    }
+
+    /// Update audit report status
+    pub async fn update_status(
+        pool: &PgPool,
+        id: i32,
+        status: &str,
+        score: Option<i32>,
+        result: Option<Value>,
+        error_message: Option<String>,
+    ) -> Result<(), AppError> {
+        let completed_at = if status == "completed" || status == "failed" {
+            Some(Utc::now())
+        } else {
+            None
+        };
+
+        sqlx::query!(
+            r#"
+            UPDATE ai_audit_reports
+            SET audit_status = $2,
+                audit_score = $3,
+                audit_result = $4,
+                error_message = $5,
+                completed_at = $6,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = $1
+            "#,
+            id,
+            status,
+            score,
+            result,
+            error_message,
+            completed_at
+        )
+        .execute(pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Find audit report with flexible query parameters
+    pub async fn find_by_query(
+        pool: &PgPool,
+        id: Option<i32>,
+        algorithm_id: Option<i32>,
+        execution_id: Option<i32>,
+        github_url: Option<&str>,
+        commit_hash: Option<&str>,
+    ) -> Result<Option<Self>, AppError> {
+        // For flexible queries, we need to handle different combinations
+        // Let's prioritize the most specific queries first
+
+        if let Some(id) = id {
+            return Self::find_by_id(pool, id).await;
+        }
+
+        if let (Some(url), Some(hash)) = (github_url, commit_hash) {
+            return Self::find_by_github_and_commit(pool, url, hash).await;
+        }
+
+        if let Some(algorithm_id) = algorithm_id {
+            let reports = Self::find_by_algorithm_id(pool, algorithm_id).await?;
+            return Ok(reports.into_iter().next());
+        }
+
+        if let Some(execution_id) = execution_id {
+            let reports = Self::find_by_execution_id(pool, execution_id).await?;
+            return Ok(reports.into_iter().next());
+        }
+
+        Ok(None)
+    }
+
+    /// Get all audit reports with pagination
+    pub async fn list(
+        pool: &PgPool,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<Self>, i64), AppError> {
+        let records = sqlx::query!(
+            r#"
+            SELECT id, github_url, commit_hash, repo_url, algorithm_id, execution_id,
+                   audit_status, audit_score, audit_result, error_message,
+                   created_at, completed_at
+            FROM ai_audit_reports
+            ORDER BY created_at DESC
+            LIMIT $1 OFFSET $2
+            "#,
+            limit,
+            offset
+        )
+        .fetch_all(pool)
+        .await?;
+
+        let reports = records
+            .into_iter()
+            .map(|r| AiAuditReport {
+                id: r.id,
+                github_url: r.github_url,
+                commit_hash: r.commit_hash,
+                repo_url: r.repo_url,
+                algorithm_id: r.algorithm_id,
+                execution_id: r.execution_id,
+                audit_status: r.audit_status.unwrap_or_else(|| "pending".to_string()),
+                audit_score: r.audit_score,
+                audit_result: r.audit_result,
+                error_message: r.error_message,
+                created_at: r.created_at.unwrap_or_else(|| Utc::now()),
+                completed_at: r.completed_at,
+            })
+            .collect();
+
+        let total = sqlx::query_scalar!("SELECT COUNT(*) as count FROM ai_audit_reports")
+            .fetch_one(pool)
+            .await?
+            .unwrap_or(0);
+
+        Ok((reports, total))
+    }
+
+    /// Delete an audit report by ID
+    pub async fn delete(pool: &PgPool, id: i32) -> Result<bool, AppError> {
+        let result = sqlx::query!("DELETE FROM ai_audit_reports WHERE id = $1", id)
+            .execute(pool)
+            .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Calculate audit score from results
+    pub fn calculate_score(audit_result: &Value) -> i32 {
+        if let Some(results) = audit_result.as_array() {
+            let total_files = results.len() as f32;
+            if total_files == 0.0 {
+                return 100;
+            }
+
+            let mut total_score = 0.0;
+            for result in results {
+                if let Some(issues) = result.get("issues").and_then(|v| v.as_array()) {
+                    let file_score = match issues.len() {
+                        0 => 100.0,
+                        1..=2 => 80.0,
+                        3..=5 => 60.0,
+                        6..=10 => 40.0,
+                        _ => 20.0,
+                    };
+                    total_score += file_score;
+                } else {
+                    total_score += 100.0;
+                }
+            }
+
+            (total_score / total_files) as i32
+        } else {
+            0
         }
     }
 }
 
-/// Create AI audit request
-#[derive(Debug, Serialize, Deserialize, Validate)]
-pub struct CreateAiAuditRequest {
-    pub dataset_id: Option<Uuid>,
-    pub algorithm_id: Option<Uuid>,
-    #[validate(length(min = 1, max = 100))]
-    pub report_type: String,
-    pub metadata: Option<serde_json::Value>,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
 
-/// Update AI audit request
-#[derive(Debug, Deserialize, Validate)]
-pub struct UpdateAiAuditRequest {
-    pub status: Option<AiAuditStatus>,
-    pub findings: Option<serde_json::Value>,
-    pub recommendations: Option<serde_json::Value>,
-    pub risk_score: Option<BigDecimal>,
-    pub confidence_score: Option<BigDecimal>,
-    pub metadata: Option<serde_json::Value>,
-}
+    #[test]
+    fn test_calculate_score() {
+        // Test with no issues
+        let result = json!([
+            {"file": "test1.rs", "issues": []},
+            {"file": "test2.rs", "issues": []}
+        ]);
+        assert_eq!(AiAuditReport::calculate_score(&result), 100);
 
-/// AI audit query parameters
-#[derive(Debug, Deserialize)]
-pub struct AiAuditQuery {
-    pub dataset_id: Option<Uuid>,
-    pub algorithm_id: Option<Uuid>,
-    pub user_id: Option<Uuid>,
-    pub report_type: Option<String>,
-    pub status: Option<AiAuditStatus>,
-    pub min_risk_score: Option<BigDecimal>,
-    pub max_risk_score: Option<BigDecimal>,
-    pub min_confidence_score: Option<BigDecimal>,
-    pub max_confidence_score: Option<BigDecimal>,
-    pub from_date: Option<DateTime<Utc>>,
-    pub to_date: Option<DateTime<Utc>>,
-    pub page: Option<i32>,
-    pub limit: Option<i32>,
-}
+        // Test with some issues
+        let result = json!([
+            {"file": "test1.rs", "issues": [{"type": "error"}]},
+            {"file": "test2.rs", "issues": [{"type": "warning"}, {"type": "info"}]}
+        ]);
+        assert_eq!(AiAuditReport::calculate_score(&result), 80);
 
-/// Security vulnerability found during audit
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SecurityVulnerability {
-    pub severity: String,
-    pub category: String,
-    pub description: String,
-    pub line_number: Option<u32>,
-    pub file_path: Option<String>,
-    pub recommendation: Option<String>,
-    pub cwe_id: Option<String>,
-    pub cvss_score: Option<f64>,
-}
+        // Test with many issues
+        let result = json!([
+            {"file": "test1.rs", "issues": [
+                {"type": "error"}, {"type": "error"}, {"type": "error"},
+                {"type": "error"}, {"type": "error"}, {"type": "error"}
+            ]}
+        ]);
+        assert_eq!(AiAuditReport::calculate_score(&result), 40);
 
-/// Security finding
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SecurityFinding {
-    pub id: String,
-    pub title: String,
-    pub description: String,
-    pub severity: String,
-    pub category: String,
-    pub location: FindingLocation,
-    pub recommendation: String,
-    pub references: Vec<String>,
-    pub confidence: f64,
-}
+        // Test with empty array
+        let result = json!([]);
+        assert_eq!(AiAuditReport::calculate_score(&result), 100);
 
-/// Finding location
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FindingLocation {
-    pub file_path: String,
-    pub line_start: Option<u32>,
-    pub line_end: Option<u32>,
-    pub column_start: Option<u32>,
-    pub column_end: Option<u32>,
-    pub function_name: Option<String>,
-}
-
-/// Audit recommendation
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AuditRecommendation {
-    pub id: String,
-    pub title: String,
-    pub description: String,
-    pub priority: String,
-    pub category: String,
-    pub effort: String,
-    pub impact: String,
-    pub implementation_steps: Vec<String>,
-    pub resources: Vec<String>,
-}
-
-/// AI audit result (for processing)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AiAuditResult {
-    pub findings: Vec<SecurityFinding>,
-    pub recommendations: Vec<AuditRecommendation>,
-    pub risk_score: BigDecimal,
-    pub confidence_score: BigDecimal,
-    pub summary: AuditSummary,
-    pub metrics: AuditMetrics,
-}
-
-/// Audit summary
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AuditSummary {
-    pub total_files_analyzed: u32,
-    pub total_lines_analyzed: u32,
-    pub total_findings: u32,
-    pub critical_findings: u32,
-    pub high_findings: u32,
-    pub medium_findings: u32,
-    pub low_findings: u32,
-    pub info_findings: u32,
-    pub overall_security_rating: String,
-}
-
-/// Audit metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AuditMetrics {
-    pub complexity_score: f64,
-    pub maintainability_score: f64,
-    pub test_coverage: Option<f64>,
-    pub code_quality_score: f64,
-    pub performance_score: f64,
-    pub security_score: f64,
-}
-
-/// Create AI audit response
-#[derive(Debug, Serialize)]
-pub struct CreateAiAuditResponse {
-    pub report: AiAuditReportResponse,
-    pub message: String,
-}
-
-/// AI audit list response
-#[derive(Debug, Serialize)]
-pub struct AiAuditListResponse {
-    pub reports: Vec<AiAuditReportResponse>,
-    pub total: i64,
-    pub page: i32,
-    pub limit: i32,
-    pub total_pages: i32,
-}
-
-/// AI audit statistics
-#[derive(Debug, Serialize)]
-pub struct AiAuditStatistics {
-    pub total_audits: i64,
-    pub pending_audits: i64,
-    pub completed_audits: i64,
-    pub failed_audits: i64,
-    pub in_progress_audits: i64,
-    pub average_risk_score: f64,
-    pub average_confidence_score: f64,
-    pub total_findings: i64,
-    pub critical_findings: i64,
-    pub high_findings: i64,
-    pub medium_findings: i64,
-    pub low_findings: i64,
-}
-
-/// Audit dashboard data
-#[derive(Debug, Serialize)]
-pub struct AuditDashboard {
-    pub statistics: AiAuditStatistics,
-    pub recent_audits: Vec<AiAuditReportResponse>,
-    pub trending_issues: Vec<TrendingIssue>,
-    pub risk_distribution: RiskDistribution,
-    pub audit_timeline: Vec<AuditTimelineEntry>,
-}
-
-/// Trending issue
-#[derive(Debug, Serialize)]
-pub struct TrendingIssue {
-    pub issue_type: String,
-    pub category: String,
-    pub count: i32,
-    pub severity: String,
-    pub trend: String,
-    pub description: String,
-}
-
-/// Risk distribution
-#[derive(Debug, Serialize)]
-pub struct RiskDistribution {
-    pub low_risk: i32,
-    pub medium_risk: i32,
-    pub high_risk: i32,
-    pub critical_risk: i32,
-    pub total: i32,
-}
-
-/// Audit timeline entry
-#[derive(Debug, Serialize)]
-pub struct AuditTimelineEntry {
-    pub date: String,
-    pub audits_completed: i32,
-    pub average_risk_score: f64,
-    pub critical_findings: i32,
-    pub high_findings: i32,
-}
-
-/// Batch audit request
-#[derive(Debug, Deserialize, Validate)]
-pub struct BatchAuditRequest {
-    pub requests: Vec<CreateAiAuditRequest>,
-    pub priority: Option<String>,
-    pub notify_on_completion: Option<bool>,
-}
-
-/// Batch audit response
-#[derive(Debug, Serialize)]
-pub struct BatchAuditResponse {
-    pub submitted_audits: Vec<AiAuditReportResponse>,
-    pub failed_submissions: Vec<BatchAuditError>,
-    pub batch_id: Uuid,
-    pub total_submitted: i32,
-    pub total_failed: i32,
-}
-
-/// Batch audit error
-#[derive(Debug, Serialize)]
-pub struct BatchAuditError {
-    pub index: usize,
-    pub request: CreateAiAuditRequest,
-    pub error: String,
-}
-
-/// Audit notification settings
-#[derive(Debug, Serialize, Deserialize)]
-pub struct AuditNotificationSettings {
-    pub notify_on_completion: bool,
-    pub notify_on_high_risk: bool,
-    pub notify_on_critical_findings: bool,
-    pub email_notifications: bool,
-    pub webhook_url: Option<String>,
-}
-
-/// Audit webhook payload
-#[derive(Debug, Serialize)]
-pub struct AuditWebhookPayload {
-    pub event_type: String,
-    pub report_id: Uuid,
-    pub status: AiAuditStatus,
-    pub risk_score: Option<f64>,
-    pub findings_count: i32,
-    pub critical_findings_count: i32,
-    pub timestamp: DateTime<Utc>,
-}
-
-/// Audit export request
-#[derive(Debug, Deserialize, Validate)]
-pub struct AuditExportRequest {
-    pub report_ids: Vec<Uuid>,
-    pub format: String, // "json", "csv", "pdf"
-    pub include_findings: Option<bool>,
-    pub include_recommendations: Option<bool>,
-}
-
-/// Audit export response
-#[derive(Debug, Serialize)]
-pub struct AuditExportResponse {
-    pub download_url: String,
-    pub expires_at: DateTime<Utc>,
-    pub format: String,
-    pub file_size: u64,
-}
-
-/// Audit comparison request
-#[derive(Debug, Deserialize, Validate)]
-pub struct AuditComparisonRequest {
-    pub report_id_1: Uuid,
-    pub report_id_2: Uuid,
-    pub comparison_type: String,
-}
-
-/// Audit comparison response
-#[derive(Debug, Serialize)]
-pub struct AuditComparisonResponse {
-    pub report_1: AiAuditReportResponse,
-    pub report_2: AiAuditReportResponse,
-    pub comparison: AuditComparison,
-}
-
-/// Audit comparison data
-#[derive(Debug, Serialize)]
-pub struct AuditComparison {
-    pub risk_score_diff: f64,
-    pub confidence_score_diff: f64,
-    pub findings_diff: FindingsDiff,
-    pub recommendations_diff: RecommendationsDiff,
-    pub improvement_areas: Vec<String>,
-    pub regression_areas: Vec<String>,
-}
-
-/// Findings difference
-#[derive(Debug, Serialize)]
-pub struct FindingsDiff {
-    pub added: Vec<SecurityFinding>,
-    pub removed: Vec<SecurityFinding>,
-    pub modified: Vec<SecurityFinding>,
-    pub unchanged: Vec<SecurityFinding>,
-}
-
-/// Recommendations difference
-#[derive(Debug, Serialize)]
-pub struct RecommendationsDiff {
-    pub added: Vec<AuditRecommendation>,
-    pub removed: Vec<AuditRecommendation>,
-    pub modified: Vec<AuditRecommendation>,
-    pub unchanged: Vec<AuditRecommendation>,
+        // Test with invalid format
+        let result = json!({"invalid": "format"});
+        assert_eq!(AiAuditReport::calculate_score(&result), 0);
+    }
 }
