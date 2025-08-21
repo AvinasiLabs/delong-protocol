@@ -10,6 +10,7 @@ pub mod user;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use uuid::Uuid;
 use validator::Validate;
 
@@ -51,7 +52,8 @@ pub struct PaginationInfo {
 }
 
 /// Pagination response (alias for compatibility)
-#[derive(Debug, Serialize, Deserialize)]
+/// Pagination metadata for list responses
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PaginationResponse {
     pub page: i32,
     pub limit: i32,

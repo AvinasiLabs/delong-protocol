@@ -1175,7 +1175,7 @@ dependencies = [
  "tower 0.5.2",
  "tower-http",
  "tracing",
- "utoipa 5.4.0",
+ "utoipa",
  "uuid",
  "validator",
 ]
@@ -2080,7 +2080,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "urlencoding",
- "utoipa 4.2.3",
+ "utoipa",
  "utoipa-scalar",
  "uuid",
  "validator",
@@ -6815,18 +6815,6 @@ checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
 
 [[package]]
 name = "utoipa"
-version = "4.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c5afb1a60e207dca502682537fefcfd9921e71d0b83e9576060f09abc6efab23"
-dependencies = [
- "indexmap 2.10.0",
- "serde",
- "serde_json",
- "utoipa-gen 4.3.1",
-]
-
-[[package]]
-name = "utoipa"
 version = "5.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2fcc29c80c21c31608227e0912b2d7fddba57ad76b606890627ba8ee7964e993"
@@ -6834,20 +6822,7 @@ dependencies = [
  "indexmap 2.10.0",
  "serde",
  "serde_json",
- "utoipa-gen 5.4.0",
-]
-
-[[package]]
-name = "utoipa-gen"
-version = "4.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20c24e8ab68ff9ee746aad22d39b5535601e6416d1b0feeabf78be986a5c4392"
-dependencies = [
- "proc-macro-error",
- "proc-macro2",
- "quote",
- "regex",
- "syn 2.0.104",
+ "utoipa-gen",
 ]
 
 [[package]]
@@ -6872,7 +6847,7 @@ dependencies = [
  "axum",
  "serde",
  "serde_json",
- "utoipa 5.4.0",
+ "utoipa",
 ]
 
 [[package]]

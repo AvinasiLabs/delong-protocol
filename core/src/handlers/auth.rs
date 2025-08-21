@@ -73,7 +73,7 @@ pub struct SendVerificationCodeRequest {
 }
 
 /// Update wallet address request
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate, ToSchema)]
 pub struct UpdateWalletRequest {
     #[validate(
         length(
@@ -90,7 +90,7 @@ pub struct UpdateWalletRequest {
 }
 
 /// Google OAuth login request
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate, ToSchema)]
 pub struct GoogleLoginRequest {
     pub access_token: String,
     pub id_token: Option<String>,
@@ -148,8 +148,8 @@ pub struct GoogleAuthQuery {
     pub return_to: Option<String>,
 }
 
-/// Google auth URL response
-#[derive(Debug, Serialize)]
+/// Google OAuth URL response
+#[derive(Debug, Serialize, ToSchema)]
 pub struct GoogleAuthUrlResponse {
     #[serde(rename = "authUrl")]
     pub auth_url: String,
@@ -181,7 +181,7 @@ pub struct GoogleCallbackRequest {
     tag = "Auth",
     request_body = LoginRequest,
     responses(
-        (status = 200, description = "Login successful", body = ApiResponse<AuthResponse>)
+        (status = 200, description = "Login result", body = AuthResponse)
     )
 )]
 pub async fn login_user(
@@ -258,7 +258,7 @@ pub async fn login_user(
     tag = "Auth",
     request_body = RegisterRequest,
     responses(
-        (status = 200, description = "User registered successfully", body = ApiResponse<AuthResponse>)
+        (status = 200, description = "Registration result", body = AuthResponse)
     )
 )]
 #[instrument(skip(state, payload))]
@@ -343,6 +343,15 @@ pub async fn register_user(
 /// Send verification code handler
 /// Send verification code
 /// POST /auth/send-code
+#[utoipa::path(
+    post,
+    path = "/auth/send-code",
+    tag = "Auth",
+    request_body = SendVerificationCodeRequest,
+    responses(
+        (status = 200, description = "Verification code operation result")
+    )
+)]
 pub async fn send_verification_code(
     State(state): State<AppState>,
     ValidatedJson(payload): ValidatedJson<SendVerificationCodeRequest>,
@@ -408,7 +417,15 @@ pub async fn send_verification_code(
 
 /// Get Google OAuth URL handler
 /// GET /auth/google
-/// Get Google OAuth URL
+/// Generate Google OAuth URL
+#[utoipa::path(
+    post,
+    path = "/auth/google",
+    tag = "Auth",
+    responses(
+        (status = 200, description = "OAuth URL generation result", body = GoogleAuthUrlResponse)
+    )
+)]
 pub async fn google_auth_url(
     State(state): State<AppState>,
     ValidatedQuery(query): ValidatedQuery<GoogleAuthQuery>,
@@ -448,6 +465,14 @@ pub async fn google_auth_url(
 /// Google OAuth callback handler
 /// GET /auth/google/callback
 /// Handle Google OAuth callback
+#[utoipa::path(
+    get,
+    path = "/auth/google/callback",
+    tag = "Auth",
+    responses(
+        (status = 200, description = "OAuth authentication result", body = AuthResponse)
+    )
+)]
 pub async fn google_auth_callback(
     State(state): State<AppState>,
     ValidatedQuery(params): ValidatedQuery<GoogleCallbackQuery>,
@@ -586,8 +611,20 @@ pub async fn google_auth_callback(
 }
 
 /// Update wallet address handler
-/// POST /auth/update-wallet
+/// POST /api/user/update-wallet
 /// Update wallet address
+#[utoipa::path(
+    post,
+    path = "/api/user/update-wallet",
+    tag = "User",
+    request_body = UpdateWalletRequest,
+    responses(
+        (status = 200, description = "Wallet update result", body = UserResponse)
+    ),
+    security(
+        ("bearer_auth" = [])
+    )
+)]
 pub async fn update_wallet_address(
     State(state): State<AppState>,
     auth_user: AuthUser,

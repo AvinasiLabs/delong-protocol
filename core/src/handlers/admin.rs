@@ -9,6 +9,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 use tracing::{error, info};
+use utoipa::ToSchema;
 use uuid::Uuid;
 use validator::Validate;
 
@@ -24,7 +25,7 @@ use crate::{
 // ===== Request Structures =====
 
 /// Create user request (admin)
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate, ToSchema)]
 pub struct CreateUserRequest {
     #[validate(length(min = 2, max = 50, message = "Username must be 2-50 characters"))]
     pub username: String,
@@ -37,7 +38,7 @@ pub struct CreateUserRequest {
 }
 
 /// Update user request (admin)
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate, ToSchema)]
 pub struct UpdateUserRequest {
     #[validate(length(min = 2, max = 50, message = "Username must be 2-50 characters"))]
     pub username: Option<String>,
@@ -51,7 +52,7 @@ pub struct UpdateUserRequest {
 }
 
 /// Create role request (admin)
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate, ToSchema)]
 pub struct CreateRoleRequest {
     #[validate(length(min = 1, max = 100, message = "Role name must be 1-100 characters"))]
     pub name: String,
@@ -60,7 +61,7 @@ pub struct CreateRoleRequest {
 }
 
 /// Update role request (admin)
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate, ToSchema)]
 pub struct UpdateRoleRequest {
     #[validate(length(min = 1, max = 100, message = "Role name must be 1-100 characters"))]
     pub name: Option<String>,
@@ -69,7 +70,7 @@ pub struct UpdateRoleRequest {
 }
 
 /// Assign role request (admin)
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate, ToSchema)]
 pub struct AssignRoleRequest {
     pub user_id: Uuid,
     pub role_id: Uuid,
@@ -79,21 +80,21 @@ pub struct AssignRoleRequest {
 // ===== Response Structures =====
 
 /// User list response
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct UserListResponse {
     pub users: Vec<UserResponse>,
     pub pagination: PaginationResponse,
 }
 
 /// Roles and permissions response
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct RolesPermissionsResponse {
     pub roles: Vec<RoleInfo>,
     pub permissions: Vec<PermissionInfo>,
 }
 
 /// Role information
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct RoleInfo {
     pub id: i32,
     pub name: String,
@@ -102,7 +103,7 @@ pub struct RoleInfo {
 }
 
 /// Permission information
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct PermissionInfo {
     pub id: i32,
     pub name: String,
@@ -113,7 +114,7 @@ pub struct PermissionInfo {
 
 /// Query parameters for admin user listing
 /// Admin user query parameters
-#[derive(Debug, Serialize, Deserialize, Validate)]
+#[derive(Debug, Serialize, Deserialize, Validate, ToSchema)]
 pub struct AdminUserQuery {
     pub role: Option<String>,
     pub status: Option<String>,
@@ -125,21 +126,21 @@ pub struct AdminUserQuery {
 }
 
 /// Admin user response
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, ToSchema)]
 pub struct AdminUserResponse {
     pub user: UserResponse,
     pub message: String,
 }
 
 /// Permission check request
-#[derive(Debug, Serialize, Deserialize, Validate, Clone)]
+#[derive(Debug, Serialize, Deserialize, Validate, Clone, ToSchema)]
 pub struct PermissionCheckRequest {
     pub user_role: String,
     pub permission: String,
 }
 
 /// Permission check response
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct PermissionCheckResponse {
     pub user_id: i32,
     pub permission: String,
@@ -149,6 +150,17 @@ pub struct PermissionCheckResponse {
 
 /// Get users list (admin only)
 /// GET /admin/users
+#[utoipa::path(
+    get,
+    path = "/admin/users",
+    tag = "Admin",
+    responses(
+        (status = 200, description = "Users list result", body = UserListResponse)
+    ),
+    security(
+        ("bearer_auth" = [])
+    )
+)]
 pub async fn get_users(
     State(state): State<AppState>,
     ValidatedQuery(query): ValidatedQuery<AdminUserQuery>,
@@ -175,6 +187,18 @@ pub async fn get_users(
 
 /// Create user (admin only)
 /// POST /admin/users
+#[utoipa::path(
+    post,
+    path = "/admin/users",
+    tag = "Admin",
+    request_body = CreateUserRequest,
+    responses(
+        (status = 200, description = "User creation result", body = UserResponse)
+    ),
+    security(
+        ("bearer_auth" = [])
+    )
+)]
 pub async fn create_user_admin(
     State(state): State<AppState>,
     ValidatedJson(payload): ValidatedJson<CreateUserRequest>,
@@ -219,7 +243,21 @@ pub async fn create_user_admin(
 }
 
 /// Get user by ID (admin only)
-/// GET /admin/users/:id
+/// GET /admin/users/{id}
+#[utoipa::path(
+    get,
+    path = "/admin/users/{id}",
+    tag = "Admin",
+    params(
+        ("id" = i32, Path, description = "User ID")
+    ),
+    responses(
+        (status = 200, description = "User details result", body = UserResponse)
+    ),
+    security(
+        ("bearer_auth" = [])
+    )
+)]
 pub async fn get_user_by_id(
     State(state): State<AppState>,
     Path(id): Path<i32>,
@@ -242,7 +280,22 @@ pub async fn get_user_by_id(
 }
 
 /// Update user (admin only)
-/// PUT /admin/users/:id
+/// PUT /admin/users/{id}
+#[utoipa::path(
+    put,
+    path = "/admin/users/{id}",
+    tag = "Admin",
+    params(
+        ("id" = i32, Path, description = "User ID")
+    ),
+    request_body = UpdateUserRequest,
+    responses(
+        (status = 200, description = "User update result", body = UserResponse)
+    ),
+    security(
+        ("bearer_auth" = [])
+    )
+)]
 pub async fn update_user(
     State(state): State<AppState>,
     Path(id): Path<i32>,
@@ -291,8 +344,19 @@ pub async fn update_user(
     data!(updated_user.into())
 }
 
-/// Get all roles and permissions (admin only)
+/// Get roles and permissions (admin only)
 /// GET /admin/roles
+#[utoipa::path(
+    get,
+    path = "/admin/roles",
+    tag = "Admin",
+    responses(
+        (status = 200, description = "Roles and permissions result", body = RolesPermissionsResponse)
+    ),
+    security(
+        ("bearer_auth" = [])
+    )
+)]
 pub async fn get_roles(State(state): State<AppState>) -> JsonResult<RolesPermissionsResponse> {
     info!("Admin get roles and permissions request");
 
@@ -328,6 +392,17 @@ pub async fn get_roles(State(state): State<AppState>) -> JsonResult<RolesPermiss
 
 /// Get permissions list (admin only)
 /// GET /admin/permissions
+#[utoipa::path(
+    get,
+    path = "/admin/permissions",
+    tag = "Admin",
+    responses(
+        (status = 200, description = "Permissions list result", body = Vec<PermissionInfo>)
+    ),
+    security(
+        ("bearer_auth" = [])
+    )
+)]
 pub async fn get_permissions(State(state): State<AppState>) -> JsonResult<Vec<PermissionInfo>> {
     info!("Admin get permissions request");
 
@@ -351,7 +426,22 @@ pub async fn get_permissions(State(state): State<AppState>) -> JsonResult<Vec<Pe
 }
 
 /// Check user permission (admin only)
-/// GET /admin/permissions/:user_id/:permission
+/// GET /admin/permissions/{user_id}/{permission}
+#[utoipa::path(
+    get,
+    path = "/admin/permissions/{user_id}/{permission}",
+    tag = "Admin",
+    params(
+        ("user_id" = i32, Path, description = "User ID"),
+        ("permission" = String, Path, description = "Permission name")
+    ),
+    responses(
+        (status = 200, description = "Permission check result", body = PermissionCheckResponse)
+    ),
+    security(
+        ("bearer_auth" = [])
+    )
+)]
 pub async fn check_permission(
     State(state): State<AppState>,
     Path((user_id, permission)): Path<(i32, String)>,

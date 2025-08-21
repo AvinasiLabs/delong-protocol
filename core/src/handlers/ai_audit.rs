@@ -1,5 +1,6 @@
 use crate::{
-    AppError, infra::ai_audit::AiAuditService, models::ai_audit::AiAuditReport, routes::AppState,
+    AppError, infra::ai_audit::AiAuditService, models::ai_audit::AiAuditReport as AiAuditModel,
+    routes::AppState,
 };
 use avinapi::prelude::*;
 use axum::extract::State;
@@ -7,32 +8,42 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::{error, info};
+use utoipa::ToSchema;
 use validator::Validate;
 
 // ===== Request Structures =====
 
 /// AI audit request
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate, ToSchema)]
 pub struct AiAuditRequest {
+    /// GitHub repository URL
     #[validate(url(message = "Invalid GitHub URL format"))]
     pub github_url: String,
+    /// Git commit hash
     #[validate(length(min = 1, max = 100, message = "Commit hash must be 1-100 characters"))]
     pub commit_hash: String,
+    /// Optional algorithm ID to associate with audit
     pub algorithm_id: Option<i32>,
+    /// Optional execution ID to associate with audit
     pub execution_id: Option<i32>,
 }
 
 /// AI audit report query parameters
-#[derive(Debug, Serialize, Deserialize, Validate)]
+#[derive(Debug, Serialize, Deserialize, Validate, ToSchema)]
 pub struct AiAuditReportQuery {
+    /// Audit report ID
     #[validate(range(min = 1, message = "ID must be positive"))]
     pub id: Option<i32>,
+    /// Algorithm ID filter
     #[validate(range(min = 1, message = "Algorithm ID must be positive"))]
     pub algorithm_id: Option<i32>,
+    /// Execution ID filter
     #[validate(range(min = 1, message = "Execution ID must be positive"))]
     pub execution_id: Option<i32>,
+    /// GitHub URL filter
     #[validate(url(message = "Invalid GitHub URL format"))]
     pub github_url: Option<String>,
+    /// Commit hash filter
     #[validate(length(min = 1, max = 100, message = "Commit hash must be 1-100 characters"))]
     pub commit_hash: Option<String>,
 }
@@ -40,21 +51,30 @@ pub struct AiAuditReportQuery {
 // ===== Response Structures =====
 
 /// AI audit response
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct AiAuditResponse {
+    /// Unique audit ID
     pub id: i32,
+    /// Audit status (processing, completed, failed)
     pub status: String,
+    /// Status message
     pub message: String,
+    /// Audit score (0-100)
     pub score: Option<i32>,
+    /// Detailed audit results
     pub result: Option<Value>,
+    /// Repository URL
     pub repo_url: String,
+    /// Creation timestamp
     pub created_at: DateTime<Utc>,
+    /// Completion timestamp
     pub completed_at: Option<DateTime<Utc>>,
+    /// Error message if failed
     pub error_message: Option<String>,
 }
 
-impl From<AiAuditReport> for AiAuditResponse {
-    fn from(report: AiAuditReport) -> Self {
+impl From<AiAuditModel> for AiAuditResponse {
+    fn from(report: AiAuditModel) -> Self {
         let message = if report.audit_status == "completed" {
             "Audit completed successfully".to_string()
         } else if report.audit_status == "failed" {
@@ -77,9 +97,69 @@ impl From<AiAuditReport> for AiAuditResponse {
     }
 }
 
+/// AI audit result structure for detailed audit findings
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AiAuditResult {
+    /// File that was audited
+    pub file: String,
+    /// List of issues found in the file
+    pub issues: Vec<AiAuditIssue>,
+    /// Overall score for this file (0-100)
+    pub score: i32,
+}
+
+/// Individual issue found during AI audit
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AiAuditIssue {
+    /// Type of issue (error, warning, info)
+    pub issue_type: String,
+    /// Line number where the issue was found
+    pub line: Option<i32>,
+    /// Column number where the issue was found
+    pub column: Option<i32>,
+    /// Description of the issue
+    pub message: String,
+    /// Severity level (high, medium, low)
+    pub severity: String,
+    /// Suggested fix if available
+    pub suggestion: Option<String>,
+}
+
+/// Simplified AI audit report for listing
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AiAuditReport {
+    /// Report ID
+    pub id: i32,
+    /// GitHub URL
+    pub github_url: String,
+    /// Commit hash
+    pub commit_hash: String,
+    /// Audit status
+    pub status: String,
+    /// Audit score
+    pub score: Option<i32>,
+    /// Creation timestamp
+    pub created_at: DateTime<Utc>,
+}
+
+// Re-export the model's AiAuditReport as AiAudit for OpenAPI
+pub use crate::models::ai_audit::AiAuditReport as AiAudit;
+
 // ===== Handler Functions =====
 
 /// Create AI audit report
+#[utoipa::path(
+    post,
+    path = "/api/ai-audit",
+    tag = "AI Audit",
+    request_body = AiAuditRequest,
+    responses(
+        (status = 200, description = "AI audit operation result", body = AiAuditResponse)
+    ),
+    security(
+        ("bearer_auth" = [])
+    )
+)]
 pub async fn create_ai_audit(
     State(state): State<AppState>,
     ValidatedJson(payload): ValidatedJson<AiAuditRequest>,
@@ -96,7 +176,7 @@ pub async fn create_ai_audit(
     };
 
     // Check if audit already exists
-    if let Some(existing) = AiAuditReport::find_by_github_and_commit(
+    if let Some(existing) = AiAuditModel::find_by_github_and_commit(
         &state.db,
         &payload.github_url,
         &payload.commit_hash,
@@ -108,7 +188,7 @@ pub async fn create_ai_audit(
     }
 
     // Create new audit record
-    let audit_id = AiAuditReport::create(
+    let audit_id = AiAuditModel::create(
         &state.db,
         &payload.github_url,
         &payload.commit_hash,
@@ -131,9 +211,9 @@ pub async fn create_ai_audit(
             Ok(result) => {
                 // Convert Vec<AuditFileResult> to serde_json::Value
                 let result_json = serde_json::to_value(&result).unwrap_or(Value::Null);
-                let score = AiAuditReport::calculate_score(&result_json);
+                let score = AiAuditModel::calculate_score(&result_json);
 
-                if let Err(e) = AiAuditReport::update_status(
+                if let Err(e) = AiAuditModel::update_status(
                     &db,
                     audit_id,
                     "completed",
@@ -148,7 +228,7 @@ pub async fn create_ai_audit(
             }
             Err(e) => {
                 error!("AI audit failed: {:?}", e);
-                if let Err(e) = AiAuditReport::update_status(
+                if let Err(e) = AiAuditModel::update_status(
                     &db,
                     audit_id,
                     "failed",
@@ -180,6 +260,18 @@ pub async fn create_ai_audit(
 }
 
 /// Get AI audit reports by query parameters
+#[utoipa::path(
+    get,
+    path = "/api/ai-audit",
+    tag = "AI Audit",
+
+    responses(
+        (status = 200, description = "AI audit report query result", body = AiAuditResponse)
+    ),
+    security(
+        ("bearer_auth" = [])
+    )
+)]
 pub async fn get_ai_audit_reports(
     State(state): State<AppState>,
     ValidatedQuery(query): ValidatedQuery<AiAuditReportQuery>,
@@ -199,7 +291,7 @@ pub async fn get_ai_audit_reports(
     }
 
     // Find report using the model's flexible query method
-    let report = AiAuditReport::find_by_query(
+    let report = AiAuditModel::find_by_query(
         &state.db,
         query.id,
         query.algorithm_id,
@@ -222,7 +314,7 @@ mod tests {
 
     #[test]
     fn test_ai_audit_response_from_report() {
-        let report = AiAuditReport {
+        let report = AiAuditModel {
             id: 1,
             github_url: "https://github.com/user/repo".to_string(),
             commit_hash: "abc123".to_string(),
@@ -247,7 +339,7 @@ mod tests {
 
     #[test]
     fn test_ai_audit_response_failed_status() {
-        let report = AiAuditReport {
+        let report = AiAuditModel {
             id: 2,
             github_url: "https://github.com/user/repo".to_string(),
             commit_hash: "def456".to_string(),

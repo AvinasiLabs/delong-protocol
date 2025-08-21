@@ -183,6 +183,19 @@ pub fn proxy_routes() -> axum::Router<AppState> {
 /// Health check endpoint for Secure service
 ///
 /// This endpoint checks if the Secure service is reachable.
+/// Check health status of Secure TEE service
+#[utoipa::path(
+    get,
+    path = "/api/secure/health",
+    tag = "Proxy",
+    responses(
+        (status = 200, description = "Secure service health status")
+    ),
+    security(
+        ("bearer_auth" = []),
+        ("api_key" = [])
+    )
+)]
 pub async fn secure_health_check(State(state): State<AppState>) -> AppResult<impl IntoResponse> {
     let proxy_client = state
         .proxy_client

@@ -4,9 +4,10 @@
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use utoipa::ToSchema;
 
 /// Verification type enumeration
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type, ToSchema)]
 #[sqlx(type_name = "text")]
 #[serde(rename_all = "snake_case")]
 pub enum VerificationType {

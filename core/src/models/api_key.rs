@@ -10,10 +10,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::PgPool;
 use tracing::error;
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 /// Rate limit tier for API keys
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, sqlx::Type)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, sqlx::Type, ToSchema)]
 #[sqlx(type_name = "rate_limit_tier", rename_all = "lowercase")]
 #[serde(rename_all = "lowercase")]
 pub enum RateLimitTier {
@@ -55,7 +56,7 @@ impl std::str::FromStr for RateLimitTier {
 }
 
 /// API Key database model
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ApiKey {
     pub id: i32,
     pub api_key: String,
@@ -71,7 +72,7 @@ pub struct ApiKey {
 }
 
 /// Statistics for API keys
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ApiKeyStats {
     pub total_keys: i64,
     pub active_keys: i64,

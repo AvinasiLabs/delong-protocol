@@ -107,7 +107,7 @@ dotenvy = { version = "0.15" }
 avinapi = { path = "../../avinapi", features = ["axum", "sqlx"] }
 
 # API Documentation
-utoipa = { version = "4.2", features = ["axum_extras"] }
+utoipa = { version = "5.4.0", features = ["axum_extras", "chrono", "uuid"] }
 utoipa-scalar = { version = "0.3.0", features = ["axum"] }
 
 # Random number generation

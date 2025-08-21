@@ -2,6 +2,7 @@ use axum::extract::{Path, State};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tracing::{error, info};
+use utoipa::ToSchema;
 use validator::Validate;
 
 use avinapi::prelude::{
@@ -16,7 +17,7 @@ use crate::{middleware::AuthUser, models::api_key::ApiKey, routes::AppState};
 // ============================================================================
 
 /// Create API key request
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate, ToSchema)]
 pub struct CreateApiKeyRequest {
     #[validate(length(
         min = 1,
@@ -32,7 +33,7 @@ pub struct CreateApiKeyRequest {
 }
 
 /// Update API key request
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate, ToSchema)]
 pub struct UpdateApiKeyRequest {
     #[validate(length(
         min = 1,
@@ -47,21 +48,21 @@ pub struct UpdateApiKeyRequest {
 }
 
 /// Validate API key request
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate, ToSchema)]
 pub struct ValidateApiKeyRequest {
     #[validate(length(min = 32, max = 64, message = "Invalid API key format"))]
     pub api_key: String,
 }
 
 /// API key filter query parameters (excludes pagination)
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate, ToSchema)]
 pub struct ApiKeyFilterQuery {
     pub is_active: Option<bool>,
     pub rate_limit_tier: Option<String>,
 }
 
 /// API key response
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ApiKeyResponse {
     pub id: i32,
     pub api_key: String,
@@ -77,7 +78,7 @@ pub struct ApiKeyResponse {
 }
 
 /// API key list response (with preview)
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ApiKeyListResponse {
     pub id: i32,
     pub name: String,
@@ -92,7 +93,7 @@ pub struct ApiKeyListResponse {
 }
 
 /// API key validation response
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ValidateApiKeyResponse {
     pub valid: bool,
     pub user_id: Option<i32>,
@@ -101,7 +102,7 @@ pub struct ValidateApiKeyResponse {
 }
 
 /// API key statistics response
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ApiKeyStats {
     pub total_keys: i64,
     pub active_keys: i64,
@@ -161,6 +162,18 @@ impl From<ApiKey> for ApiKeyListResponse {
 // ============================================================================
 
 /// Create a new API key for the authenticated user
+#[utoipa::path(
+    post,
+    path = "/api/api-keys",
+    tag = "API Keys",
+    request_body = CreateApiKeyRequest,
+    responses(
+        (status = 200, description = "API key creation result", body = ApiKeyResponse)
+    ),
+    security(
+        ("bearer_auth" = [])
+    )
+)]
 pub async fn create_api_key(
     State(state): State<AppState>,
     auth_user: AuthUser,
@@ -197,6 +210,18 @@ pub async fn create_api_key(
 }
 
 /// List user's own API keys
+#[utoipa::path(
+    get,
+    path = "/api/api-keys",
+    tag = "API Keys",
+
+    responses(
+        (status = 200, description = "API keys list result", body = Vec<ApiKeyListResponse>)
+    ),
+    security(
+        ("bearer_auth" = [])
+    )
+)]
 pub async fn list_user_api_keys(
     State(state): State<AppState>,
     auth_user: AuthUser,
@@ -230,6 +255,20 @@ pub async fn list_user_api_keys(
 }
 
 /// Get details of a specific API key
+#[utoipa::path(
+    get,
+    path = "/api/api-keys/{id}",
+    tag = "API Keys",
+    params(
+        ("id" = i32, Path, description = "API key ID")
+    ),
+    responses(
+        (status = 200, description = "API key details result", body = ApiKeyResponse)
+    ),
+    security(
+        ("bearer_auth" = [])
+    )
+)]
 pub async fn get_api_key(
     State(state): State<AppState>,
     auth_user: AuthUser,
@@ -256,6 +295,21 @@ pub async fn get_api_key(
 }
 
 /// Update an API key
+#[utoipa::path(
+    put,
+    path = "/api/api-keys/{id}",
+    tag = "API Keys",
+    params(
+        ("id" = i32, Path, description = "API key ID")
+    ),
+    request_body = UpdateApiKeyRequest,
+    responses(
+        (status = 200, description = "API key update result", body = ApiKeyResponse)
+    ),
+    security(
+        ("bearer_auth" = [])
+    )
+)]
 pub async fn update_api_key(
     State(state): State<AppState>,
     auth_user: AuthUser,
@@ -305,6 +359,20 @@ pub async fn update_api_key(
 }
 
 /// Revoke (delete) an API key
+#[utoipa::path(
+    delete,
+    path = "/api/api-keys/{id}",
+    tag = "API Keys",
+    params(
+        ("id" = i32, Path, description = "API key ID")
+    ),
+    responses(
+        (status = 200, description = "API key revocation result")
+    ),
+    security(
+        ("bearer_auth" = [])
+    )
+)]
 pub async fn revoke_api_key(
     State(state): State<AppState>,
     auth_user: AuthUser,
@@ -343,7 +411,18 @@ pub async fn revoke_api_key(
     }))
 }
 
-/// Get API key statistics for the current user
+/// Get API key statistics for the authenticated user
+#[utoipa::path(
+    get,
+    path = "/api/api-keys/stats",
+    tag = "API Keys",
+    responses(
+        (status = 200, description = "API key statistics result", body = ApiKeyStats)
+    ),
+    security(
+        ("bearer_auth" = [])
+    )
+)]
 pub async fn get_user_api_key_stats(
     State(state): State<AppState>,
     auth_user: AuthUser,
@@ -367,6 +446,15 @@ pub async fn get_user_api_key_stats(
 }
 
 /// Validate an API key (for secure module)
+#[utoipa::path(
+    post,
+    path = "/api/api-keys/validate",
+    tag = "API Keys",
+    request_body = ValidateApiKeyRequest,
+    responses(
+        (status = 200, description = "API key validation result", body = ValidateApiKeyResponse)
+    )
+)]
 pub async fn validate_api_key(
     State(state): State<AppState>,
     ValidatedJson(payload): ValidatedJson<ValidateApiKeyRequest>,
