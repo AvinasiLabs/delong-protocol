@@ -40,21 +40,22 @@ pub mod handlers;
 pub mod infra;
 pub mod middleware;
 pub mod models;
+pub mod openapi;
 pub mod routes;
 pub mod utils;
 // Re-export error types from avinapi
 pub use avinapi::prelude::{AppError, AppResult};
 pub use config::Config;
 pub use infra::ai_audit::AiAuditService;
+pub use infra::db::Database;
 pub use infra::verification::VerificationStore;
 
 pub use models::*;
-use sqlx::PgPool;
 use tracing::warn;
 pub use utils::jwt::{JwtConfig, create_jwt_config};
 
 use std::sync::Arc;
-use tracing::info;
+use tracing::{error, info};
 
 // Re-export AppState from routes module
 pub use routes::AppState;
@@ -72,20 +73,58 @@ pub use routes::AppState;
 /// # Returns
 ///
 /// Returns a new `AppState` instance or an error if initialization fails.
-pub async fn create_app_state(config: Config) -> AppResult<AppState> {
+pub async fn create_app_state(mut config: Config) -> AppResult<AppState> {
     info!("Initializing application state...");
 
-    // Initialize database pool
+    // Initialize database
     info!("Connecting to database...");
-    let db = PgPool::connect(&config.database_url)
-        .await
-        .map_err(|e| AppError::Config(format!("Failed to connect to database: {}", e)))?;
+    let db = Database::new(&config.database).await?;
     info!("Database connection established");
+
+    // Initialize Redis pool (optional)
+    let redis_pool = if let Ok(redis_url) = std::env::var("REDIS_URL") {
+        info!("Connecting to Redis...");
+        let redis_config = deadpool_redis::Config::from_url(&redis_url);
+        let redis_pool = redis_config
+            .create_pool(Some(deadpool_redis::Runtime::Tokio1))
+            .map_err(|e| {
+                warn!(
+                    "Failed to create Redis pool: {}. OAuth state will use in-memory storage.",
+                    e
+                );
+                e
+            })
+            .ok()
+            .map(Arc::new);
+
+        if redis_pool.is_some() {
+            info!("Redis connection established");
+        }
+        redis_pool
+    } else {
+        info!("REDIS_URL not configured, using in-memory storage for OAuth state");
+        None
+    };
+
+    config.redis_pool = redis_pool;
 
     // Initialize services
     info!("Initializing services...");
+
+    // Initialize Redis-based verification store
+    let verification_store = if let Some(ref redis_pool) = config.redis_pool {
+        info!("Initializing Redis verification store");
+        Arc::new(infra::verification::VerificationStore::new(
+            redis_pool.clone(),
+        ))
+    } else {
+        error!("Redis pool not available - verification service will not work");
+        return Err(AppError::Internal(
+            "Redis is required for verification service".to_string(),
+        ));
+    };
+
     let config_arc = Arc::new(config);
-    let verification_store = Arc::new(VerificationStore::new());
     let jwt_config = Arc::new(create_jwt_config());
 
     // Initialize AI audit service
@@ -94,6 +133,22 @@ pub async fn create_app_state(config: Config) -> AppResult<AppState> {
         Arc::new(AiAuditService::new(ai_service_url).map_err(|e| {
             AppError::Config(format!("Failed to initialize AI audit service: {}", e))
         })?);
+
+    // Initialize Google OAuth service
+    let google_client_id =
+        std::env::var("GOOGLE_CLIENT_ID").unwrap_or_else(|_| "your-google-client-id".to_string());
+    let google_client_secret = std::env::var("GOOGLE_CLIENT_SECRET")
+        .unwrap_or_else(|_| "your-google-client-secret".to_string());
+    let google_redirect_uri = std::env::var("GOOGLE_REDIRECT_URL")
+        .unwrap_or_else(|_| "http://localhost:3000/auth/google/callback".to_string());
+
+    let google_oauth_service = Arc::new(infra::google_oauth::GoogleOAuthService::new(
+        google_client_id,
+        google_client_secret,
+        google_redirect_uri,
+    ));
+
+    info!("Google OAuth service initialized");
 
     // Initialize proxy client for forwarding requests to Secure service
     let proxy_client = if std::env::var("SECURE_SERVICE_URL").is_ok() {
@@ -123,11 +178,12 @@ pub async fn create_app_state(config: Config) -> AppResult<AppState> {
     info!("Services initialized");
 
     let state = AppState::new(
-        db,
+        db.into(),
         verification_store,
         jwt_config,
         config_arc,
         ai_audit_service,
+        google_oauth_service,
         proxy_client,
     );
 
@@ -218,7 +274,7 @@ fn init_logging() -> AppResult<()> {
     use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| "core=info,tower_http=debug".into());
+        .unwrap_or_else(|_| "debug,core=info,tower_http=debug".into());
 
     tracing_subscriber::registry()
         .with(env_filter)

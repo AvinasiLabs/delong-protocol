@@ -19,6 +19,16 @@ async fn create_admin_and_get_token(app: &axum::Router) -> (String, String, Stri
     let email = generate_test_email("admin");
     let password = "AdminPassword123!";
 
+    // First send verification code
+    let send_code_payload = json!({
+        "email": email,
+        "verification_type": "email",
+        "language": "en"
+    });
+    let request = json_request("POST", "/auth/send-code", send_code_payload);
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
     // First register a regular user
     let register_payload = json!({
         "username": username,
@@ -97,6 +107,17 @@ async fn test_admin_get_user_by_id() {
     let username = generate_test_username("getuser");
     let email = generate_test_email("getuser");
 
+    
+    // Send verification code
+    let send_code_payload = json!({
+        "email": email,
+        "verification_type": "email",
+        "language": "en"
+    });
+    let request = json_request("POST", "/auth/send-code", send_code_payload);
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
     let register_payload = json!({
         "username": username,
         "email": email,
@@ -141,6 +162,17 @@ async fn test_admin_update_user_role() {
     let user1_username = generate_test_username("user1");
     let user1_email = generate_test_email("user1");
 
+    
+    // Send verification code
+    let send_code_payload = json!({
+        "email": user1_email,
+        "verification_type": "email",
+        "language": "en"
+    });
+    let request = json_request("POST", "/auth/send-code", send_code_payload);
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
     let register_payload = json!({
         "username": user1_username,
         "email": user1_email,
@@ -157,6 +189,17 @@ async fn test_admin_update_user_role() {
     // Create another user to update
     let user2_username = generate_test_username("user2");
     let user2_email = generate_test_email("user2");
+
+    
+    // Send verification code
+    let send_code_payload = json!({
+        "email": user2_email,
+        "verification_type": "email",
+        "language": "en"
+    });
+    let request = json_request("POST", "/auth/send-code", send_code_payload);
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
 
     let register_payload = json!({
         "username": user2_username,
@@ -207,6 +250,17 @@ async fn test_admin_update_user_status() {
     // Create a user to update
     let username = generate_test_username("statustest");
     let email = generate_test_email("statustest");
+
+    
+    // Send verification code
+    let send_code_payload = json!({
+        "email": email,
+        "verification_type": "email",
+        "language": "en"
+    });
+    let request = json_request("POST", "/auth/send-code", send_code_payload);
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
 
     let register_payload = json!({
         "username": username,
@@ -297,6 +351,17 @@ async fn test_admin_permissions() {
     // Create a regular user (not admin)
     let username = generate_test_username("regular");
     let email = generate_test_email("regular");
+
+    
+    // Send verification code
+    let send_code_payload = json!({
+        "email": email,
+        "verification_type": "email",
+        "language": "en"
+    });
+    let request = json_request("POST", "/auth/send-code", send_code_payload);
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
 
     let register_payload = json!({
         "username": username,

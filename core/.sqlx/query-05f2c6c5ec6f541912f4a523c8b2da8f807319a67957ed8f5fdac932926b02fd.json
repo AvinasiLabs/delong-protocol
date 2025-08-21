@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT COUNT(*) as \"count!\"\n            FROM api_keys\n            WHERE user_id = $1\n              AND ($2::boolean IS NULL OR is_active = $2)\n              AND ($3::text IS NULL OR rate_limit_tier::text = $3)\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Bool",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "05f2c6c5ec6f541912f4a523c8b2da8f807319a67957ed8f5fdac932926b02fd"
+}

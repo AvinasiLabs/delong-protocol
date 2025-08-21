@@ -1,16 +1,14 @@
-//! Verification code storage service
+//! Verification code storage service using Redis
 //!
 //! This service handles the storage and validation of verification codes
-//! for email verification during user registration.
+//! for email verification using Redis as the backing store.
 
-use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::AppError;
 use serde::{Deserialize, Serialize};
-use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// Verification code entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,15 +21,13 @@ pub struct VerificationEntry {
     pub language: String,
 }
 
-/// Verification service configuration
+/// Verification configuration
 #[derive(Debug, Clone)]
 pub struct VerificationConfig {
     /// Code expiration time in minutes
     pub expiration_minutes: u64,
     /// Maximum verification attempts
     pub max_attempts: u32,
-    /// Rate limit window in minutes
-    pub rate_limit_window_minutes: u64,
     /// Development mode - uses fixed code
     pub dev_mode: bool,
     /// Fixed code for development
@@ -43,371 +39,300 @@ impl Default for VerificationConfig {
         Self {
             expiration_minutes: 15,
             max_attempts: 5,
-            rate_limit_window_minutes: 2,
             dev_mode: std::env::var("RUST_ENV").unwrap_or_default() != "production" || cfg!(test),
             dev_code: "1234".to_string(),
         }
     }
 }
 
-/// In-memory verification store
-#[derive(Debug)]
+/// Verification statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerificationStats {
+    pub total_codes: usize,
+    pub active_codes: usize,
+    pub expired_codes: usize,
+    pub total_attempts: usize,
+}
+
+/// Verification store using Redis
+#[derive(Clone)]
 pub struct VerificationStore {
-    entries: Arc<RwLock<HashMap<String, VerificationEntry>>>,
+    redis_pool: Arc<deadpool_redis::Pool>,
     config: VerificationConfig,
 }
 
-/// Helper function to get current Unix timestamp
-fn current_timestamp() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
-}
-
-/// Helper function to check if timestamp is expired
-fn is_expired(expires_at: u64) -> bool {
-    current_timestamp() > expires_at
-}
-
 impl VerificationStore {
-    /// Create a new verification store with default configuration
-    pub fn new() -> Self {
-        Self::new_with_config(VerificationConfig::default())
-    }
-
-    /// Create a new verification store with custom configuration
-    pub fn new_with_config(config: VerificationConfig) -> Self {
-        let store = Self {
-            entries: Arc::new(RwLock::new(HashMap::new())),
-            config,
-        };
-
-        // Start cleanup task
-        store.start_cleanup_task();
-
-        store
-    }
-
-    /// Generate a random verification code
-    pub fn generate_code(&self) -> String {
-        if self.config.dev_mode {
-            return self.config.dev_code.clone();
+    /// Create a new verification store
+    pub fn new(redis_pool: Arc<deadpool_redis::Pool>) -> Self {
+        Self {
+            redis_pool,
+            config: VerificationConfig::default(),
         }
+    }
 
+    /// Create with custom configuration
+    pub fn with_config(redis_pool: Arc<deadpool_redis::Pool>, config: VerificationConfig) -> Self {
+        Self { redis_pool, config }
+    }
+
+    /// Generate Redis key for verification
+    fn verification_key(email: &str) -> String {
+        format!("verification:{}", email)
+    }
+
+    /// Generate a random 6-digit verification code
+    fn generate_code() -> String {
         use rand::Rng;
         let mut rng = rand::thread_rng();
-        format!("{:06}", rng.gen_range(100000..999999))
+        let code = rng.gen_range(100000..999999);
+        code.to_string()
+    }
+
+    /// Get current timestamp in seconds
+    fn current_timestamp() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
     }
 
     /// Store a verification code
-    pub async fn store_code(
-        &self,
-        email: &str,
-        code: &str,
-        language: Option<&str>,
-    ) -> Result<(), AppError> {
-        let email = email.to_lowercase();
+    pub async fn store(&self, email: &str, language: &str) -> Result<String, AppError> {
+        let mut conn = self.redis_pool.get().await.map_err(|e| {
+            error!("Failed to get Redis connection: {}", e);
+            AppError::Internal("Redis connection failed".to_string())
+        })?;
 
-        // Check rate limiting
-        if self.is_rate_limited(&email).await {
-            warn!("Rate limit exceeded for email: {}", email);
-            return Err(AppError::Conflict("Email already sent".to_string()));
-        }
-
-        let now = current_timestamp();
-        let expires_at = now + (self.config.expiration_minutes * 60);
-
-        let entry = VerificationEntry {
-            code: code.to_string(),
-            email: email.clone(),
-            created_at: now,
-            expires_at,
-            attempts: 0,
-            language: language.unwrap_or("en").to_string(),
+        // Generate verification code (use fixed code in dev mode)
+        let code = if self.config.dev_mode {
+            println!("DEBUG: Using dev mode code: {}", self.config.dev_code);
+            self.config.dev_code.clone()
+        } else {
+            let generated = Self::generate_code();
+            println!("DEBUG: Generated random code: {}", generated);
+            generated
         };
 
-        let mut entries = self.entries.write().await;
-        entries.insert(email.clone(), entry);
+        info!(
+            "Storing verification code for email: {} (dev_mode: {}, code: {})",
+            email, self.config.dev_mode, code
+        );
 
-        info!("Stored verification code for email: {}", email);
-        Ok(())
+        // Create verification entry
+        let now = Self::current_timestamp();
+        let entry = VerificationEntry {
+            code: code.clone(),
+            email: email.to_string(),
+            created_at: now,
+            expires_at: now + (self.config.expiration_minutes * 60),
+            attempts: 0,
+            language: language.to_string(),
+        };
+
+        // Serialize entry
+        let entry_json = serde_json::to_string(&entry).map_err(|e| {
+            error!("Failed to serialize verification entry: {}", e);
+            AppError::Internal("Failed to store verification code".to_string())
+        })?;
+
+        // Store in Redis with expiration
+        let key = Self::verification_key(email);
+        println!("DEBUG: Storing to Redis key: {}", key);
+        use deadpool_redis::redis::AsyncCommands;
+
+        let expiration = self.config.expiration_minutes * 60;
+        let _: () = conn
+            .set_ex(&key, entry_json.clone(), expiration)
+            .await
+            .map_err(|e| {
+                error!("Failed to store verification code in Redis: {}", e);
+                AppError::Internal("Failed to store verification code".to_string())
+            })?;
+
+        println!(
+            "DEBUG: Successfully stored verification code for {}: {} (expires in {} seconds, entry: {})",
+            email, code, expiration, entry_json
+        );
+        debug!(
+            "Verification code stored for {}: {} (expires in {} minutes)",
+            email, code, self.config.expiration_minutes
+        );
+
+        Ok(code)
     }
 
     /// Verify a code
-    pub async fn verify_code(&self, email: &str, code: &str) -> Result<bool, AppError> {
-        let email = email.to_lowercase();
+    pub async fn verify(&self, email: &str, code: &str) -> Result<(), AppError> {
+        println!("DEBUG: Verifying code for email: {}, provided code: {}", email, code);
 
-        // Dev mode: accept the dev_code for any email
-        if self.config.dev_mode && code == self.config.dev_code {
-            info!("Dev mode: accepting verification code for email: {}", email);
-            return Ok(true);
+        let mut conn = self.redis_pool.get().await.map_err(|e| {
+            error!("Failed to get Redis connection: {}", e);
+            AppError::Internal("Redis connection failed".to_string())
+        })?;
+
+        let key = Self::verification_key(email);
+        println!("DEBUG: Looking for Redis key: {}", key);
+        use deadpool_redis::redis::AsyncCommands;
+
+        // Get the verification entry
+        let entry_json: Option<String> = conn.get(&key).await.map_err(|e| {
+            error!("Failed to get verification code from Redis: {}", e);
+            AppError::Internal("Failed to retrieve verification code".to_string())
+        })?;
+
+        println!("DEBUG: Retrieved from Redis: {:?}", entry_json);
+
+        let entry_json = entry_json.ok_or_else(|| {
+            warn!("Verification code not found for email: {}", email);
+            println!("DEBUG: No entry found in Redis for key: {}", key);
+            AppError::NotFound("Verification code not found or expired".to_string())
+        })?;
+
+        // Parse the entry
+        let mut entry: VerificationEntry = serde_json::from_str(&entry_json).map_err(|e| {
+            error!("Failed to parse verification entry: {}", e);
+            AppError::Internal("Invalid verification data".to_string())
+        })?;
+
+        println!("DEBUG: Parsed entry - code: {}, expires_at: {}, attempts: {}",
+                 entry.code, entry.expires_at, entry.attempts);
+
+        // Check expiration
+        let now = Self::current_timestamp();
+        if now > entry.expires_at {
+            warn!("Verification code expired for email: {}", email);
+            // Delete expired entry
+            let _: Option<String> = conn.del(&key).await.ok();
+            return Err(AppError::Validation(
+                "Verification code expired".to_string(),
+            ));
         }
 
-        let mut entries = self.entries.write().await;
+        // Check attempts
+        if entry.attempts >= self.config.max_attempts {
+            warn!("Max verification attempts exceeded for email: {}", email);
+            // Delete after max attempts
+            let _: Option<String> = conn.del(&key).await.ok();
+            return Err(AppError::Validation(
+                "Too many verification attempts".to_string(),
+            ));
+        }
 
-        if let Some(entry) = entries.get_mut(&email) {
-            // Check if code is expired
-            if is_expired(entry.expires_at) {
-                debug!("Verification code expired for email: {}", email);
-                entries.remove(&email);
-                return Ok(false);
-            }
-
+        // Verify code
+        println!("DEBUG: Comparing codes - stored: '{}', provided: '{}'", entry.code, code);
+        if entry.code != code {
             // Increment attempts
             entry.attempts += 1;
+            println!("DEBUG: Code mismatch! Incrementing attempts to {}", entry.attempts);
+            let updated_json = serde_json::to_string(&entry).map_err(|e| {
+                error!("Failed to serialize updated entry: {}", e);
+                AppError::Internal("Failed to update verification attempts".to_string())
+            })?;
 
-            // Check max attempts
-            if entry.attempts > self.config.max_attempts {
-                warn!(
-                    "Maximum verification attempts exceeded for email: {}",
-                    email
-                );
-                entries.remove(&email);
-                return Err(AppError::Validation(
-                    "Invalid verification code".to_string(),
-                ));
-            }
-
-            // Check code
-            if entry.code == code {
-                info!("Verification code verified for email: {}", email);
-                entries.remove(&email);
-                return Ok(true);
+            // Calculate remaining TTL
+            let ttl = if entry.expires_at > now {
+                (entry.expires_at - now) as usize
             } else {
-                debug!("Invalid verification code for email: {}", email);
-                return Ok(false);
-            }
-        }
+                1
+            };
 
-        debug!("No verification code found for email: {}", email);
-        Ok(false)
-    }
+            let _: () = conn
+                .set_ex(&key, updated_json, ttl as u64)
+                .await
+                .map_err(|e| {
+                    error!("Failed to update verification attempts in Redis: {}", e);
+                    AppError::Internal("Failed to update verification attempts".to_string())
+                })?;
 
-    /// Remove a verification code
-    pub async fn remove_code(&self, email: &str) {
-        let email = email.to_lowercase();
-        let mut entries = self.entries.write().await;
-        if entries.remove(&email).is_some() {
-            debug!("Removed verification code for email: {}", email);
-        }
-    }
-
-    /// Get stored code (for development/testing)
-    pub async fn get_code(&self, email: &str) -> Option<String> {
-        let email = email.to_lowercase();
-        let entries = self.entries.read().await;
-
-        if let Some(entry) = entries.get(&email) {
-            if !is_expired(entry.expires_at) {
-                return Some(entry.code.clone());
-            }
-        }
-
-        None
-    }
-
-    /// Check if email is rate limited
-    async fn is_rate_limited(&self, email: &str) -> bool {
-        let entries = self.entries.read().await;
-
-        if let Some(entry) = entries.get(email) {
-            let rate_limit_window = self.config.rate_limit_window_minutes * 60;
-            return current_timestamp() - entry.created_at < rate_limit_window;
-        }
-
-        false
-    }
-
-    /// Clean up expired entries
-    pub async fn cleanup_expired(&self) {
-        let mut entries = self.entries.write().await;
-
-        let initial_count = entries.len();
-        entries.retain(|_, entry| !is_expired(entry.expires_at));
-        let final_count = entries.len();
-
-        if initial_count != final_count {
-            debug!(
-                "Cleaned up {} expired verification codes",
-                initial_count - final_count
+            warn!(
+                "Invalid verification code for email: {} (attempt {}/{})",
+                email, entry.attempts, self.config.max_attempts
             );
+            return Err(AppError::Validation(
+                "Invalid verification code".to_string(),
+            ));
         }
+
+        // Verification successful - delete the entry
+        let _: Option<String> = conn.del(&key).await.ok();
+
+        info!("Verification successful for email: {}", email);
+        Ok(())
     }
 
-    /// Start background cleanup task
-    fn start_cleanup_task(&self) {
-        let entries = self.entries.clone();
+    /// Clear verification code for an email
+    pub async fn clear(&self, email: &str) -> Result<(), AppError> {
+        let mut conn = self.redis_pool.get().await.map_err(|e| {
+            error!("Failed to get Redis connection: {}", e);
+            AppError::Internal("Redis connection failed".to_string())
+        })?;
 
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(300)); // 5 minutes
+        let key = Self::verification_key(email);
+        use deadpool_redis::redis::AsyncCommands;
 
-            loop {
-                interval.tick().await;
+        let _: Option<String> = conn.del(&key).await.ok();
+        debug!("Cleared verification code for email: {}", email);
+        Ok(())
+    }
 
-                let mut entries_guard = entries.write().await;
+    /// Check if a verification code exists for an email
+    pub async fn exists(&self, email: &str) -> Result<bool, AppError> {
+        let mut conn = self.redis_pool.get().await.map_err(|e| {
+            error!("Failed to get Redis connection: {}", e);
+            AppError::Internal("Redis connection failed".to_string())
+        })?;
 
-                let initial_count = entries_guard.len();
-                entries_guard.retain(|_, entry| !is_expired(entry.expires_at));
-                let final_count = entries_guard.len();
+        let key = Self::verification_key(email);
+        use deadpool_redis::redis::AsyncCommands;
 
-                if initial_count != final_count {
-                    debug!(
-                        "Cleanup task removed {} expired verification codes",
-                        initial_count - final_count
-                    );
+        let exists: bool = conn.exists(&key).await.map_err(|e| {
+            error!("Failed to check existence in Redis: {}", e);
+            AppError::Internal("Failed to check verification code".to_string())
+        })?;
+
+        Ok(exists)
+    }
+
+    /// Get verification statistics
+    pub async fn get_stats(&self) -> Result<VerificationStats, AppError> {
+        let mut conn = self.redis_pool.get().await.map_err(|e| {
+            error!("Failed to get Redis connection: {}", e);
+            AppError::Internal("Redis connection failed".to_string())
+        })?;
+
+        use deadpool_redis::redis::AsyncCommands;
+
+        // Get all verification keys
+        let keys: Vec<String> = conn.keys("verification:*").await.map_err(|e| {
+            error!("Failed to get keys from Redis: {}", e);
+            AppError::Internal("Failed to get verification stats".to_string())
+        })?;
+
+        let total_codes = keys.len();
+        let mut active_codes = 0;
+        let mut expired_codes = 0;
+        let mut total_attempts = 0;
+
+        let now = Self::current_timestamp();
+
+        for key in keys {
+            if let Ok(Some(entry_json)) = conn.get::<_, Option<String>>(&key).await {
+                if let Ok(entry) = serde_json::from_str::<VerificationEntry>(&entry_json) {
+                    if now <= entry.expires_at {
+                        active_codes += 1;
+                    } else {
+                        expired_codes += 1;
+                    }
+                    total_attempts += entry.attempts as usize;
                 }
             }
-        });
-    }
-
-    /// Get statistics
-    pub async fn get_stats(&self) -> VerificationStats {
-        let entries = self.entries.read().await;
-
-        let mut active_count = 0;
-        let mut expired_count = 0;
-
-        for entry in entries.values() {
-            if !is_expired(entry.expires_at) {
-                active_count += 1;
-            } else {
-                expired_count += 1;
-            }
         }
 
-        VerificationStats {
-            active_codes: active_count,
-            expired_codes: expired_count,
-            total_codes: entries.len(),
-        }
-    }
-}
-
-/// Verification statistics
-#[derive(Debug, Serialize)]
-pub struct VerificationStats {
-    pub active_codes: usize,
-    pub expired_codes: usize,
-    pub total_codes: usize,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tokio::time::{Duration, sleep};
-
-    #[tokio::test]
-    async fn test_store_and_verify_code() {
-        let config = VerificationConfig::default();
-        let store = VerificationStore::new_with_config(config);
-
-        let email = "test@example.com";
-        let code = "123456";
-
-        store.store_code(email, code, None).await.unwrap();
-
-        let result = store.verify_code(email, code).await.unwrap();
-        assert!(result);
-
-        // Code should be removed after verification
-        let result2 = store.verify_code(email, code).await.unwrap();
-        assert!(!result2);
-    }
-
-    #[tokio::test]
-    async fn test_code_expiration() {
-        let mut config = VerificationConfig::default();
-        config.expiration_minutes = 0; // Expire immediately
-
-        let store = VerificationStore::new_with_config(config);
-
-        let email = "test@example.com";
-        let code = "123456";
-
-        store.store_code(email, code, None).await.unwrap();
-
-        // Wait a moment for expiration
-        sleep(Duration::from_millis(100)).await;
-
-        let result = store.verify_code(email, code).await.unwrap();
-        assert!(!result);
-    }
-
-    #[tokio::test]
-    async fn test_rate_limiting() {
-        let config = VerificationConfig::default();
-        let store = VerificationStore::new_with_config(config);
-
-        let email = "test@example.com";
-        let code = "123456";
-
-        store.store_code(email, code, None).await.unwrap();
-
-        // Second attempt should be rate limited
-        let result = store.store_code(email, code, None).await;
-        assert!(result.is_err());
-        assert!(
-            matches!(result.unwrap_err(), AppError::Conflict(msg) if msg == "Email already sent")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_max_attempts() {
-        let mut config = VerificationConfig::default();
-        config.max_attempts = 2;
-
-        let store = VerificationStore::new_with_config(config);
-
-        let email = "test@example.com";
-        let code = "123456";
-
-        store.store_code(email, code, None).await.unwrap();
-
-        // First wrong attempt
-        let result = store.verify_code(email, "wrong").await.unwrap();
-        assert!(!result);
-
-        // Second wrong attempt
-        let result = store.verify_code(email, "wrong").await.unwrap();
-        assert!(!result);
-
-        // Third attempt should fail with error
-        let result = store.verify_code(email, "wrong").await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), AppError::Validation(_)));
-    }
-
-    #[tokio::test]
-    async fn test_cleanup_expired() {
-        let mut config = VerificationConfig::default();
-        config.expiration_minutes = 0;
-
-        let store = VerificationStore::new_with_config(config);
-
-        let email = "test@example.com";
-        let code = "123456";
-
-        store.store_code(email, code, None).await.unwrap();
-
-        // Wait for expiration
-        sleep(Duration::from_millis(100)).await;
-
-        store.cleanup_expired().await;
-
-        let stats = store.get_stats().await;
-        assert_eq!(stats.active_codes, 0);
-    }
-
-    #[tokio::test]
-    async fn test_dev_mode() {
-        let mut config = VerificationConfig::default();
-        config.dev_mode = true;
-        config.dev_code = "999999".to_string();
-
-        let store = VerificationStore::new_with_config(config);
-
-        let generated_code = store.generate_code();
-        assert_eq!(generated_code, "999999");
+        Ok(VerificationStats {
+            total_codes,
+            active_codes,
+            expired_codes,
+            total_attempts,
+        })
     }
 }

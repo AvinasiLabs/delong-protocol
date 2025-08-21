@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO vote (algo_cid, voter, approve, voted_at)\n            VALUES ($1, $2, $3, $4)\n            ON CONFLICT (algo_cid, voter)\n            DO UPDATE SET approve = $3, voted_at = $4\n            RETURNING id\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Bool",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "9278c52e058233b902ffdc671f91bc60d456d94f87c7581c3a08017f3d06ade4"
+}

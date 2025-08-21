@@ -150,21 +150,20 @@ impl ApiKey {
         })?;
 
         // Convert permissions from Value to Vec<String>
-        let permissions = serde_json::from_value(record.permissions.unwrap_or(json!([])))
-            .unwrap_or_else(|_| Vec::new());
+        let permissions = serde_json::from_value(record.permissions).unwrap_or_else(|_| Vec::new());
 
         Ok(ApiKey {
             id: record.id,
             api_key: record.api_key,
             name: record.name,
-            user_id: record.user_id.unwrap(),
+            user_id: record.user_id,
             permissions,
-            rate_limit_tier: record.rate_limit_tier.unwrap(),
-            is_active: record.is_active.unwrap(),
+            rate_limit_tier: record.rate_limit_tier,
+            is_active: record.is_active,
             expires_at: record.expires_at,
             last_used_at: record.last_used_at,
-            created_at: record.created_at.unwrap(),
-            updated_at: record.updated_at.unwrap(),
+            created_at: record.created_at,
+            updated_at: record.updated_at,
         })
     }
 
@@ -194,21 +193,20 @@ impl ApiKey {
         .ok_or_else(|| AppError::NotFound("API key not found".to_string()))?;
 
         // Convert permissions from Value to Vec<String>
-        let permissions = serde_json::from_value(record.permissions.unwrap_or(json!([])))
-            .unwrap_or_else(|_| Vec::new());
+        let permissions = serde_json::from_value(record.permissions).unwrap_or_else(|_| Vec::new());
 
         Ok(ApiKey {
             id: record.id,
             api_key: record.api_key,
             name: record.name,
-            user_id: record.user_id.unwrap(),
+            user_id: record.user_id,
             permissions,
-            rate_limit_tier: record.rate_limit_tier.unwrap(),
-            is_active: record.is_active.unwrap(),
+            rate_limit_tier: record.rate_limit_tier,
+            is_active: record.is_active,
             expires_at: record.expires_at,
             last_used_at: record.last_used_at,
-            created_at: record.created_at.unwrap(),
-            updated_at: record.updated_at.unwrap(),
+            created_at: record.created_at,
+            updated_at: record.updated_at,
         })
     }
 
@@ -238,21 +236,20 @@ impl ApiKey {
         .ok_or_else(|| AppError::NotFound("API key not found".to_string()))?;
 
         // Convert permissions from Value to Vec<String>
-        let permissions = serde_json::from_value(record.permissions.unwrap_or(json!([])))
-            .unwrap_or_else(|_| Vec::new());
+        let permissions = serde_json::from_value(record.permissions).unwrap_or_else(|_| Vec::new());
 
         Ok(ApiKey {
             id: record.id,
             api_key: record.api_key,
             name: record.name,
-            user_id: record.user_id.unwrap(),
+            user_id: record.user_id,
             permissions,
-            rate_limit_tier: record.rate_limit_tier.unwrap(),
-            is_active: record.is_active.unwrap(),
+            rate_limit_tier: record.rate_limit_tier,
+            is_active: record.is_active,
             expires_at: record.expires_at,
             last_used_at: record.last_used_at,
-            created_at: record.created_at.unwrap(),
-            updated_at: record.updated_at.unwrap(),
+            created_at: record.created_at,
+            updated_at: record.updated_at,
         })
     }
 
@@ -322,21 +319,21 @@ impl ApiKey {
         let keys: Vec<ApiKey> = records
             .into_iter()
             .map(|record| {
-                let permissions = serde_json::from_value(record.permissions.unwrap_or(json!([])))
-                    .unwrap_or_else(|_| Vec::new());
+                let permissions =
+                    serde_json::from_value(record.permissions).unwrap_or_else(|_| Vec::new());
 
                 ApiKey {
                     id: record.id,
                     api_key: record.api_key,
                     name: record.name,
-                    user_id: record.user_id.unwrap(),
+                    user_id: record.user_id,
                     permissions,
-                    rate_limit_tier: record.rate_limit_tier.unwrap(),
-                    is_active: record.is_active.unwrap(),
+                    rate_limit_tier: record.rate_limit_tier,
+                    is_active: record.is_active,
                     expires_at: record.expires_at,
                     last_used_at: record.last_used_at,
-                    created_at: record.created_at.unwrap(),
-                    updated_at: record.updated_at.unwrap(),
+                    created_at: record.created_at,
+                    updated_at: record.updated_at,
                 }
             })
             .collect();
@@ -399,21 +396,20 @@ impl ApiKey {
         .ok_or_else(|| AppError::NotFound("API key not found".to_string()))?;
 
         // Convert permissions from Value to Vec<String>
-        let permissions = serde_json::from_value(record.permissions.unwrap_or(json!([])))
-            .unwrap_or_else(|_| Vec::new());
+        let permissions = serde_json::from_value(record.permissions).unwrap_or_else(|_| Vec::new());
 
         Ok(ApiKey {
             id: record.id,
             api_key: record.api_key,
             name: record.name,
-            user_id: record.user_id.unwrap(),
+            user_id: record.user_id,
             permissions,
-            rate_limit_tier: record.rate_limit_tier.unwrap(),
-            is_active: record.is_active.unwrap(),
+            rate_limit_tier: record.rate_limit_tier,
+            is_active: record.is_active,
             expires_at: record.expires_at,
             last_used_at: record.last_used_at,
-            created_at: record.created_at.unwrap(),
-            updated_at: record.updated_at.unwrap(),
+            created_at: record.created_at,
+            updated_at: record.updated_at,
         })
     }
 
@@ -485,7 +481,7 @@ impl ApiKey {
 
         let mut by_tier = serde_json::Map::new();
         for tc in tier_counts {
-            by_tier.insert(tc.rate_limit_tier.unwrap().to_string(), json!(tc.count));
+            by_tier.insert(tc.rate_limit_tier.to_string(), json!(tc.count));
         }
 
         Ok(ApiKeyStats {

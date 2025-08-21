@@ -19,6 +19,16 @@ async fn setup_test_user(app: &axum::Router) -> (String, String) {
     let username = generate_test_username("apikey_user");
     let email = generate_test_email("apikey");
 
+    // First send verification code
+    let send_code_payload = json!({
+        "email": email,
+        "verification_type": "email",
+        "language": "en"
+    });
+    let request = json_request("POST", "/auth/send-code", send_code_payload);
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
     // Register user
     let register_payload = json!({
         "username": username,

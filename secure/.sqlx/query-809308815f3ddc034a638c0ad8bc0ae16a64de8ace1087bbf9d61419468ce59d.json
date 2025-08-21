@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                UPDATE algo_exe\n                SET status = $1, updated_at = $2, start_time = $3\n                WHERE id = $4\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        {
+          "Custom": {
+            "name": "algo_exe_status",
+            "kind": {
+              "Enum": [
+                "queued",
+                "running",
+                "completed",
+                "failed"
+              ]
+            }
+          }
+        },
+        "Timestamptz",
+        "Timestamptz",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "809308815f3ddc034a638c0ad8bc0ae16a64de8ace1087bbf9d61419468ce59d"
+}

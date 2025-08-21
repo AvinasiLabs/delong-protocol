@@ -1,0 +1,48 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE blockchain_transaction\n            SET status = $2, block_number = $3, block_timestamp = $4, updated_at = NOW()\n            WHERE tx_hash = $1\n            RETURNING id, entity_id, entity_type\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "entity_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "entity_type",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        {
+          "Custom": {
+            "name": "transaction_status",
+            "kind": {
+              "Enum": [
+                "pending",
+                "confirmed",
+                "failed"
+              ]
+            }
+          }
+        },
+        "Int8",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "33f2d317df957e00b07c6d1e55500d45300507cfe59a4fd3e30e5b0e05309dd7"
+}

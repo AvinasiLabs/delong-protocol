@@ -6,7 +6,7 @@ edition = { workspace = true }
 
 [dependencies]
 # HTTP framework and async runtime
-axum = { version = "0.8", features = ["multipart", "ws"] }
+axum = { version = "0.8.4", features = ["multipart", "ws"] }
 tokio = { version = "1.39", features = ["full"] }
 async-trait = { version = "0.1" }
 
@@ -19,6 +19,12 @@ uuid = { version = "1.10", features = ["v4", "serde"] }
 
 # Time and date handling
 chrono = { version = "0.4", features = ["serde"] }
+
+# Base64 encoding/decoding
+base64 = "0.21"
+
+# Redis support
+deadpool-redis = "0.14"
 
 # Tracing and observability
 tracing = { version = "0.1" }
@@ -66,8 +72,8 @@ tower-http = { version = "0.6", features = [
     "timeout",
 ] }
 
-# Redis caching
-redis = { version = "0.25", features = ["tokio-comp", "connection-manager"] }
+# Redis caching - using deadpool-redis which includes redis
+# redis is re-exported from deadpool-redis to avoid version conflicts
 
 # Email sending
 lettre = { version = "0.11", default-features = false, features = [
@@ -101,9 +107,8 @@ dotenvy = { version = "0.15" }
 avinapi = { path = "../../avinapi", features = ["axum", "sqlx"] }
 
 # API Documentation
-utoipa = { version = "4.2" }
-utoipa-swagger-ui = { version = "7.1" }
-utoipa-scalar = { version = "0.1" }
+utoipa = { version = "4.2", features = ["axum_extras"] }
+utoipa-scalar = { version = "0.3.0", features = ["axum"] }
 
 # Random number generation
 rand = { version = "0.8" }

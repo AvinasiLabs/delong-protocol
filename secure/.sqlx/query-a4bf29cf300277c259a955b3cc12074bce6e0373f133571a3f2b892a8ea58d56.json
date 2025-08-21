@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                UPDATE algo_exe\n                SET vote_start_time = $2, vote_end_time = $3, updated_at = NOW()\n                WHERE id = $1\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a4bf29cf300277c259a955b3cc12074bce6e0373f133571a3f2b892a8ea58d56"
+}

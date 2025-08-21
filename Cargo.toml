@@ -21,11 +21,6 @@ categories = ["cryptography", "network-programming"]
 
 
 [workspace.dependencies]
-# HTTP framework and middleware
-axum = { version = "0.8.4" }
-tower = { version = "0.5.2" }
-tower-http = { version = "0.6.6" }
-
 # Async runtime and utilities
 tokio = { version = "1.45.1", features = ["full"] }
 async-trait = { version = "0.1.88" }

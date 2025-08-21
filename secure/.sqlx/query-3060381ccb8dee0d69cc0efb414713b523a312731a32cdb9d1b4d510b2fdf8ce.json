@@ -1,0 +1,150 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO algo_exe (algo_id, used_dataset, scientist_wallet, review_status, status)\n            VALUES ($1, $2, $3, $4, $5)\n            RETURNING id, algo_id, used_dataset, scientist_wallet,\n                     review_status as \"review_status: ReviewStatus\",\n                     vote_start_time, vote_end_time,\n                     status as \"status: ExecutionStatus\",\n                     start_time, end_time, result, error_msg,\n                     created_at, updated_at\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "algo_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "used_dataset",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "scientist_wallet",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "review_status: ReviewStatus",
+        "type_info": {
+          "Custom": {
+            "name": "algo_review_status",
+            "kind": {
+              "Enum": [
+                "reviewing",
+                "approved",
+                "rejected"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "vote_start_time",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "vote_end_time",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "status: ExecutionStatus",
+        "type_info": {
+          "Custom": {
+            "name": "algo_exe_status",
+            "kind": {
+              "Enum": [
+                "queued",
+                "running",
+                "completed",
+                "failed"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "start_time",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "end_time",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "result",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "error_msg",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 13,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Varchar",
+        "Varchar",
+        {
+          "Custom": {
+            "name": "algo_review_status",
+            "kind": {
+              "Enum": [
+                "reviewing",
+                "approved",
+                "rejected"
+              ]
+            }
+          }
+        },
+        {
+          "Custom": {
+            "name": "algo_exe_status",
+            "kind": {
+              "Enum": [
+                "queued",
+                "running",
+                "completed",
+                "failed"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "3060381ccb8dee0d69cc0efb414713b523a312731a32cdb9d1b4d510b2fdf8ce"
+}

@@ -3,8 +3,8 @@
 //! This module contains HTTP handlers for administrative functions,
 //! including user management, role/permission management, and API key management.
 
-use avinapi::prelude::{AppError, JsonResult, ValidatedJson, data};
-use axum::extract::{Path, Query, State};
+use avinapi::prelude::{AppError, JsonResult, ValidatedJson, ValidatedQuery, data};
+use axum::extract::{Path, State};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tracing::warn;
@@ -112,12 +112,15 @@ pub struct PermissionInfo {
 }
 
 /// Query parameters for admin user listing
-#[derive(Debug, Deserialize)]
+/// Admin user query parameters
+#[derive(Debug, Serialize, Deserialize, Validate)]
 pub struct AdminUserQuery {
     pub role: Option<String>,
     pub status: Option<String>,
     pub search: Option<String>,
+    #[validate(range(min = 1, message = "Page must be at least 1"))]
     pub page: Option<i32>,
+    #[validate(range(min = 1, max = 100, message = "Limit must be between 1 and 100"))]
     pub limit: Option<i32>,
 }
 
@@ -148,7 +151,7 @@ pub struct PermissionCheckResponse {
 /// GET /admin/users
 pub async fn get_users(
     State(state): State<AppState>,
-    Query(query): Query<AdminUserQuery>,
+    ValidatedQuery(query): ValidatedQuery<AdminUserQuery>,
 ) -> JsonResult<UserListResponse> {
     info!("Admin get users request");
 
@@ -266,7 +269,7 @@ pub async fn update_user(
     }
 
     // Update user
-    let updated_user = User::update(
+    let updated_user = User::update_partial(
         &state.db,
         id,
         payload.username.as_deref(),

@@ -416,36 +416,3 @@ pub async fn validate_api_key(
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    #[tokio::test]
-    async fn test_create_api_key() {
-        // TODO: Add comprehensive tests
-    }
-
-    #[tokio::test]
-    async fn test_list_user_api_keys() {
-        // TODO: Add comprehensive tests
-    }
-
-    #[tokio::test]
-    async fn test_get_api_key() {
-        // TODO: Add comprehensive tests
-    }
-
-    #[tokio::test]
-    async fn test_update_api_key() {
-        // TODO: Add comprehensive tests
-    }
-
-    #[tokio::test]
-    async fn test_revoke_api_key() {
-        // TODO: Add comprehensive tests
-    }
-
-    #[tokio::test]
-    async fn test_validate_api_key() {
-        // TODO: Add comprehensive tests
-    }
-}

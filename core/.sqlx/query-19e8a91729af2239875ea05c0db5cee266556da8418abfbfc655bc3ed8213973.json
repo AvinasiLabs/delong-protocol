@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM verification_codes WHERE expires_at < CURRENT_TIMESTAMP OR is_used = true",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "19e8a91729af2239875ea05c0db5cee266556da8418abfbfc655bc3ed8213973"
+}

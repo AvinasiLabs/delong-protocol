@@ -1,0 +1,160 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT\n                algo_exe.id, algo_exe.algo_id, algo_exe.used_dataset, algo_exe.scientist_wallet,\n                algo_exe.review_status as \"review_status: ReviewStatus\",\n                algo_exe.vote_start_time, algo_exe.vote_end_time,\n                algo_exe.status as \"status: ExecutionStatus\",\n                algo_exe.start_time, algo_exe.end_time, algo_exe.result, algo_exe.error_msg,\n                algo_exe.created_at, algo_exe.updated_at\n            FROM algo_exe\n            JOIN blockchain_transaction bt\n            ON bt.entity_id = algo_exe.id\n               AND bt.status = $1\n               AND bt.entity_type = $2\n            WHERE algo_exe.review_status = $3\n              AND algo_exe.status = $4\n            ORDER BY algo_exe.created_at ASC\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "algo_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "used_dataset",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "scientist_wallet",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "review_status: ReviewStatus",
+        "type_info": {
+          "Custom": {
+            "name": "algo_review_status",
+            "kind": {
+              "Enum": [
+                "reviewing",
+                "approved",
+                "rejected"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "vote_start_time",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "vote_end_time",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "status: ExecutionStatus",
+        "type_info": {
+          "Custom": {
+            "name": "algo_exe_status",
+            "kind": {
+              "Enum": [
+                "queued",
+                "running",
+                "completed",
+                "failed"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "start_time",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "end_time",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "result",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "error_msg",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 13,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        {
+          "Custom": {
+            "name": "transaction_status",
+            "kind": {
+              "Enum": [
+                "pending",
+                "confirmed",
+                "failed"
+              ]
+            }
+          }
+        },
+        "Text",
+        {
+          "Custom": {
+            "name": "algo_review_status",
+            "kind": {
+              "Enum": [
+                "reviewing",
+                "approved",
+                "rejected"
+              ]
+            }
+          }
+        },
+        {
+          "Custom": {
+            "name": "algo_exe_status",
+            "kind": {
+              "Enum": [
+                "queued",
+                "running",
+                "completed",
+                "failed"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "7f93abaab6963b2462feb71281fc2ab2418e724b0daaf654f9b1b4bbe2d1575f"
+}

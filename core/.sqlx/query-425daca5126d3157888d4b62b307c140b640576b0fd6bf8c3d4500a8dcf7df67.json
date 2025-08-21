@@ -1,0 +1,39 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT\n                rate_limit_tier as \"rate_limit_tier: RateLimitTier\",\n                COUNT(*) as \"count!\"\n            FROM api_keys\n            WHERE user_id = $1\n            GROUP BY rate_limit_tier\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "rate_limit_tier: RateLimitTier",
+        "type_info": {
+          "Custom": {
+            "name": "rate_limit_tier",
+            "kind": {
+              "Enum": [
+                "basic",
+                "premium",
+                "enterprise"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "count!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "425daca5126d3157888d4b62b307c140b640576b0fd6bf8c3d4500a8dcf7df67"
+}

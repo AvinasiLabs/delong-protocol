@@ -1,0 +1,46 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT\n                COUNT(DISTINCT cid) as \"unique_algorithms!\",\n                COUNT(*) as \"total_uses!\",\n                MIN(used_at) as first_used,\n                MAX(used_at) as last_used,\n                COUNT(DISTINCT scientist_wallet) as \"unique_wallets!\"\n            FROM data_usage\n            WHERE dataset = $1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "unique_algorithms!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "total_uses!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "first_used",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 3,
+        "name": "last_used",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 4,
+        "name": "unique_wallets!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "9898fbe159fee6323a803ef2332dc8e7f17c39da754888ae8b5708065655a302"
+}

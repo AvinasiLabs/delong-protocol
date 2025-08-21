@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO ai_audit_reports (\n                github_url, commit_hash, repo_url, algorithm_id, execution_id,\n                audit_status, created_at, updated_at\n            )\n            VALUES ($1, $2, $3, $4, $5, 'processing', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)\n            RETURNING id\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Int4",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "50898b36168228ae96ef4086e043e87ba7135f40df2875d4c44582e21036d42d"
+}

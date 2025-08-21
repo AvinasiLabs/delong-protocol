@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT ae.id\n            FROM algo_exe ae\n            JOIN algo a ON ae.algo_id = a.id\n            WHERE a.cid = $1\n            ORDER BY ae.created_at DESC\n            LIMIT 1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "77f3b2eda9f24e1312056a6067b7e85605b14e2a5300bb6cff42ce024e3dcc7a"
+}

@@ -1,0 +1,32 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT ae.id, ae.vote_end_time, a.cid\n            FROM algo_exe ae\n            JOIN algo a ON ae.algo_id = a.id\n            JOIN blockchain_transaction bt ON bt.entity_id = ae.id\n            WHERE ae.review_status = 'reviewing'\n                AND bt.status = 'confirmed'\n                AND bt.entity_type = 'EXECUTION'\n                AND ae.vote_end_time IS NOT NULL\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "vote_end_time",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 2,
+        "name": "cid",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "7042853a1ae621a9aca623ea7b9f6290528f93bc7bd9e82efc02dca8f9a5b181"
+}

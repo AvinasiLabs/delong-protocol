@@ -1,0 +1,58 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT * FROM vote WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "algo_cid",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "voter",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "approve",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 4,
+        "name": "voted_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 5,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "9f752eacd6944bd2dc5575b4ba62b94f85c145a78feb30541b2f4d007d4c6faf"
+}

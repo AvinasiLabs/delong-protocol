@@ -4,15 +4,16 @@
 //! including registration, login, verification code management,
 //! and Google OAuth integration.
 
-use avinapi::prelude::{AppError, JsonResult, ValidatedJson, data};
-use axum::extract::{Query, State};
+use avinapi::prelude::{AppError, JsonResult, ValidatedJson, ValidatedQuery, data};
+use axum::extract::State;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use regex::Regex;
 use std::sync::LazyLock;
-use tracing::{error, info, warn};
+use tracing::{error, info, instrument, warn};
+use utoipa::ToSchema;
 use validator::Validate;
 
 use crate::{
@@ -35,7 +36,7 @@ pub static USERNAME_REGEX: LazyLock<Regex> =
 // ===== Request Structures =====
 
 /// Login request
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate, ToSchema)]
 pub struct LoginRequest {
     #[validate(email(message = "Invalid email format"))]
     pub email: String,
@@ -44,7 +45,7 @@ pub struct LoginRequest {
 }
 
 /// User registration request
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate, ToSchema)]
 pub struct RegisterRequest {
     #[validate(
         length(min = 3, max = 20, message = "Username must be 3-20 characters"),
@@ -63,7 +64,7 @@ pub struct RegisterRequest {
 }
 
 /// Send verification code request
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate, ToSchema)]
 pub struct SendVerificationCodeRequest {
     #[validate(email(message = "Invalid email format"))]
     pub email: String,
@@ -98,7 +99,7 @@ pub struct GoogleLoginRequest {
 // ===== Response Structures =====
 
 /// User response model for API responses
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct UserResponse {
     pub id: i32,
     pub email: String,
@@ -132,7 +133,7 @@ impl From<User> for UserResponse {
 }
 
 /// Authentication response
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct AuthResponse {
     pub access_token: String,
     pub refresh_token: String,
@@ -140,8 +141,8 @@ pub struct AuthResponse {
     pub expires_at: DateTime<Utc>,
 }
 
-/// Google auth URL query parameters
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+/// Google OAuth query parameters
+#[derive(Debug, Serialize, Deserialize, Validate, ToSchema)]
 pub struct GoogleAuthQuery {
     #[serde(rename = "returnTo")]
     pub return_to: Option<String>,
@@ -155,8 +156,8 @@ pub struct GoogleAuthUrlResponse {
     pub state: String,
 }
 
-/// Google callback query parameters
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+/// Google OAuth callback query parameters
+#[derive(Debug, Serialize, Deserialize, Validate, ToSchema)]
 pub struct GoogleCallbackQuery {
     pub code: Option<String>,
     pub state: Option<String>,
@@ -174,6 +175,15 @@ pub struct GoogleCallbackRequest {
 /// User login handler
 /// Login user
 /// POST /auth/login
+#[utoipa::path(
+    post,
+    path = "/auth/login",
+    tag = "Auth",
+    request_body = LoginRequest,
+    responses(
+        (status = 200, description = "Login successful", body = ApiResponse<AuthResponse>)
+    )
+)]
 pub async fn login_user(
     State(state): State<AppState>,
     ValidatedJson(payload): ValidatedJson<LoginRequest>,
@@ -242,6 +252,16 @@ pub async fn login_user(
 /// User registration handler
 /// Register a new user
 /// POST /auth/register
+#[utoipa::path(
+    post,
+    path = "/auth/register",
+    tag = "Auth",
+    request_body = RegisterRequest,
+    responses(
+        (status = 200, description = "User registered successfully", body = ApiResponse<AuthResponse>)
+    )
+)]
+#[instrument(skip(state, payload))]
 pub async fn register_user(
     State(state): State<AppState>,
     ValidatedJson(payload): ValidatedJson<RegisterRequest>,
@@ -258,20 +278,14 @@ pub async fn register_user(
     let verification_code = payload.verification_code.unwrap_or_default();
     match state
         .verification_store
-        .verify_code(&payload.email, &verification_code)
+        .verify(&payload.email, &verification_code)
         .await
     {
-        Ok(true) => {
-            info!("Verification code verified for email: {}", payload.email);
-        }
-        Ok(false) => {
-            warn!("Invalid verification code for email: {}", payload.email);
-            return Err(AppError::Validation(
-                "Invalid or expired verification code".to_string(),
-            ));
+        Ok(()) => {
+            info!("Email verified successfully: {}", payload.email);
         }
         Err(e) => {
-            error!("Error verifying verification code: {:?}", e);
+            error!("Verification failed: {}", e);
             return Err(e);
         }
     }
@@ -313,7 +327,7 @@ pub async fn register_user(
     };
 
     // Remove verification code
-    state.verification_store.remove_code(&payload.email).await;
+    state.verification_store.clear(&payload.email).await.ok();
 
     let auth_response = AuthResponse {
         access_token: access_token.clone(),
@@ -338,22 +352,12 @@ pub async fn send_verification_code(
         payload.email
     );
 
-    if payload.email.is_empty() {
-        return Err(AppError::Validation("Email is required".to_string()));
-    }
-
-    // Validate email format
-    let email_regex = regex::Regex::new(r"^[^\s@]+@[^\s@]+\.[^\s@]+$").unwrap();
-    if !email_regex.is_match(&payload.email) {
-        return Err(AppError::Validation("Invalid email format".to_string()));
-    }
-
     // Check if code already sent recently
     if state
         .verification_store
-        .get_code(&payload.email)
+        .exists(&payload.email)
         .await
-        .is_some()
+        .unwrap_or(false)
     {
         warn!(
             "Verification code already sent recently for: {}",
@@ -365,19 +369,17 @@ pub async fn send_verification_code(
     }
 
     // Generate and store verification code
-    let verification_code = generate_verification_code();
-    if let Err(e) = state
+    let verification_code = match state
         .verification_store
-        .store_code(
-            &payload.email,
-            &verification_code,
-            payload.language.as_deref(),
-        )
+        .store(&payload.email, payload.language.as_deref().unwrap_or("en"))
         .await
     {
-        error!("Failed to store verification code: {:?}", e);
-        return Err(e);
-    }
+        Ok(code) => code,
+        Err(e) => {
+            error!("Failed to store verification code: {:?}", e);
+            return Err(e);
+        }
+    };
 
     // In development mode, include the code in response
     if state.config.development_mode {
@@ -406,31 +408,49 @@ pub async fn send_verification_code(
 
 /// Get Google OAuth URL handler
 /// GET /auth/google
+/// Get Google OAuth URL
 pub async fn google_auth_url(
-    State(_state): State<AppState>,
-    Query(_query): Query<GoogleAuthQuery>,
+    State(state): State<AppState>,
+    ValidatedQuery(query): ValidatedQuery<GoogleAuthQuery>,
 ) -> JsonResult<GoogleAuthUrlResponse> {
     info!("Google OAuth URL request");
 
-    // TODO: Implement Google OAuth URL generation
-    // This would involve generating a state parameter and constructing the Google OAuth URL
+    // Generate a secure state parameter
+    let state_param = crate::infra::google_oauth::generate_state_parameter();
 
-    let mock_response = GoogleAuthUrlResponse {
-        auth_url: format!(
-            "https://accounts.google.com/oauth/authorize?client_id=mock&redirect_uri=mock&response_type=code&scope=email%20profile&state={}",
-            generate_state_parameter()
-        ),
-        state: generate_state_parameter(),
+    // Store the state in Redis with return_to URL if provided
+    if let Some(redis_pool) = state.config.redis_pool.as_ref() {
+        crate::infra::google_oauth::OAuthStateStore::store_state(
+            redis_pool,
+            &state_param,
+            query.return_to.clone(),
+        )
+        .await
+        .map_err(|e| {
+            error!("Failed to store OAuth state: {}", e);
+            AppError::Internal("Failed to initialize OAuth flow".to_string())
+        })?;
+    }
+
+    // Generate the Google OAuth URL
+    let auth_url = state
+        .google_oauth_service
+        .generate_auth_url(&state_param, query.return_to.as_deref());
+
+    let response = GoogleAuthUrlResponse {
+        auth_url,
+        state: state_param,
     };
 
-    data!(mock_response)
+    data!(response)
 }
 
 /// Google OAuth callback handler
 /// GET /auth/google/callback
+/// Handle Google OAuth callback
 pub async fn google_auth_callback(
     State(state): State<AppState>,
-    Query(params): Query<GoogleCallbackQuery>,
+    ValidatedQuery(params): ValidatedQuery<GoogleCallbackQuery>,
 ) -> JsonResult<AuthResponse> {
     info!("Google OAuth callback request");
 
@@ -440,51 +460,125 @@ pub async fn google_auth_callback(
         return Err(AppError::Authentication(format!("OAuth error: {}", error)));
     }
 
-    let _code = params.code.ok_or_else(|| {
+    let code = params.code.ok_or_else(|| {
         warn!("Missing authorization code");
         AppError::Validation("Missing authorization code".to_string())
     })?;
 
-    let _state_param = params.state.ok_or_else(|| {
+    let state_param = params.state.ok_or_else(|| {
         warn!("Missing state parameter");
         AppError::Validation("Missing state parameter".to_string())
     })?;
 
-    // TODO: Implement Google OAuth callback
-    // 1. Verify state parameter
-    // 2. Exchange code for access token
-    // 3. Get user info from Google
-    // 4. Find or create user
-    // 5. Generate JWT token
-
-    // Mock response for now
-    let mock_user = User {
-        id: 1,
-        email: "test@example.com".to_string(),
-        username: "testuser".to_string(),
-        password_hash: None,
-        role: "scientist".to_string(),
-        status: "active".to_string(),
-        wallet_address: None,
-        google_id: Some("mock_google_id".to_string()),
-        avatar_url: Some("https://example.com/avatar.jpg".to_string()),
-        provider: "google".to_string(),
-        provider_data: serde_json::json!({}),
-        created_at: chrono::Utc::now(),
-        updated_at: chrono::Utc::now(),
-        last_login: None,
-        last_provider_sync: None,
-        email_verified: Some(true),
-        two_factor_enabled: Some(false),
-        profile_data: serde_json::json!({}),
+    // Verify state parameter and retrieve return_to URL
+    let _oauth_state = if let Some(redis_pool) = state.config.redis_pool.as_ref() {
+        crate::infra::google_oauth::OAuthStateStore::retrieve_state(redis_pool, &state_param)
+            .await
+            .map_err(|e| {
+                warn!("Invalid OAuth state: {}", e);
+                AppError::Authentication("Invalid or expired state parameter".to_string())
+            })?
+    } else {
+        // For testing without Redis, just create a mock state
+        crate::infra::google_oauth::OAuthState {
+            state: state_param.clone(),
+            return_to: None,
+            created_at: Utc::now(),
+        }
     };
 
-    let access_token = jwt::generate_token(&mock_user, &state.jwt_config).unwrap();
+    // Exchange authorization code for access token
+    let token_response = state
+        .google_oauth_service
+        .exchange_code_for_token(&code)
+        .await
+        .map_err(|e| {
+            error!("Failed to exchange code for token: {}", e);
+            AppError::Authentication("Failed to authenticate with Google".to_string())
+        })?;
+
+    // Get user info from Google
+    let google_user_info = state
+        .google_oauth_service
+        .get_user_info(&token_response.access_token)
+        .await
+        .map_err(|e| {
+            error!("Failed to get user info: {}", e);
+            AppError::Authentication("Failed to retrieve user information".to_string())
+        })?;
+
+    // Find or create user
+    let mut user = match User::find_by_google_id(&state.db, &google_user_info.id).await {
+        Ok(existing_user) => {
+            info!("Existing user found for Google ID: {}", google_user_info.id);
+            existing_user
+        }
+        Err(_) => {
+            // Check if user exists with this email
+            match User::find_by_email(&state.db, &google_user_info.email).await {
+                Ok(Some(mut existing_user)) => {
+                    info!(
+                        "Linking existing user to Google account: {}",
+                        google_user_info.email
+                    );
+                    // Link the Google account to existing user
+                    existing_user.google_id = Some(google_user_info.id.clone());
+                    existing_user.provider = "google".to_string();
+                    existing_user.avatar_url = google_user_info.picture.clone();
+                    existing_user.provider_data = serde_json::to_value(&google_user_info)
+                        .unwrap_or_else(|_| serde_json::json!({}));
+                    existing_user.email_verified = Some(google_user_info.verified_email);
+                    existing_user.update(&state.db).await?;
+                    existing_user
+                }
+                Ok(None) => {
+                    info!(
+                        "Creating new user from Google account: {}",
+                        google_user_info.email
+                    );
+                    // Create new user
+                    let username = google_user_info
+                        .email
+                        .split('@')
+                        .next()
+                        .unwrap_or("user")
+                        .to_string();
+
+                    User::create_from_google(&state.db, google_user_info.clone(), username).await?
+                }
+                Err(_) => {
+                    info!(
+                        "Creating new user from Google account: {}",
+                        google_user_info.email
+                    );
+                    // Create new user
+                    let username = google_user_info
+                        .email
+                        .split('@')
+                        .next()
+                        .unwrap_or("user")
+                        .to_string();
+
+                    User::create_from_google(&state.db, google_user_info.clone(), username).await?
+                }
+            }
+        }
+    };
+
+    // Update last login
+    user.last_login = Some(Utc::now());
+    user.last_provider_sync = Some(Utc::now());
+    user.update(&state.db).await?;
+
+    // Generate JWT token
+    let access_token = crate::utils::jwt::generate_token(&user, &state.jwt_config)?;
+    // TODO: Implement separate refresh token generation with longer expiry
+    let refresh_token = access_token.clone();
 
     let auth_response = AuthResponse {
-        access_token: access_token.clone(),
-        refresh_token: access_token,
-        user: UserResponse::from(mock_user),
+        access_token,
+        refresh_token,
+        user: UserResponse::from(user),
         expires_at: chrono::Utc::now() + chrono::Duration::hours(24),
     };
 
@@ -536,16 +630,4 @@ pub async fn update_wallet_address(
 
     info!("Wallet address updated successfully");
     data!(UserResponse::from(user))
-}
-
-/// Generate a 6-digit verification code
-fn generate_verification_code() -> String {
-    use rand::Rng;
-    let mut rng = rand::thread_rng();
-    format!("{:06}", rng.gen_range(100000..999999))
-}
-
-/// Generate a random state parameter for OAuth
-fn generate_state_parameter() -> String {
-    uuid::Uuid::new_v4().to_string().replace('-', "")
 }

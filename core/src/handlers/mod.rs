@@ -26,7 +26,7 @@ pub use auth::{
     google_auth_callback, google_auth_url, login_user, register_user, send_verification_code,
     update_wallet_address,
 };
-pub use health::health_check;
+pub use health::health;
 pub use proxy::{extract_auth_method, proxy_handler, proxy_routes, secure_health_check};
 
 // Import avinapi prelude for response macros and types

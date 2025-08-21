@@ -1,0 +1,95 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT id, github_url, commit_hash, repo_url, algorithm_id, execution_id,\n                   audit_status, audit_score, audit_result, raw_response, error_message,\n                   created_at, completed_at\n            FROM ai_audit_reports\n            ORDER BY created_at DESC\n            LIMIT $1 OFFSET $2\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "github_url",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "commit_hash",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "repo_url",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "algorithm_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 5,
+        "name": "execution_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 6,
+        "name": "audit_status",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
+        "name": "audit_score",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 8,
+        "name": "audit_result",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 9,
+        "name": "raw_response",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 10,
+        "name": "error_message",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 12,
+        "name": "completed_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "8eddd074518719c635cd4edbf6fd07e458d57850fc1fda0ceb4ac48c7ffbf03f"
+}

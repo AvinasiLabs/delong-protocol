@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE algo_exe\n            SET review_status = $1, updated_at = NOW()\n            WHERE id = $2\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        {
+          "Custom": {
+            "name": "algo_review_status",
+            "kind": {
+              "Enum": [
+                "reviewing",
+                "approved",
+                "rejected"
+              ]
+            }
+          }
+        },
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "93581fd25dceb12125b3d0c9c0d8301acc914b46d125474d286e85083eb27826"
+}

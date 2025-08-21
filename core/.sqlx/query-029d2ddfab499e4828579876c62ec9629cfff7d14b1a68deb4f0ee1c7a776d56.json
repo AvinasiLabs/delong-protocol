@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE ai_audit_reports\n            SET audit_status = $2,\n                audit_score = $3,\n                audit_result = $4,\n                error_message = $5,\n                completed_at = $6,\n                updated_at = CURRENT_TIMESTAMP\n            WHERE id = $1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Varchar",
+        "Int4",
+        "Jsonb",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "029d2ddfab499e4828579876c62ec9629cfff7d14b1a68deb4f0ee1c7a776d56"
+}

@@ -1,0 +1,84 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE contract_meta\n            SET address = $1, updated_at = NOW()\n            WHERE name = $2 AND chain_id = $3\n            RETURNING id, name, address, chain_id, deployed_at, deployed_by, tx_hash, block_number,\n                      metadata as \"metadata: serde_json::Value\", created_at, updated_at\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "address",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "chain_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "deployed_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 5,
+        "name": "deployed_by",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "tx_hash",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
+        "name": "block_number",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 8,
+        "name": "metadata: serde_json::Value",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 9,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "71aaacb3df84da568e9aa4435a13585cd888479c1d97b777d1598ce07c8b9933"
+}

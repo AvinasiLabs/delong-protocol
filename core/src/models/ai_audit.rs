@@ -20,6 +20,7 @@ pub struct AiAuditReport {
     pub audit_status: String,
     pub audit_score: Option<i32>,
     pub audit_result: Option<Value>,
+    pub raw_response: Option<Value>,
     pub error_message: Option<String>,
     pub created_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
@@ -65,7 +66,7 @@ impl AiAuditReport {
         let record = sqlx::query!(
             r#"
             SELECT id, github_url, commit_hash, repo_url, algorithm_id, execution_id,
-                   audit_status, audit_score, audit_result, error_message,
+                   audit_status, audit_score, audit_result, raw_response, error_message,
                    created_at, completed_at
             FROM ai_audit_reports
             WHERE github_url = $1 AND commit_hash = $2
@@ -85,11 +86,12 @@ impl AiAuditReport {
             repo_url: r.repo_url,
             algorithm_id: r.algorithm_id,
             execution_id: r.execution_id,
-            audit_status: r.audit_status.unwrap_or_else(|| "pending".to_string()),
-            audit_score: r.audit_score,
-            audit_result: r.audit_result,
+            audit_status: r.audit_status,
+            audit_score: Some(r.audit_score),
+            audit_result: Some(r.audit_result),
+            raw_response: Some(r.raw_response),
             error_message: r.error_message,
-            created_at: r.created_at.unwrap_or_else(|| Utc::now()),
+            created_at: r.created_at,
             completed_at: r.completed_at,
         }))
     }
@@ -99,7 +101,7 @@ impl AiAuditReport {
         let record = sqlx::query!(
             r#"
             SELECT id, github_url, commit_hash, repo_url, algorithm_id, execution_id,
-                   audit_status, audit_score, audit_result, error_message,
+                   audit_status, audit_score, audit_result, raw_response, error_message,
                    created_at, completed_at
             FROM ai_audit_reports
             WHERE id = $1
@@ -116,11 +118,12 @@ impl AiAuditReport {
             repo_url: r.repo_url,
             algorithm_id: r.algorithm_id,
             execution_id: r.execution_id,
-            audit_status: r.audit_status.unwrap_or_else(|| "pending".to_string()),
-            audit_score: r.audit_score,
-            audit_result: r.audit_result,
+            audit_status: r.audit_status,
+            audit_score: Some(r.audit_score),
+            audit_result: Some(r.audit_result),
+            raw_response: Some(r.raw_response),
             error_message: r.error_message,
-            created_at: r.created_at.unwrap_or_else(|| Utc::now()),
+            created_at: r.created_at,
             completed_at: r.completed_at,
         }))
     }
@@ -133,7 +136,7 @@ impl AiAuditReport {
         let records = sqlx::query!(
             r#"
             SELECT id, github_url, commit_hash, repo_url, algorithm_id, execution_id,
-                   audit_status, audit_score, audit_result, error_message,
+                   audit_status, audit_score, audit_result, raw_response, error_message,
                    created_at, completed_at
             FROM ai_audit_reports
             WHERE algorithm_id = $1
@@ -153,11 +156,12 @@ impl AiAuditReport {
                 repo_url: r.repo_url,
                 algorithm_id: r.algorithm_id,
                 execution_id: r.execution_id,
-                audit_status: r.audit_status.unwrap_or_else(|| "pending".to_string()),
-                audit_score: r.audit_score,
-                audit_result: r.audit_result,
+                audit_status: r.audit_status,
+                audit_score: Some(r.audit_score),
+                audit_result: Some(r.audit_result),
+                raw_response: Some(r.raw_response),
                 error_message: r.error_message,
-                created_at: r.created_at.unwrap_or_else(|| Utc::now()),
+                created_at: r.created_at,
                 completed_at: r.completed_at,
             })
             .collect())
@@ -171,7 +175,7 @@ impl AiAuditReport {
         let records = sqlx::query!(
             r#"
             SELECT id, github_url, commit_hash, repo_url, algorithm_id, execution_id,
-                   audit_status, audit_score, audit_result, error_message,
+                   audit_status, audit_score, audit_result, raw_response, error_message,
                    created_at, completed_at
             FROM ai_audit_reports
             WHERE execution_id = $1
@@ -191,11 +195,12 @@ impl AiAuditReport {
                 repo_url: r.repo_url,
                 algorithm_id: r.algorithm_id,
                 execution_id: r.execution_id,
-                audit_status: r.audit_status.unwrap_or_else(|| "pending".to_string()),
-                audit_score: r.audit_score,
-                audit_result: r.audit_result,
+                audit_status: r.audit_status,
+                audit_score: Some(r.audit_score),
+                audit_result: Some(r.audit_result),
+                raw_response: Some(r.raw_response),
                 error_message: r.error_message,
-                created_at: r.created_at.unwrap_or_else(|| Utc::now()),
+                created_at: r.created_at,
                 completed_at: r.completed_at,
             })
             .collect())
@@ -282,7 +287,7 @@ impl AiAuditReport {
         let records = sqlx::query!(
             r#"
             SELECT id, github_url, commit_hash, repo_url, algorithm_id, execution_id,
-                   audit_status, audit_score, audit_result, error_message,
+                   audit_status, audit_score, audit_result, raw_response, error_message,
                    created_at, completed_at
             FROM ai_audit_reports
             ORDER BY created_at DESC
@@ -303,11 +308,12 @@ impl AiAuditReport {
                 repo_url: r.repo_url,
                 algorithm_id: r.algorithm_id,
                 execution_id: r.execution_id,
-                audit_status: r.audit_status.unwrap_or_else(|| "pending".to_string()),
-                audit_score: r.audit_score,
-                audit_result: r.audit_result,
+                audit_status: r.audit_status,
+                audit_score: Some(r.audit_score),
+                audit_result: Some(r.audit_result),
+                raw_response: Some(r.raw_response),
                 error_message: r.error_message,
-                created_at: r.created_at.unwrap_or_else(|| Utc::now()),
+                created_at: r.created_at,
                 completed_at: r.completed_at,
             })
             .collect();

@@ -175,7 +175,7 @@ pub fn proxy_routes() -> axum::Router<AppState> {
 
     Router::new()
         // Catch all methods and paths
-        .route("/*path", any(proxy_handler))
+        .route("/{*path}", any(proxy_handler))
         // Also handle the root path
         .route("/", any(proxy_handler))
 }

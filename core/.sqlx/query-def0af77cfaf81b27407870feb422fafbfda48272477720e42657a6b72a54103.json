@@ -1,0 +1,109 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO api_keys (api_key, name, user_id, permissions, rate_limit_tier, expires_at)\n            VALUES ($1, $2, $3, $4, $5, $6)\n            RETURNING\n                id,\n                api_key,\n                name,\n                user_id,\n                permissions,\n                rate_limit_tier as \"rate_limit_tier: RateLimitTier\",\n                is_active,\n                expires_at,\n                last_used_at,\n                created_at,\n                updated_at\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "api_key",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "user_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 4,
+        "name": "permissions",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 5,
+        "name": "rate_limit_tier: RateLimitTier",
+        "type_info": {
+          "Custom": {
+            "name": "rate_limit_tier",
+            "kind": {
+              "Enum": [
+                "basic",
+                "premium",
+                "enterprise"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "is_active",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 7,
+        "name": "expires_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "last_used_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Int4",
+        "Jsonb",
+        {
+          "Custom": {
+            "name": "rate_limit_tier",
+            "kind": {
+              "Enum": [
+                "basic",
+                "premium",
+                "enterprise"
+              ]
+            }
+          }
+        },
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "def0af77cfaf81b27407870feb422fafbfda48272477720e42657a6b72a54103"
+}

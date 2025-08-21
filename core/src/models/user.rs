@@ -12,9 +12,10 @@ use bcrypt::{DEFAULT_COST, hash, verify};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, PgPool};
+use utoipa::ToSchema;
 
 /// User role enumeration
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, sqlx::Type)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, sqlx::Type, ToSchema)]
 #[sqlx(type_name = "user_role", rename_all = "lowercase")]
 #[serde(rename_all = "lowercase")]
 pub enum UserRole {
@@ -56,7 +57,7 @@ impl std::str::FromStr for UserRole {
 }
 
 /// User status enumeration
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, sqlx::Type)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, sqlx::Type, ToSchema)]
 #[sqlx(type_name = "user_status", rename_all = "lowercase")]
 #[serde(rename_all = "lowercase")]
 pub enum UserStatus {
@@ -111,7 +112,7 @@ pub struct GoogleUserData {
 }
 
 /// User model matching PostgreSQL schema and API requirements
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow, ToSchema)]
 pub struct User {
     pub id: i32,
     pub email: String,
@@ -240,10 +241,7 @@ impl User {
     }
 
     /// Find user by Google ID
-    pub async fn find_by_google_id(
-        pool: &PgPool,
-        google_id: &str,
-    ) -> Result<Option<Self>, AppError> {
+    pub async fn find_by_google_id(pool: &PgPool, google_id: &str) -> Result<Self, AppError> {
         let user = sqlx::query_as::<_, User>(
             r#"
             SELECT id, username, email, password_hash, role, status, wallet_address,
@@ -256,13 +254,97 @@ impl User {
         )
         .bind(google_id)
         .fetch_optional(pool)
-        .await?;
+        .await?
+        .ok_or_else(|| {
+            AppError::NotFound(format!("User with Google ID {} not found", google_id))
+        })?;
 
         Ok(user)
     }
 
-    /// Update user
-    pub async fn update(
+    /// Create a new user from Google OAuth
+    pub async fn create_from_google(
+        pool: &PgPool,
+        google_user_info: crate::infra::google_oauth::GoogleUserInfo,
+        username: String,
+    ) -> Result<Self, AppError> {
+        let user = sqlx::query_as::<_, User>(
+            r#"
+            INSERT INTO users (
+                username, email, password_hash, role, status, wallet_address,
+                google_id, avatar_url, provider, provider_data, email_verified
+            )
+            VALUES ($1, $2, NULL, $3, $4, NULL, $5, $6, $7, $8, $9)
+            RETURNING id, username, email, password_hash, role, status, wallet_address,
+                      google_id, avatar_url, provider, provider_data, created_at,
+                      updated_at, last_login, last_provider_sync, email_verified,
+                      two_factor_enabled, profile_data
+            "#,
+        )
+        .bind(&username)
+        .bind(&google_user_info.email)
+        .bind("scientist") // Default role
+        .bind("active") // Default status
+        .bind(&google_user_info.id)
+        .bind(&google_user_info.picture)
+        .bind("google")
+        .bind(serde_json::to_value(&google_user_info).unwrap_or_else(|_| serde_json::json!({})))
+        .bind(google_user_info.verified_email)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("duplicate key value") {
+                AppError::Validation(format!(
+                    "User with email {} already exists",
+                    google_user_info.email
+                ))
+            } else {
+                AppError::Database(e)
+            }
+        })?;
+
+        Ok(user)
+    }
+
+    /// Update user information
+    pub async fn update(&mut self, pool: &PgPool) -> Result<(), AppError> {
+        sqlx::query(
+            r#"
+            UPDATE users
+            SET username = $1, email = $2, role = $3, status = $4,
+                wallet_address = $5, google_id = $6, avatar_url = $7,
+                provider = $8, provider_data = $9, updated_at = $10,
+                last_login = $11, last_provider_sync = $12, email_verified = $13,
+                two_factor_enabled = $14, profile_data = $15
+            WHERE id = $16
+            "#,
+        )
+        .bind(&self.username)
+        .bind(&self.email)
+        .bind(&self.role)
+        .bind(&self.status)
+        .bind(&self.wallet_address)
+        .bind(&self.google_id)
+        .bind(&self.avatar_url)
+        .bind(&self.provider)
+        .bind(&self.provider_data)
+        .bind(chrono::Utc::now())
+        .bind(&self.last_login)
+        .bind(&self.last_provider_sync)
+        .bind(&self.email_verified)
+        .bind(&self.two_factor_enabled)
+        .bind(&self.profile_data)
+        .bind(self.id)
+        .execute(pool)
+        .await
+        .map_err(|e| AppError::Database(e))?;
+
+        self.updated_at = chrono::Utc::now();
+        Ok(())
+    }
+
+    /// Update user (static method for partial updates)
+    pub async fn update_partial(
         pool: &PgPool,
         id: i32,
         username: Option<&str>,

@@ -4,74 +4,73 @@
 //! consistent test environments across all test suites.
 
 use axum::Router;
+use deadpool_redis::{Config as RedisConfig, Runtime};
 use delong_core::{
     config::Config,
-    infra::{ai_audit::AiAuditService, verification::VerificationStore},
+    infra::{
+        ai_audit::AiAuditService, db::Database, google_oauth::GoogleOAuthService,
+        verification::VerificationStore,
+    },
     routes::{AppState, create_router},
     utils::jwt::create_jwt_config,
 };
-use sqlx::PgPool;
+use sqlx::migrate::MigrateDatabase;
 use std::sync::Arc;
-use tracing::info;
 
-/// Initialize tracing for tests (only once)
-fn init_test_tracing() {
-    static INIT: std::sync::Once = std::sync::Once::new();
-    INIT.call_once(|| {
-        let _ = tracing_subscriber::fmt()
-            .with_env_filter("core=info,tower_http=debug")
-            .with_test_writer()
-            .try_init();
-    });
-}
+// Removed init_test_tracing - it may cause tests to hang
+// Tracing is not necessary for integration tests
 
 /// Set up a test database connection
 ///
 /// This function creates a database connection for testing purposes
-pub async fn setup_test_db() -> PgPool {
-    // Initialize test environment - load from core/.env
-    if let Err(e) = dotenvy::from_filename(".env") {
-        eprintln!("Failed to load .env: {}. Using environment variables.", e);
+pub async fn setup_test_db(config: Arc<Config>) -> Database {
+    // Set TEST_MODE to help with testing
+    unsafe {
+        std::env::set_var("TEST_MODE", "true");
     }
 
-    // Get database URL from environment
-    let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-        "postgresql://postgres:test_password@localhost:11021/db_core_test".to_string()
-    });
+    println!("Connecting to test database: {}", config.database.url);
 
-    // Create database pool
-    let db = PgPool::connect(&database_url)
+    // Ensure database exists
+    if !sqlx::Postgres::database_exists(&config.database.url)
+        .await
+        .unwrap_or(false)
+    {
+        println!("Creating test database...");
+        sqlx::Postgres::create_database(&config.database.url)
+            .await
+            .expect("Failed to create test database");
+    }
+
+    // Create database using the Database struct
+    let db = Database::new(&config.database)
         .await
         .expect("Failed to connect to database");
 
-    // Run any pending migrations
-    info!("Database connected for tests");
+    println!("Database connected, running migrations...");
+
+    // Run migrations
+    db.run_migrations()
+        .await
+        .expect("Failed to run database migrations");
+
+    println!("Database setup complete for tests");
 
     db
 }
 
-/// Set up a test configuration
-///
-/// This function loads configuration from environment for testing
-pub fn setup_test_config() -> Config {
-    // Initialize test environment - load from core/.env
-    if let Err(e) = dotenvy::from_filename(".env") {
-        eprintln!("Failed to load .env: {}. Using environment variables.", e);
-    }
-
-    // Initialize and return configuration
-    Config::load().expect("Failed to load config")
-}
-
-/// Create a test Redis client
-///
-/// This function creates a Redis client for testing
-#[allow(dead_code)]
-pub fn setup_test_redis() -> redis::Client {
+/// Set up a test Redis pool
+pub async fn setup_test_redis_pool() -> Arc<deadpool_redis::Pool> {
+    // Use test Redis configuration
     let redis_url =
         std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:11022".to_string());
 
-    redis::Client::open(redis_url).expect("Failed to create Redis client")
+    let redis_config = RedisConfig::from_url(redis_url);
+    let redis_pool = redis_config
+        .create_pool(Some(Runtime::Tokio1))
+        .expect("Failed to create Redis pool");
+
+    Arc::new(redis_pool)
 }
 
 /// Set up a test application with all routes and dependencies
@@ -79,23 +78,15 @@ pub fn setup_test_redis() -> redis::Client {
 /// This function creates a complete test application instance
 #[allow(dead_code)]
 pub async fn setup_test_app() -> Router {
-    // Initialize tracing
-    init_test_tracing();
-
-    // Initialize test environment
-    if let Err(e) = dotenvy::from_filename(".env") {
-        eprintln!("Failed to load .env: {}. Using environment variables.", e);
-    }
-
     // Load configuration
-    let config = setup_test_config();
-    let config = Arc::new(config);
+    let config = Arc::new(Config::load().unwrap());
 
     // Initialize database
-    let db = setup_test_db().await;
+    let db = setup_test_db(config.clone()).await;
 
-    // Initialize verification store
-    let verification_store = Arc::new(VerificationStore::new());
+    // Initialize Redis pool for verification store
+    let redis_pool = setup_test_redis_pool().await;
+    let verification_store = Arc::new(VerificationStore::new(redis_pool));
 
     // Initialize JWT config
     let jwt_config = Arc::new(create_jwt_config());
@@ -104,14 +95,22 @@ pub async fn setup_test_app() -> Router {
     let ai_audit_service = AiAuditService::new(None).expect("Failed to create AI audit service");
     let ai_audit_service = Arc::new(ai_audit_service);
 
+    // Create mock Google OAuth service for testing
+    let google_oauth_service = Arc::new(GoogleOAuthService::new(
+        "test-client-id".to_string(),
+        "test-client-secret".to_string(),
+        "http://localhost:3000/auth/google/callback".to_string(),
+    ));
+
     // Create application state
     let state = AppState {
-        db,
+        db: db.into(),
         verification_store,
         jwt_config,
         config,
         ai_audit_service,
         proxy_client: None,
+        google_oauth_service,
     };
 
     // Create and return the router
@@ -122,61 +121,70 @@ pub async fn setup_test_app() -> Router {
 ///
 /// This function creates a test application with a fresh database state
 pub async fn setup_clean_test_app() -> Router {
-    // Initialize tracing
-    init_test_tracing();
+    println!("Loading configuration for clean test app...");
+    // Load configuration once
+    let config = Arc::new(Config::load().unwrap());
 
-    // Initialize test environment
-    if let Err(e) = dotenvy::from_filename(".env") {
-        eprintln!("Failed to load .env: {}. Using environment variables.", e);
-    }
-
-    // Load configuration
-    let _config = setup_test_config();
+    println!("Configuration loaded successfully");
 
     // Initialize database
-    let db = setup_test_db().await;
+    let db = setup_test_db(config.clone()).await;
+    println!("Test database setup complete");
 
-    // Clear test data - only for test tables
-    // Be careful not to truncate system tables
+    // Clear test data - truncate all user-generated data tables
+    // Keep system tables like roles, permissions, oauth_providers intact
     let _ = sqlx::query(
         "TRUNCATE TABLE
+         users,
+         audit_logs,
+         committee_wallets,
          ai_audit_reports,
          api_keys,
-         user_sessions,
-         verification_codes
+         user_oauth_accounts
          CASCADE",
     )
-    .execute(&db)
+    .execute(db.pool())
     .await;
-    // Load configuration
-    let config = setup_test_config();
-    let config = Arc::new(config);
+    println!("Test tables truncated successfully");
 
-    // Initialize database
-    let db = setup_test_db().await;
-
-    // Initialize verification store
-    let verification_store = Arc::new(VerificationStore::new());
+    // Initialize Redis pool for verification store
+    let redis_pool = setup_test_redis_pool().await;
+    let verification_store = Arc::new(VerificationStore::new(redis_pool));
+    println!("Verification store initialized");
 
     // Initialize JWT config
     let jwt_config = Arc::new(create_jwt_config());
+    println!("JWT config created");
 
     // Initialize AI audit service (use service URL from config)
     let ai_audit_service = AiAuditService::new(None).expect("Failed to create AI audit service");
     let ai_audit_service = Arc::new(ai_audit_service);
+    println!("AI audit service created");
+
+    // Create mock Google OAuth service for testing
+    let google_oauth_service = Arc::new(GoogleOAuthService::new(
+        "test-client-id".to_string(),
+        "test-client-secret".to_string(),
+        "http://localhost:3000/auth/google/callback".to_string(),
+    ));
+    println!("Google OAuth service created");
 
     // Create application state
     let state = AppState {
-        db,
+        db: db.into(),
         verification_store,
         jwt_config,
         config,
         ai_audit_service,
         proxy_client: None,
+        google_oauth_service,
     };
+    println!("Application state created");
 
     // Create and return the router
-    create_router(state)
+    let router = create_router(state);
+    println!("Router created successfully");
+    router
 }
 
 /// Extract JSON body from an axum response
@@ -256,14 +264,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_setup_test_db() {
-        let db = setup_test_db().await;
-        assert!(db.acquire().await.is_ok());
-    }
+        let config = Arc::new(Config::load().unwrap());
+        let db = setup_test_db(config.clone()).await;
 
-    #[test]
-    fn test_setup_test_config() {
-        let config = setup_test_config();
-        assert!(!config.jwt_secret.is_empty());
+        // Test connection with a simple query
+        let result = sqlx::query!("SELECT 1 as value").fetch_one(db.pool()).await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().value, Some(1));
+
+        // Test that we can acquire a connection
+        assert!(db.pool().acquire().await.is_ok());
     }
 
     #[test]

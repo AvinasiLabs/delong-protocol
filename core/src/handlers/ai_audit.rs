@@ -2,7 +2,7 @@ use crate::{
     AppError, infra::ai_audit::AiAuditService, models::ai_audit::AiAuditReport, routes::AppState,
 };
 use avinapi::prelude::*;
-use axum::extract::{Query, State};
+use axum::extract::State;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -23,12 +23,17 @@ pub struct AiAuditRequest {
 }
 
 /// AI audit report query parameters
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Validate)]
 pub struct AiAuditReportQuery {
+    #[validate(range(min = 1, message = "ID must be positive"))]
     pub id: Option<i32>,
+    #[validate(range(min = 1, message = "Algorithm ID must be positive"))]
     pub algorithm_id: Option<i32>,
+    #[validate(range(min = 1, message = "Execution ID must be positive"))]
     pub execution_id: Option<i32>,
+    #[validate(url(message = "Invalid GitHub URL format"))]
     pub github_url: Option<String>,
+    #[validate(length(min = 1, max = 100, message = "Commit hash must be 1-100 characters"))]
     pub commit_hash: Option<String>,
 }
 
@@ -177,7 +182,7 @@ pub async fn create_ai_audit(
 /// Get AI audit reports by query parameters
 pub async fn get_ai_audit_reports(
     State(state): State<AppState>,
-    Query(query): Query<AiAuditReportQuery>,
+    ValidatedQuery(query): ValidatedQuery<AiAuditReportQuery>,
 ) -> JsonResult<AiAuditResponse> {
     info!("Get AI audit report request: {:?}", query);
 
@@ -227,6 +232,7 @@ mod tests {
             audit_status: "completed".to_string(),
             audit_score: Some(85),
             audit_result: Some(json!({"test": "result"})),
+            raw_response: Some(json!({"raw": "response"})),
             error_message: None,
             created_at: Utc::now(),
             completed_at: Some(Utc::now()),
@@ -251,9 +257,10 @@ mod tests {
             audit_status: "failed".to_string(),
             audit_score: None,
             audit_result: None,
+            raw_response: None,
             error_message: Some("Test error".to_string()),
             created_at: Utc::now(),
-            completed_at: Some(Utc::now()),
+            completed_at: None,
         };
 
         let response = AiAuditResponse::from(report);

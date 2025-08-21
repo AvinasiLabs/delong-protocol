@@ -8,16 +8,23 @@ use axum::{
     routing::{delete, get, post, put},
 };
 use tower_http::cors::{Any, CorsLayer};
+use utoipa::OpenApi;
+use utoipa_scalar::Scalar;
 
 use sqlx::PgPool;
 use std::sync::Arc;
 
 use crate::{
     Config, handlers,
-    infra::{ai_audit::AiAuditService, proxy::ProxyClient, verification::VerificationStore},
-    middleware::{
-        combined_auth_middleware, jwt_auth_middleware, request_id_middleware, response_transformer,
+    infra::{
+        ai_audit::AiAuditService, google_oauth::GoogleOAuthService, proxy::ProxyClient,
+        verification::VerificationStore,
     },
+    middleware::{
+        combined_auth_middleware, jwt_auth_middleware, rate_limit_middleware,
+        request_id_middleware, response_transformer,
+    },
+    openapi::ApiDoc,
     utils::jwt::JwtConfig,
 };
 
@@ -34,6 +41,8 @@ pub struct AppState {
     pub config: Arc<Config>,
     /// AI audit service for external AI audit operations
     pub ai_audit_service: Arc<AiAuditService>,
+    /// Google OAuth service for authentication
+    pub google_oauth_service: Arc<GoogleOAuthService>,
     /// Proxy client for forwarding requests to Secure service
     pub proxy_client: Option<Arc<ProxyClient>>,
 }
@@ -46,6 +55,7 @@ impl AppState {
         jwt_config: Arc<JwtConfig>,
         config: Arc<Config>,
         ai_audit_service: Arc<AiAuditService>,
+        google_oauth_service: Arc<GoogleOAuthService>,
         proxy_client: Option<Arc<ProxyClient>>,
     ) -> Self {
         Self {
@@ -54,6 +64,7 @@ impl AppState {
             jwt_config,
             config,
             ai_audit_service,
+            google_oauth_service,
             proxy_client,
         }
     }
@@ -61,22 +72,6 @@ impl AppState {
 
 /// Create the main application router with all routes and middleware
 pub fn create_router(state: AppState) -> Router {
-    // Health check routes (no authentication)
-    let health_routes = Router::new()
-        .route("/", get(handlers::root_handler))
-        .route("/health", get(handlers::health::health_check));
-
-    // Public authentication routes
-    let auth_routes = Router::new()
-        .route("/register", post(handlers::auth::register_user))
-        .route("/login", post(handlers::auth::login_user))
-        .route("/send-code", post(handlers::auth::send_verification_code))
-        .route("/google", post(handlers::auth::google_auth_url))
-        .route(
-            "/google/callback",
-            get(handlers::auth::google_auth_callback),
-        );
-
     // Protected user routes
     let user_routes = Router::new()
         .route(
@@ -88,7 +83,7 @@ pub fn create_router(state: AppState) -> Router {
             jwt_auth_middleware,
         ));
 
-    // AI audit routes (protected)
+    // Protected AI audit routes
     let ai_audit_routes = Router::new()
         .route("/", post(handlers::ai_audit::create_ai_audit))
         .route("/", get(handlers::ai_audit::get_ai_audit_reports))
@@ -97,7 +92,20 @@ pub fn create_router(state: AppState) -> Router {
             jwt_auth_middleware,
         ));
 
-    // Admin routes (protected)
+    // Protected API key routes
+    let api_key_routes = Router::new()
+        .route("/", get(handlers::api_key::list_user_api_keys))
+        .route("/", post(handlers::api_key::create_api_key))
+        .route("/stats", get(handlers::api_key::get_user_api_key_stats))
+        .route("/{id}", get(handlers::api_key::get_api_key))
+        .route("/{id}", put(handlers::api_key::update_api_key))
+        .route("/{id}", delete(handlers::api_key::revoke_api_key))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            jwt_auth_middleware,
+        ));
+
+    // Protected admin routes
     let admin_routes = Router::new()
         .route("/users", get(handlers::admin::get_users))
         .route("/users", post(handlers::admin::create_user_admin))
@@ -114,76 +122,75 @@ pub fn create_router(state: AppState) -> Router {
             jwt_auth_middleware,
         ));
 
-    // API key routes (protected)
-    let api_key_routes = Router::new()
-        .route("/", get(handlers::api_key::list_user_api_keys))
-        .route("/", post(handlers::api_key::create_api_key))
-        .route("/stats", get(handlers::api_key::get_user_api_key_stats))
-        .route("/{id}", get(handlers::api_key::get_api_key))
-        .route("/{id}", put(handlers::api_key::update_api_key))
-        .route("/{id}", delete(handlers::api_key::revoke_api_key))
-        .layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            jwt_auth_middleware,
-        ));
-
-    // Public API key validation route (no auth needed for secure module)
-    let api_key_validate_routes =
-        Router::new().route("/validate", post(handlers::api_key::validate_api_key));
-
-    // Protected API routes
-    let api_routes = Router::new()
-        .nest("/user", user_routes)
-        .nest("/ai-audit", ai_audit_routes)
-        .nest("/api-keys", api_key_routes);
-
-    // Proxy routes to Secure service (protected)
-    // These routes are forwarded to the Secure service running in TEE
+    // Protected proxy routes to Secure service (if configured)
     let secure_proxy_routes = if state.proxy_client.is_some() {
         Router::new()
-            // Forward all algorithm execution requests
             .nest("/algoexes", handlers::proxy::proxy_routes())
-            // Forward all dataset-related requests
             .nest("/datasets", handlers::proxy::proxy_routes())
-            // Forward all committee-related requests
             .nest("/committee", handlers::proxy::proxy_routes())
-            // Forward all vote-related requests
             .nest("/votes", handlers::proxy::proxy_routes())
-            // Forward all contract-related requests
             .nest("/contracts", handlers::proxy::proxy_routes())
-            // Health check for Secure service
             .route("/secure/health", get(handlers::proxy::secure_health_check))
-            // Apply combined authentication middleware (JWT + API Key)
+            .layer(axum::middleware::from_fn(
+                handlers::proxy::extract_auth_method,
+            ))
             .layer(axum::middleware::from_fn_with_state(
                 state.clone(),
                 combined_auth_middleware,
             ))
-            // Apply auth method extraction middleware
-            .layer(axum::middleware::from_fn(
-                handlers::proxy::extract_auth_method,
-            ))
     } else {
-        // If proxy client is not configured, return empty router
         Router::new()
     };
 
     // Build the complete application
     Router::new()
-        // Health routes (no auth needed)
-        .merge(health_routes)
+        // Public routes (no authentication required)
+        .route("/", get(handlers::root_handler))
+        .route("/health", get(handlers::health::health))
         // Public auth routes
-        .nest("/auth", auth_routes)
-        // Public API key validation route
-        .nest("/api/api-keys", api_key_validate_routes)
-        // Protected API routes
-        .nest("/api", api_routes)
-        // Proxy routes to Secure service (if configured)
+        .route("/auth/register", post(handlers::auth::register_user))
+        .route("/auth/login", post(handlers::auth::login_user))
+        .route(
+            "/auth/send-code",
+            post(handlers::auth::send_verification_code),
+        )
+        .route("/auth/google", post(handlers::auth::google_auth_url))
+        .route(
+            "/auth/google/callback",
+            get(handlers::auth::google_auth_callback),
+        )
+        // Public API key validation
+        .route(
+            "/api/api-keys/validate",
+            post(handlers::api_key::validate_api_key),
+        )
+        // API Documentation routes
+        .route(
+            "/api-docs/openapi.json",
+            get(|| async { axum::Json(ApiDoc::openapi()) }),
+        )
+        // Protected routes
+        .nest("/api/user", user_routes)
+        .nest("/api/ai-audit", ai_audit_routes)
+        .nest("/api/api-keys", api_key_routes)
         .nest("/api", secure_proxy_routes)
-        // Admin routes
         .nest("/admin", admin_routes)
-        // Apply global middleware
+        // Serve Scalar API documentation UI
+        .route(
+            "/scalar",
+            get(|| async {
+                use axum::response::Html;
+                let spec = ApiDoc::openapi();
+                let html = Scalar::new(serde_json::to_value(spec).unwrap()).to_html();
+                Html(html)
+            }),
+        )
         .layer(axum::middleware::from_fn(response_transformer))
         .layer(axum::middleware::from_fn(request_id_middleware))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            rate_limit_middleware,
+        ))
         .layer(
             CorsLayer::new()
                 .allow_origin(Any)

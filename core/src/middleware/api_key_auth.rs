@@ -184,12 +184,8 @@ async fn validate_api_key(
     .await?;
 
     let result = if let Some(r) = row {
-        let permissions = if let Some(perms_value) = r.permissions {
-            if let Ok(perms) = serde_json::from_value::<Vec<String>>(perms_value) {
-                perms
-            } else {
-                vec![]
-            }
+        let permissions = if let Ok(perms) = serde_json::from_value::<Vec<String>>(r.permissions) {
+            perms
         } else {
             vec![]
         };
@@ -198,14 +194,14 @@ async fn validate_api_key(
             id: r.id,
             api_key: r.api_key,
             name: r.name,
-            user_id: r.user_id.unwrap_or(0),
+            user_id: r.user_id,
             permissions,
-            rate_limit_tier: r.rate_limit_tier.unwrap_or(RateLimitTier::Basic),
-            is_active: r.is_active.unwrap_or(true),
+            rate_limit_tier: r.rate_limit_tier,
+            is_active: r.is_active,
             expires_at: r.expires_at,
             last_used_at: r.last_used_at,
-            created_at: r.created_at.unwrap_or_else(|| chrono::Utc::now()),
-            updated_at: r.updated_at.unwrap_or_else(|| chrono::Utc::now()),
+            created_at: r.created_at,
+            updated_at: r.updated_at,
         })
     } else {
         None

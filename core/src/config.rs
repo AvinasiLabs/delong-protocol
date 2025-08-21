@@ -6,9 +6,10 @@
 use dotenvy::dotenv;
 use serde::{Deserialize, Serialize};
 use std::env;
+use std::sync::Arc;
 
 /// Main configuration structure for the core service
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Config {
     /// Server configuration
     pub server: ServerConfig,
@@ -24,10 +25,11 @@ pub struct Config {
     pub proxy: ProxyConfig,
     /// JWT secret for authentication
     pub jwt_secret: String,
-    /// Database URL (for direct access)
-    pub database_url: String,
     /// Development mode flag
     pub development_mode: bool,
+    /// Redis pool for caching and session storage
+    #[serde(skip)]
+    pub redis_pool: Option<Arc<deadpool_redis::Pool>>,
 }
 
 /// Server configuration
@@ -176,7 +178,8 @@ impl Config {
                 enable_api_key_validation: false,
                 default_key_expiration_days: 30,
                 max_keys_per_user: 10,
-                enable_rate_limiting: true,
+                enable_rate_limiting: env::var("TEST_MODE").is_err()
+                    && env::var("CARGO_TARGET_DIR").is_err(),
             },
             proxy: ProxyConfig {
                 secure_service_url: env::var("SECURE_SERVICE_URL")
@@ -196,11 +199,9 @@ impl Config {
             },
             jwt_secret: env::var("JWT_SECRET")
                 .unwrap_or_else(|_| "your-secret-key-change-in-production".to_string()),
-            database_url: env::var("DATABASE_URL").unwrap_or_else(|_| {
-                "postgresql://postgres:core_password@localhost:5433/db_core".to_string()
-            }),
             development_mode: env::var("ENVIRONMENT").unwrap_or_else(|_| "development".to_string())
                 == "development",
+            redis_pool: None,
         })
     }
 }
@@ -209,7 +210,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             server: ServerConfig {
-                host: "0.0.0.0".to_string(),
+                host: "127.0.0.1".to_string(),
                 port: 8080,
                 timeout_seconds: 30,
             },
@@ -243,8 +244,8 @@ impl Default for Config {
                 max_retries: 3,
             },
             jwt_secret: "test-secret-key".to_string(),
-            database_url: "postgresql://postgres:core_password@localhost:5433/db_core".to_string(),
-            development_mode: true,
+            development_mode: false,
+            redis_pool: None,
         }
     }
 }

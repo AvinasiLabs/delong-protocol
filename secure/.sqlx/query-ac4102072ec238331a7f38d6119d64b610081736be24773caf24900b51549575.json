@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT\n                COUNT(CASE WHEN approve = true THEN 1 END) as approve_count,\n                COUNT(CASE WHEN approve = false THEN 1 END) as reject_count\n            FROM vote\n            WHERE algo_cid = $1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "approve_count",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "reject_count",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "ac4102072ec238331a7f38d6119d64b610081736be24773caf24900b51549575"
+}

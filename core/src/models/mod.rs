@@ -21,7 +21,7 @@ pub use ai_audit::*;
 pub use api_key::{ApiKey as ApiKeyModel, ApiKeyStats, RateLimitTier};
 
 // Re-export from auth module
-pub use auth::{VerificationCode, VerificationType};
+pub use auth::VerificationType;
 
 pub use user::*;
 

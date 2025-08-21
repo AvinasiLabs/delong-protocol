@@ -1,29 +1,35 @@
-//! Health handlers module
-//!
-//! This module contains a simple health check HTTP request handler
-//! for monitoring basic service availability.
-
 use avinapi::prelude::*;
-use serde::Serialize;
-use tracing::info;
+use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-/// Basic health status
-#[derive(Debug, Serialize)]
-pub struct HealthStatus {
+/// Health check response
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct HealthResponse {
+    /// Service status
     pub status: String,
-    pub service: String,
+    /// Service version
+    pub version: String,
+    /// Current timestamp
     pub timestamp: String,
 }
 
-/// Basic health check endpoint
-pub async fn health_check() -> JsonResult<HealthStatus> {
-    info!("Health check requested");
-
-    let health_status = HealthStatus {
+/// Health check endpoint
+///
+/// Returns the current health status of the service
+#[utoipa::path(
+    get,
+    path = "/health",
+    tag = "System",
+    responses(
+        (status = 200, description = "Service is healthy", body = HealthResponse)
+    )
+)]
+pub async fn health() -> JsonResult<HealthResponse> {
+    let response = HealthResponse {
         status: "healthy".to_string(),
-        service: "DeLong Protocol Core Service".to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
         timestamp: chrono::Utc::now().to_rfc3339(),
     };
 
-    data!(health_status)
+    data!(response)
 }

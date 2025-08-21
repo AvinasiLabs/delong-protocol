@@ -11,7 +11,7 @@ async-trait = "0.1.81"
 avinapi = { path = "../../avinapi", features = ["axum", "sqlx"] }
 
 # HTTP framework
-axum = { version = "0.8", features = ["multipart", "ws"] }
+axum = { version = "0.8.4", features = ["multipart", "ws"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["trace", "cors"] }
 

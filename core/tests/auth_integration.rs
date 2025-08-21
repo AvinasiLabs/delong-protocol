@@ -34,10 +34,32 @@ async fn test_health_check() {
 
 #[tokio::test]
 async fn test_user_registration_flow() {
+    println!("Starting test_user_registration_flow");
     let app = setup_clean_test_app().await;
+    println!("App created successfully");
 
     let username = generate_test_username("testuser");
     let email = generate_test_email("test");
+    println!(
+        "Generated test credentials - username: {}, email: {}",
+        username, email
+    );
+
+    // First send verification code
+    println!("Sending verification code...");
+    let send_code_payload = json!({
+        "email": email,
+        "verification_type": "email",
+        "language": "en"
+    });
+    let request = json_request("POST", "/auth/send-code", send_code_payload);
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let send_body = extract_json_body(response).await;
+    println!("Verification code sent successfully: {:?}", send_body);
+
+    // Wait a bit to ensure Redis write is complete
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
     let register_payload = json!({
         "username": username,
@@ -45,18 +67,27 @@ async fn test_user_registration_flow() {
         "password": "TestPassword123!",
         "verification_code": "1234"
     });
+    println!("Created register payload: {:?}", register_payload);
 
+    println!("Creating request...");
     let request = json_request("POST", "/auth/register", register_payload);
+    println!("Request created, sending to app.oneshot()...");
+
     let response = app.oneshot(request).await.unwrap();
+    println!("Received response with status: {}", response.status());
 
     assert_eq!(response.status(), StatusCode::OK);
 
+    println!("Extracting JSON body...");
     let body = extract_json_body(response).await;
+    println!("Response body: {:?}", body);
+
     assert_eq!(body["code"], "SUCCESS");
     assert!(body["data"]["access_token"].is_string());
     assert!(body["data"]["refresh_token"].is_string());
     assert_eq!(body["data"]["user"]["username"], username);
     assert_eq!(body["data"]["user"]["email"], email);
+    println!("Test completed successfully");
 }
 
 #[tokio::test]
@@ -67,7 +98,17 @@ async fn test_user_login_flow() {
     let email = generate_test_email("login");
     let password = "TestPassword123!";
 
-    // First register a user
+    // First send verification code
+    let send_code_payload = json!({
+        "email": email,
+        "verification_type": "email",
+        "language": "en"
+    });
+    let request = json_request("POST", "/auth/send-code", send_code_payload);
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Then register a user
     let register_payload = json!({
         "username": username,
         "email": email,
@@ -104,6 +145,16 @@ async fn test_duplicate_registration() {
     let username = generate_test_username("duplicate");
     let email = generate_test_email("duplicate");
 
+    // First send verification code
+    let send_code_payload = json!({
+        "email": email,
+        "verification_type": "email",
+        "language": "en"
+    });
+    let request = json_request("POST", "/auth/send-code", send_code_payload);
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
     let register_payload = json!({
         "username": username,
         "email": email,
@@ -117,6 +168,16 @@ async fn test_duplicate_registration() {
     assert_eq!(response.status(), StatusCode::OK);
 
     // Second registration with same email should fail
+    // First need to send a new verification code since the first one was consumed
+    let send_code_payload2 = json!({
+        "email": email,
+        "verification_type": "email",
+        "language": "en"
+    });
+    let request = json_request("POST", "/auth/send-code", send_code_payload2);
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
     let duplicate_username = generate_test_username("another");
     let duplicate_payload = json!({
         "username": duplicate_username,
@@ -126,7 +187,7 @@ async fn test_duplicate_registration() {
     });
 
     let request = json_request("POST", "/auth/register", duplicate_payload);
-    let response = app.oneshot(request).await.unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
 
@@ -189,10 +250,20 @@ async fn test_protected_endpoint_without_auth() {
 async fn test_protected_endpoint_with_auth() {
     let app = setup_clean_test_app().await;
 
-    let username = generate_test_username("protected");
-    let email = generate_test_email("protected");
+    let username = generate_test_username("authtest");
+    let email = generate_test_email("auth");
 
-    // First register a user to get a token
+    // First send verification code
+    let send_code_payload = json!({
+        "email": email,
+        "verification_type": "email",
+        "language": "en"
+    });
+    let request = json_request("POST", "/auth/send-code", send_code_payload);
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Register and login
     let register_payload = json!({
         "username": username,
         "email": email,
@@ -202,6 +273,7 @@ async fn test_protected_endpoint_with_auth() {
 
     let request = json_request("POST", "/auth/register", register_payload);
     let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
 
     let body = extract_json_body(response).await;
     let token = body["data"]["access_token"].as_str().unwrap();
@@ -267,8 +339,18 @@ async fn test_refresh_token() {
 async fn test_update_wallet_address() {
     let app = setup_clean_test_app().await;
 
-    let username = generate_test_username("wallet");
+    let username = generate_test_username("wallettest");
     let email = generate_test_email("wallet");
+
+    // First send verification code
+    let send_code_payload = json!({
+        "email": email,
+        "verification_type": "email",
+        "language": "en"
+    });
+    let request = json_request("POST", "/auth/send-code", send_code_payload);
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
 
     // Register a user
     let register_payload = json!({
