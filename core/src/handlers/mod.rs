@@ -20,7 +20,7 @@ pub use admin::{
 pub use ai_audit::create_ai_audit;
 pub use api_key::{
     create_api_key, get_api_key, get_user_api_key_stats, list_user_api_keys, revoke_api_key,
-    update_api_key, validate_api_key,
+    update_api_key,
 };
 pub use auth::{
     google_auth_callback, google_auth_url, login_user, register_user, send_verification_code,

@@ -9,5 +9,6 @@ pub mod algo_executor;
 pub mod chainsync;
 
 // Re-export commonly used items
-pub use algo_executor::{AlgoExecutor, ExecutorConfig, ExecutorError};
+pub use crate::config::ExecutorConfig;
+pub use algo_executor::{AlgoExecutor, ExecutorError};
 pub use chainsync::ChainSyncWorker;

@@ -7,7 +7,7 @@ use std::{env, path::PathBuf};
 pub struct Config {
     pub server: ServerConfig,
     pub database: DatabaseConfig,
-    pub runtime: RuntimeConfig,
+    pub executor: ExecutorConfig,
     pub ipfs: IpfsConfig,
     pub chain: ChainConfig,
     pub tee: TeeConfig,
@@ -40,19 +40,31 @@ pub struct DatabaseConfig {
     pub idle_timeout: u64,
 }
 
-/// Runtime configuration
+/// Executor configuration for algorithm execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RuntimeConfig {
-    pub max_execution_time: u64,
-    pub max_memory: usize,
-    pub worker_threads: usize,
-    pub queue_size: usize,
-    pub max_concurrent_executions: usize,
+pub struct ExecutorConfig {
+    /// Maximum size for Docker build context (bytes)
+    pub build_size_limit: u64,
+    /// Execution timeout (seconds)
+    pub execution_timeout: u64,
+    /// Working directory for algorithm extraction
     pub working_directory: PathBuf,
-    pub python_path: String,
-    pub poll_interval: u64,
+    /// Maximum concurrent executions
+    pub max_concurrent: usize,
+    /// Dataset base path
     pub dataset_base_path: PathBuf,
-    pub execution_timeout_secs: u64,
+}
+
+impl Default for ExecutorConfig {
+    fn default() -> Self {
+        Self {
+            build_size_limit: 100 * 1024 * 1024, // 100MB
+            execution_timeout: 3600,             // 1 hour
+            working_directory: PathBuf::from("/tmp/delong-runtime"),
+            max_concurrent: 10,
+            dataset_base_path: PathBuf::from("/tmp/datasets"),
+        }
+    }
 }
 
 /// IPFS configuration
@@ -133,45 +145,25 @@ impl Config {
                     .parse()
                     .map_err(|_| "Invalid DATABASE_IDLE_TIMEOUT")?,
             },
-            runtime: RuntimeConfig {
-                max_execution_time: env::var("RUNTIME_MAX_EXECUTION_TIME")
+            executor: ExecutorConfig {
+                build_size_limit: env::var("EXECUTOR_BUILD_SIZE_LIMIT")
+                    .unwrap_or_else(|_| "104857600".to_string()) // 100MB
+                    .parse()
+                    .map_err(|_| "Invalid EXECUTOR_BUILD_SIZE_LIMIT")?,
+                execution_timeout: env::var("EXECUTOR_EXECUTION_TIMEOUT")
                     .unwrap_or_else(|_| "3600".to_string())
                     .parse()
-                    .map_err(|_| "Invalid RUNTIME_MAX_EXECUTION_TIME")?,
-                max_memory: env::var("RUNTIME_MAX_MEMORY")
-                    .unwrap_or_else(|_| "1024".to_string())
-                    .parse()
-                    .map_err(|_| "Invalid RUNTIME_MAX_MEMORY")?,
-                worker_threads: env::var("RUNTIME_WORKER_THREADS")
-                    .unwrap_or_else(|_| "4".to_string())
-                    .parse()
-                    .map_err(|_| "Invalid RUNTIME_WORKER_THREADS")?,
-                queue_size: env::var("RUNTIME_QUEUE_SIZE")
-                    .unwrap_or_else(|_| "100".to_string())
-                    .parse()
-                    .map_err(|_| "Invalid RUNTIME_QUEUE_SIZE")?,
-                max_concurrent_executions: env::var("RUNTIME_MAX_CONCURRENT_EXECUTIONS")
+                    .map_err(|_| "Invalid EXECUTOR_EXECUTION_TIMEOUT")?,
+                working_directory: env::var("EXECUTOR_WORKING_DIRECTORY")
+                    .unwrap_or_else(|_| "/tmp/delong-runtime".to_string())
+                    .into(),
+                max_concurrent: env::var("EXECUTOR_MAX_CONCURRENT_EXECUTIONS")
                     .unwrap_or_else(|_| "10".to_string())
                     .parse()
-                    .map_err(|_| "Invalid RUNTIME_MAX_CONCURRENT_EXECUTIONS")?,
-                working_directory: PathBuf::from(
-                    env::var("RUNTIME_WORKING_DIRECTORY")
-                        .unwrap_or_else(|_| "/tmp/delong-runtime".to_string()),
-                ),
-                python_path: env::var("RUNTIME_PYTHON_PATH")
-                    .unwrap_or_else(|_| "python3".to_string()),
-                poll_interval: env::var("RUNTIME_POLL_INTERVAL")
-                    .unwrap_or_else(|_| "5".to_string())
-                    .parse()
-                    .map_err(|_| "Invalid RUNTIME_POLL_INTERVAL")?,
-                dataset_base_path: PathBuf::from(
-                    env::var("RUNTIME_DATASET_BASE_PATH")
-                        .unwrap_or_else(|_| "/tmp/datasets".to_string()),
-                ),
-                execution_timeout_secs: env::var("RUNTIME_EXECUTION_TIMEOUT")
-                    .unwrap_or_else(|_| "300".to_string())
-                    .parse()
-                    .map_err(|_| "Invalid RUNTIME_EXECUTION_TIMEOUT")?,
+                    .map_err(|_| "Invalid EXECUTOR_MAX_CONCURRENT_EXECUTIONS")?,
+                dataset_base_path: env::var("EXECUTOR_DATASET_BASE_PATH")
+                    .unwrap_or_else(|_| "/tmp/datasets".to_string())
+                    .into(),
             },
             ipfs: IpfsConfig {
                 api_url: env::var("IPFS_API_URL")
@@ -267,17 +259,12 @@ impl Default for Config {
                 connect_timeout: 30,
                 idle_timeout: 600,
             },
-            runtime: RuntimeConfig {
-                max_execution_time: 3600,
-                max_memory: 1024,
-                worker_threads: 4,
-                queue_size: 100,
-                max_concurrent_executions: 10,
+            executor: ExecutorConfig {
+                build_size_limit: 100 * 1024 * 1024, // 100MB
+                execution_timeout: 3600,
                 working_directory: PathBuf::from("/tmp/delong-runtime"),
-                python_path: "python3".to_string(),
-                poll_interval: 5,
+                max_concurrent: 10,
                 dataset_base_path: PathBuf::from("/tmp/datasets"),
-                execution_timeout_secs: 300,
             },
             ipfs: IpfsConfig {
                 api_url: "http://localhost:5001".to_string(),

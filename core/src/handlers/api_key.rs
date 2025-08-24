@@ -47,13 +47,6 @@ pub struct UpdateApiKeyRequest {
     pub expires_at: Option<DateTime<Utc>>,
 }
 
-/// Validate API key request
-#[derive(Debug, Clone, Serialize, Deserialize, Validate, ToSchema)]
-pub struct ValidateApiKeyRequest {
-    #[validate(length(min = 32, max = 64, message = "Invalid API key format"))]
-    pub api_key: String,
-}
-
 /// API key filter query parameters (excludes pagination)
 #[derive(Debug, Clone, Serialize, Deserialize, Validate, ToSchema)]
 pub struct ApiKeyFilterQuery {
@@ -90,15 +83,6 @@ pub struct ApiKeyListResponse {
     pub last_used_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-}
-
-/// API key validation response
-#[derive(Debug, Serialize, ToSchema)]
-pub struct ValidateApiKeyResponse {
-    pub valid: bool,
-    pub user_id: Option<i32>,
-    pub permissions: Option<Vec<String>>,
-    pub rate_limit_tier: Option<String>,
 }
 
 /// API key statistics response
@@ -181,13 +165,14 @@ pub async fn create_api_key(
 ) -> JsonResult<ApiKeyResponse> {
     info!(
         "User {} creating new API key: {}",
-        auth_user.id, payload.name
+        auth_user.user_id(),
+        payload.name
     );
 
     // Create API key for the authenticated user
     let api_key = ApiKey::create(
         &state.db,
-        auth_user.id,
+        auth_user.user_id(),
         payload.name,
         payload.permissions,
         payload.expires_at,
@@ -229,14 +214,16 @@ pub async fn list_user_api_keys(
     ValidatedQuery(pagination): ValidatedQuery<PaginationQuery>,
 ) -> PaginatedResult<ApiKeyListResponse> {
     info!(
-        "User {} listing their API keys (page: {}, per_page: {})",
-        auth_user.id, pagination.page, pagination.per_page
+        "User {} listing API keys (page: {}, per_page: {})",
+        auth_user.user_id(),
+        pagination.page,
+        pagination.per_page
     );
 
     // Get current user's API keys
     let (api_keys, total) = ApiKey::get_user_keys(
         &state.db,
-        auth_user.id,
+        auth_user.user_id(),
         filters.is_active,
         filters.rate_limit_tier,
         pagination.page,
@@ -274,7 +261,7 @@ pub async fn get_api_key(
     auth_user: AuthUser,
     Path(id): Path<i32>,
 ) -> JsonResult<ApiKeyResponse> {
-    info!("User {} getting API key {}", auth_user.id, id);
+    info!("User {} getting API key: {}", auth_user.user_id(), id);
 
     let api_key = ApiKey::find_by_id(&state.db, id).await.map_err(|e| {
         error!("Failed to find API key: {}", e);
@@ -285,10 +272,8 @@ pub async fn get_api_key(
     })?;
 
     // Verify the API key belongs to the current user
-    if api_key.user_id != auth_user.id {
-        return Err(AppError::Authorization(
-            "You don't have permission to view this API key".to_string(),
-        ));
+    if api_key.user_id != auth_user.user_id() {
+        return Err(AppError::NotFound("API key not found".to_string()));
     }
 
     data!(ApiKeyResponse::from(api_key))
@@ -316,7 +301,7 @@ pub async fn update_api_key(
     Path(id): Path<i32>,
     ValidatedJson(payload): ValidatedJson<UpdateApiKeyRequest>,
 ) -> JsonResult<ApiKeyResponse> {
-    info!("User {} updating API key {}", auth_user.id, id);
+    info!("User {} updating API key {}", auth_user.user_id(), id);
 
     // First verify the API key belongs to the user
     let existing = ApiKey::find_by_id(&state.db, id).await.map_err(|e| {
@@ -327,10 +312,8 @@ pub async fn update_api_key(
         }
     })?;
 
-    if existing.user_id != auth_user.id {
-        return Err(AppError::Authorization(
-            "You don't have permission to update this API key".to_string(),
-        ));
+    if existing.user_id != auth_user.user_id() {
+        return Err(AppError::NotFound("API key not found".to_string()));
     }
 
     // Update the API key
@@ -378,7 +361,7 @@ pub async fn revoke_api_key(
     auth_user: AuthUser,
     Path(id): Path<i32>,
 ) -> JsonResult<serde_json::Value> {
-    info!("User {} revoking API key {}", auth_user.id, id);
+    info!("User {} revoking API key {}", auth_user.user_id(), id);
 
     // First verify the API key belongs to the user
     let api_key = ApiKey::find_by_id(&state.db, id).await.map_err(|e| {
@@ -389,10 +372,8 @@ pub async fn revoke_api_key(
         }
     })?;
 
-    if api_key.user_id != auth_user.id {
-        return Err(AppError::Authorization(
-            "You don't have permission to revoke this API key".to_string(),
-        ));
+    if api_key.user_id != auth_user.user_id() {
+        return Err(AppError::NotFound("API key not found".to_string()));
     }
 
     // Delete the API key
@@ -427,9 +408,9 @@ pub async fn get_user_api_key_stats(
     State(state): State<AppState>,
     auth_user: AuthUser,
 ) -> JsonResult<ApiKeyStats> {
-    info!("User {} getting API key statistics", auth_user.id);
+    info!("User {} getting API key statistics", auth_user.user_id());
 
-    let stats = ApiKey::get_user_stats(&state.db, auth_user.id)
+    let stats = ApiKey::get_user_stats(&state.db, auth_user.user_id())
         .await
         .map_err(|e| {
             error!("Failed to get API key statistics: {}", e);
@@ -443,64 +424,4 @@ pub async fn get_user_api_key_stats(
         expired_keys: stats.expired_keys,
         by_tier: stats.by_tier,
     })
-}
-
-/// Validate an API key (for secure module)
-#[utoipa::path(
-    post,
-    path = "/api/api-keys/validate",
-    tag = "API Keys",
-    request_body = ValidateApiKeyRequest,
-    responses(
-        (status = 200, description = "API key validation result", body = ValidateApiKeyResponse)
-    )
-)]
-pub async fn validate_api_key(
-    State(state): State<AppState>,
-    ValidatedJson(payload): ValidatedJson<ValidateApiKeyRequest>,
-) -> JsonResult<ValidateApiKeyResponse> {
-    info!("Validating API key");
-
-    // Try to find the API key
-    match ApiKey::find_by_key(&state.db, &payload.api_key).await {
-        Ok(api_key) => {
-            // Check if the key is valid
-            if !api_key.is_valid() {
-                info!("API key is invalid or expired");
-                return data!(ValidateApiKeyResponse {
-                    valid: false,
-                    user_id: None,
-                    permissions: None,
-                    rate_limit_tier: None,
-                });
-            }
-
-            // Update last used timestamp
-            if let Err(e) = ApiKey::update_last_used(&state.db, api_key.id).await {
-                error!("Failed to update API key last_used timestamp: {}", e);
-                // Don't fail the validation just because we couldn't update the timestamp
-            }
-
-            info!("API key is valid for user {}", api_key.user_id);
-            data!(ValidateApiKeyResponse {
-                valid: true,
-                user_id: Some(api_key.user_id),
-                permissions: Some(api_key.permissions),
-                rate_limit_tier: Some(api_key.rate_limit_tier.to_string()),
-            })
-        }
-        Err(AppError::NotFound(_)) => {
-            info!("API key not found");
-            data!(ValidateApiKeyResponse {
-                valid: false,
-                user_id: None,
-                permissions: None,
-                rate_limit_tier: None,
-            })
-        }
-        Err(e) => {
-            error!("Failed to validate API key: {}", e);
-            Err(AppError::Internal("Failed to validate API key".to_string()))
-        }
-    }
 }

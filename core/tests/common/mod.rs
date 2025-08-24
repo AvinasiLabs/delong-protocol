@@ -9,7 +9,7 @@ use delong_core::{
     config::Config,
     infra::{
         ai_audit::AiAuditService, db::Database, google_oauth::GoogleOAuthService,
-        verification::VerificationStore,
+        proxy::ProxyClient, verification::VerificationStore,
     },
     routes::{AppState, create_router},
     utils::jwt::create_jwt_config,
@@ -169,6 +169,36 @@ pub async fn setup_clean_test_app() -> Router {
     ));
     println!("Google OAuth service created");
 
+    // Create proxy client for testing
+    println!(
+        "SECURE_SERVICE_URL from config: '{}'",
+        config.proxy.secure_service_url
+    );
+    println!(
+        "Is URL empty? {}",
+        config.proxy.secure_service_url.is_empty()
+    );
+
+    let proxy_client = if !config.proxy.secure_service_url.is_empty() {
+        match ProxyClient::new(config.proxy.clone(), &config.internal_jwt_secret) {
+            Ok(client) => {
+                println!("✓ Proxy client created successfully for testing");
+                let client_arc = Arc::new(client);
+                println!("✓ Proxy client wrapped in Arc");
+                Some(client_arc)
+            }
+            Err(e) => {
+                println!("✗ Failed to create proxy client: {}, using None", e);
+                None
+            }
+        }
+    } else {
+        println!("✗ Proxy service URL not configured (empty), using None");
+        None
+    };
+
+    println!("Final proxy_client is Some? {}", proxy_client.is_some());
+
     // Create application state
     let state = AppState {
         db: db.into(),
@@ -176,12 +206,27 @@ pub async fn setup_clean_test_app() -> Router {
         jwt_config,
         config,
         ai_audit_service,
-        proxy_client: None,
+        proxy_client: proxy_client.clone(),
         google_oauth_service,
     };
-    println!("Application state created");
+    println!(
+        "Application state created with proxy_client: {}",
+        if proxy_client.is_some() {
+            "Some"
+        } else {
+            "None"
+        }
+    );
 
     // Create and return the router
+    println!(
+        "Creating router with state that has proxy_client: {}",
+        if state.proxy_client.is_some() {
+            "Some"
+        } else {
+            "None"
+        }
+    );
     let router = create_router(state);
     println!("Router created successfully");
     router

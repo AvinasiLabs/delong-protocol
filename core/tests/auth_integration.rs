@@ -237,12 +237,19 @@ async fn test_protected_endpoint_without_auth() {
     assert_eq!(response.status(), StatusCode::OK);
 
     let body = extract_json_body(response).await;
+
+    // Debug: Print the actual response body
+    eprintln!(
+        "Protected endpoint without auth response: {}",
+        serde_json::to_string_pretty(&body).unwrap()
+    );
+
     assert_eq!(body["code"], "AUTHENTICATION_ERROR");
     assert!(
         body["message"]
             .as_str()
             .unwrap()
-            .contains("Authorization header")
+            .contains("JWT token required")
     );
 }
 

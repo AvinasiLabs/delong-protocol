@@ -63,6 +63,9 @@ pub struct ApiKey {
     pub name: String,
     pub user_id: i32,
     pub permissions: Vec<String>,
+    pub allowed_paths: Option<Vec<String>>, // Path patterns this key can access
+    pub allowed_methods: Option<Vec<String>>, // HTTP methods this key can use
+    pub metadata: Option<serde_json::Value>, // Additional metadata
     pub rate_limit_tier: RateLimitTier,
     pub is_active: bool,
     pub expires_at: Option<DateTime<Utc>>,
@@ -82,6 +85,79 @@ pub struct ApiKeyStats {
 }
 
 impl ApiKey {
+    /// Check if this API key can access a specific path with a given method
+    pub fn can_access_path(&self, path: &str, method: &str) -> bool {
+        // Check if methods are restricted and if current method is allowed
+        if let Some(allowed_methods) = &self.allowed_methods {
+            if !allowed_methods.is_empty()
+                && !allowed_methods
+                    .iter()
+                    .any(|m| m.eq_ignore_ascii_case(method))
+            {
+                return false;
+            }
+        }
+
+        // Check if paths are restricted
+        if let Some(allowed_paths) = &self.allowed_paths {
+            if allowed_paths.is_empty() {
+                // No paths configured means no access (secure by default)
+                return false;
+            }
+
+            // Check if any pattern matches the requested path
+            for pattern in allowed_paths {
+                if Self::path_matches(pattern, path) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // If no path restrictions are set, default to allowing access for backward compatibility
+        // In production, we should default to false for security
+        true
+    }
+
+    /// Check if a path pattern matches a given path
+    fn path_matches(pattern: &str, path: &str) -> bool {
+        // Exact match
+        if pattern == path {
+            return true;
+        }
+
+        // Wildcard suffix: /api/datasets/* matches /api/datasets/123
+        if pattern.ends_with("/*") {
+            let prefix = &pattern[..pattern.len() - 2];
+            if path.starts_with(prefix) {
+                return true;
+            }
+        }
+
+        // Wildcard in the middle: /api/*/read matches /api/datasets/read
+        if pattern.contains("/*") {
+            let parts: Vec<&str> = pattern.split("/*").collect();
+            if parts.len() == 2 {
+                let prefix = parts[0];
+                let suffix = parts[1];
+                if path.starts_with(prefix) && path.ends_with(suffix) {
+                    // Check that the middle part doesn't contain slashes
+                    let middle = &path[prefix.len()..path.len() - suffix.len()];
+                    if !middle.contains('/') || suffix.starts_with('/') {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Check if this API key has a specific permission
+    pub fn has_permission(&self, permission: &str) -> bool {
+        self.permissions.contains(&permission.to_string())
+    }
+
     /// Create a new API key
     pub async fn create(
         pool: &PgPool,
@@ -115,16 +191,42 @@ impl ApiKey {
         let permissions_json = serde_json::to_value(&permissions)?;
         let rate_limit_tier = RateLimitTier::default();
 
+        // Default allowed paths for new API keys (Secure service endpoints)
+        let default_allowed_paths = vec![
+            "/api/datasets/*".to_string(),
+            "/api/algoexes/*".to_string(),
+            "/api/committee/*".to_string(),
+            "/api/votes/*".to_string(),
+            "/api/contracts/*".to_string(),
+            "/api/ws".to_string(),
+        ];
+
+        // Default allowed methods
+        let default_allowed_methods = vec![
+            "GET".to_string(),
+            "POST".to_string(),
+            "PUT".to_string(),
+            "DELETE".to_string(),
+        ];
+
+        let metadata = serde_json::json!({
+            "created_via": "api",
+            "version": "1.0"
+        });
+
         let record = sqlx::query!(
             r#"
-            INSERT INTO api_keys (api_key, name, user_id, permissions, rate_limit_tier, expires_at)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO api_keys (api_key, name, user_id, permissions, allowed_paths, allowed_methods, metadata, rate_limit_tier, expires_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             RETURNING
                 id,
                 api_key,
                 name,
                 user_id,
                 permissions,
+                allowed_paths,
+                allowed_methods,
+                metadata,
                 rate_limit_tier as "rate_limit_tier: RateLimitTier",
                 is_active,
                 expires_at,
@@ -136,6 +238,9 @@ impl ApiKey {
             name,
             user_id,
             permissions_json,
+            &default_allowed_paths,
+            &default_allowed_methods,
+            metadata,
             rate_limit_tier as RateLimitTier,
             expires_at
         )
@@ -151,14 +256,18 @@ impl ApiKey {
         })?;
 
         // Convert permissions from Value to Vec<String>
-        let permissions = serde_json::from_value(record.permissions).unwrap_or_else(|_| Vec::new());
+        let _permissions: Vec<String> =
+            serde_json::from_value(record.permissions.clone()).unwrap_or_else(|_| Vec::new());
 
         Ok(ApiKey {
             id: record.id,
             api_key: record.api_key,
             name: record.name,
             user_id: record.user_id,
-            permissions,
+            permissions: serde_json::from_value(record.permissions)?,
+            allowed_paths: record.allowed_paths,
+            allowed_methods: record.allowed_methods,
+            metadata: record.metadata,
             rate_limit_tier: record.rate_limit_tier,
             is_active: record.is_active,
             expires_at: record.expires_at,
@@ -178,6 +287,9 @@ impl ApiKey {
                 name,
                 user_id,
                 permissions,
+                allowed_paths,
+                allowed_methods,
+                metadata,
                 rate_limit_tier as "rate_limit_tier: RateLimitTier",
                 is_active,
                 expires_at,
@@ -191,10 +303,11 @@ impl ApiKey {
         )
         .fetch_optional(pool)
         .await?
-        .ok_or_else(|| AppError::NotFound("API key not found".to_string()))?;
+        .ok_or_else(|| AppError::Authentication("Invalid API key".to_string()))?;
 
         // Convert permissions from Value to Vec<String>
-        let permissions = serde_json::from_value(record.permissions).unwrap_or_else(|_| Vec::new());
+        let permissions =
+            serde_json::from_value(record.permissions.clone()).unwrap_or_else(|_| Vec::new());
 
         Ok(ApiKey {
             id: record.id,
@@ -202,6 +315,9 @@ impl ApiKey {
             name: record.name,
             user_id: record.user_id,
             permissions,
+            allowed_paths: record.allowed_paths,
+            allowed_methods: record.allowed_methods,
+            metadata: record.metadata,
             rate_limit_tier: record.rate_limit_tier,
             is_active: record.is_active,
             expires_at: record.expires_at,
@@ -221,6 +337,9 @@ impl ApiKey {
                 name,
                 user_id,
                 permissions,
+                allowed_paths,
+                allowed_methods,
+                metadata,
                 rate_limit_tier as "rate_limit_tier: RateLimitTier",
                 is_active,
                 expires_at,
@@ -237,7 +356,8 @@ impl ApiKey {
         .ok_or_else(|| AppError::NotFound("API key not found".to_string()))?;
 
         // Convert permissions from Value to Vec<String>
-        let permissions = serde_json::from_value(record.permissions).unwrap_or_else(|_| Vec::new());
+        let permissions =
+            serde_json::from_value(record.permissions.clone()).unwrap_or_else(|_| Vec::new());
 
         Ok(ApiKey {
             id: record.id,
@@ -245,6 +365,9 @@ impl ApiKey {
             name: record.name,
             user_id: record.user_id,
             permissions,
+            allowed_paths: record.allowed_paths,
+            allowed_methods: record.allowed_methods,
+            metadata: record.metadata,
             rate_limit_tier: record.rate_limit_tier,
             is_active: record.is_active,
             expires_at: record.expires_at,
@@ -286,6 +409,7 @@ impl ApiKey {
         .await?;
 
         // Fetch paginated records - using a single query with optional filters
+        // Fetch records
         let records = sqlx::query!(
             r#"
             SELECT
@@ -294,6 +418,9 @@ impl ApiKey {
                 name,
                 user_id,
                 permissions,
+                allowed_paths,
+                allowed_methods,
+                metadata,
                 rate_limit_tier as "rate_limit_tier: RateLimitTier",
                 is_active,
                 expires_at,
@@ -320,8 +447,8 @@ impl ApiKey {
         let keys: Vec<ApiKey> = records
             .into_iter()
             .map(|record| {
-                let permissions =
-                    serde_json::from_value(record.permissions).unwrap_or_else(|_| Vec::new());
+                let permissions = serde_json::from_value(record.permissions.clone())
+                    .unwrap_or_else(|_| Vec::new());
 
                 ApiKey {
                     id: record.id,
@@ -329,6 +456,9 @@ impl ApiKey {
                     name: record.name,
                     user_id: record.user_id,
                     permissions,
+                    allowed_paths: record.allowed_paths,
+                    allowed_methods: record.allowed_methods,
+                    metadata: record.metadata,
                     rate_limit_tier: record.rate_limit_tier,
                     is_active: record.is_active,
                     expires_at: record.expires_at,
@@ -379,6 +509,9 @@ impl ApiKey {
                 name,
                 user_id,
                 permissions,
+                allowed_paths,
+                allowed_methods,
+                metadata,
                 rate_limit_tier as "rate_limit_tier: RateLimitTier",
                 is_active,
                 expires_at,
@@ -397,7 +530,8 @@ impl ApiKey {
         .ok_or_else(|| AppError::NotFound("API key not found".to_string()))?;
 
         // Convert permissions from Value to Vec<String>
-        let permissions = serde_json::from_value(record.permissions).unwrap_or_else(|_| Vec::new());
+        let permissions =
+            serde_json::from_value(record.permissions.clone()).unwrap_or_else(|_| Vec::new());
 
         Ok(ApiKey {
             id: record.id,
@@ -405,6 +539,9 @@ impl ApiKey {
             name: record.name,
             user_id: record.user_id,
             permissions,
+            allowed_paths: record.allowed_paths,
+            allowed_methods: record.allowed_methods,
+            metadata: record.metadata,
             rate_limit_tier: record.rate_limit_tier,
             is_active: record.is_active,
             expires_at: record.expires_at,
@@ -567,6 +704,9 @@ mod tests {
             name: "Test Key".to_string(),
             user_id: 1,
             permissions: vec![],
+            allowed_paths: None,
+            allowed_methods: None,
+            metadata: None,
             rate_limit_tier: RateLimitTier::Basic,
             is_active: true,
             expires_at: Some(Utc::now() - chrono::Duration::days(1)),

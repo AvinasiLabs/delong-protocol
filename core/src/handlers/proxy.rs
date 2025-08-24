@@ -5,17 +5,27 @@
 //! handles proxy_pass directives.
 
 use axum::{
-    Extension, Json,
+    Json,
     body::{Body, Bytes},
-    extract::{OriginalUri, State},
+    extract::{
+        OriginalUri, Query, State,
+        ws::{Message as WsMessage, WebSocket, WebSocketUpgrade},
+    },
     http::{HeaderMap, Method, Request, StatusCode, header},
     middleware::Next,
     response::{IntoResponse, Response},
 };
+use futures_util::{SinkExt, StreamExt};
+use serde::Deserialize;
 use serde_json::json;
-use tracing::{error, info};
+use tracing::{debug, error, info};
+use uuid::Uuid;
 
-use crate::{AppState, infra::proxy::AuthContext, models::user::User};
+use crate::{
+    AppState,
+    infra::proxy::{ProxyClient, client::AuthContext as ProxyAuthContext},
+    middleware::auth::{AuthMethod, AuthUser},
+};
 use avinapi::prelude::*;
 
 /// Generic proxy handler that forwards all requests to Secure service
@@ -23,289 +33,436 @@ use avinapi::prelude::*;
 /// This handler acts like Nginx's proxy_pass, automatically forwarding
 /// any request that matches the configured path prefix to the Secure service.
 ///
-/// ## Usage in router:
-/// ```rust
-/// // Forward all /api/datasets/* requests
-/// .nest("/api/datasets", proxy_routes())
-/// // Forward all /api/algorithms/* requests
-/// .nest("/api/algorithms", proxy_routes())
+/// ## Example Usage
+///
+/// ```rust,ignore
+/// let app = Router::new()
+///     // Forward all /api/datasets/* requests
+///     .nest("/api/datasets", proxy_routes())
+///     // Forward all /api/algorithms/* requests
+///     .nest("/api/algorithms", proxy_routes())
 /// ```
 pub async fn proxy_handler(
     State(state): State<AppState>,
-    Extension(user): Extension<User>,
-    Extension(auth_method): Extension<String>,
+    auth_user: AuthUser,
     OriginalUri(original_uri): OriginalUri,
     method: Method,
     headers: HeaderMap,
     body: Bytes,
 ) -> AppResult<Response> {
+    // Check if this is a WebSocket upgrade request
+    if headers.get(header::UPGRADE).and_then(|v| v.to_str().ok()) == Some("websocket") {
+        // WebSocket requests should be handled by the dedicated WebSocket handler
+        return Err(AppError::Validation(
+            "WebSocket upgrades should use the /ws endpoint".to_string(),
+        ));
+    }
+
     // Extract the proxy client
     let proxy_client = state
         .proxy_client
         .as_ref()
-        .ok_or_else(|| AppError::Config("Proxy client not configured".to_string()))?;
+        .ok_or_else(|| AppError::Config("Proxy service not configured".to_string()))?;
 
-    // Build auth context from the authenticated user
-    let auth_context = build_auth_context(&user, &auth_method, &headers);
+    // OriginalUri contains the full original path including /api prefix
+    let path = original_uri.path();
 
-    // Log the proxy request
     info!(
-        "[Proxy] {} {} -> Secure (user: {}, auth: {})",
+        "Proxying {} request to path: {} for user: {} using {:?}",
         method,
-        original_uri.path(),
-        user.email,
-        auth_method
+        path,
+        auth_user.user_id(),
+        auth_user.auth_method
     );
 
-    // Forward the request
+    // Build authentication context
+    let auth_context = ProxyAuthContext {
+        user_id: auth_user.user_id().to_string(),
+        email: auth_user.email().to_string(),
+        auth_method: match auth_user.auth_method {
+            AuthMethod::Jwt => "jwt".to_string(),
+            AuthMethod::ApiKey => "api_key".to_string(),
+        },
+        tenant_id: None,
+        scopes: if auth_user.user.email_verified.unwrap_or(false) {
+            vec!["read".to_string(), "write".to_string()]
+        } else {
+            vec!["read".to_string()]
+        },
+        client_ip: headers
+            .get("x-forwarded-for")
+            .or_else(|| headers.get("x-real-ip"))
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string()),
+        request_id: headers
+            .get("x-request-id")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| Uuid::new_v4().to_string()),
+    };
+
+    // Forward the request using the proxy client
+    // Only include body for methods that typically have a body
+    let request_body = match method {
+        Method::GET | Method::HEAD | Method::DELETE | Method::OPTIONS => {
+            // These methods typically don't have a body
+            if body.is_empty() {
+                None
+            } else {
+                // If there is actually a body, include it
+                Some(body)
+            }
+        }
+        _ => {
+            // POST, PUT, PATCH, etc. - include body even if empty
+            Some(body)
+        }
+    };
+
     proxy_client
-        .forward_request(
-            method,
-            original_uri.path(),
-            headers,
-            Some(body),
-            auth_context,
-        )
+        .forward_request(method, path, headers, request_body, auth_context)
         .await
 }
 
-/// Middleware to extract authentication method
+/// Extract authentication method from request
 ///
-/// This middleware runs after authentication and stores the auth method
-/// (jwt or api_key) in the request extensions for the proxy handler to use.
-pub async fn extract_auth_method(
-    mut req: Request<Body>,
-    next: Next,
-) -> Result<Response, StatusCode> {
-    // Check which authentication method was used
-    let auth_method = if req.headers().get(header::AUTHORIZATION).is_some() {
+/// This middleware determines whether the request is authenticated via JWT or API key
+/// and stores this information in the request extensions.
+pub async fn extract_auth_method(req: Request<Body>, next: Next) -> Result<Response, StatusCode> {
+    let auth_method = if req.headers().contains_key(header::AUTHORIZATION) {
         "jwt"
-    } else if req.headers().get("x-api-key").is_some() {
+    } else if req.headers().contains_key("x-api-key") {
         "api_key"
     } else {
         "unknown"
     };
 
-    // Store in extensions
+    let mut req = req;
     req.extensions_mut().insert(auth_method.to_string());
 
     Ok(next.run(req).await)
 }
 
-/// Build authentication context from user and request information
-fn build_auth_context(user: &User, auth_method: &str, headers: &HeaderMap) -> AuthContext {
-    AuthContext {
-        user_id: user.id.to_string(),
-        email: user.email.clone(),
-        auth_method: auth_method.to_string(),
-        tenant_id: None, // Can be extended for multi-tenancy
-        scopes: get_user_scopes(user),
-        client_ip: extract_client_ip(headers),
-        request_id: extract_request_id(headers),
-    }
-}
-
-/// Get user permission scopes
-fn get_user_scopes(user: &User) -> Vec<String> {
-    let mut scopes = vec!["read".to_string()];
-
-    if user.email_verified.unwrap_or(false) {
-        scopes.push("write".to_string());
-    }
-
-    // Add more scopes based on user roles/permissions
-    // if user.is_admin {
-    //     scopes.push("admin".to_string());
-    // }
-
-    scopes
-}
-
-/// Extract client IP from headers
-fn extract_client_ip(headers: &HeaderMap) -> Option<String> {
-    // Try X-Forwarded-For first (standard proxy header)
-    if let Some(forwarded_for) = headers.get("x-forwarded-for") {
-        if let Ok(value) = forwarded_for.to_str() {
-            // Take the first IP if there are multiple
-            return Some(value.split(',').next().unwrap_or(value).trim().to_string());
-        }
-    }
-
-    // Try X-Real-IP (common alternative)
-    if let Some(real_ip) = headers.get("x-real-ip") {
-        if let Ok(value) = real_ip.to_str() {
-            return Some(value.to_string());
-        }
-    }
-
-    None
-}
-
-/// Extract request ID from headers
-fn extract_request_id(headers: &HeaderMap) -> String {
-    headers
-        .get("x-request-id")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("unknown")
-        .to_string()
-}
-
-/// Create router for proxied paths
+/// Generate Secure proxy routes
 ///
-/// This creates a catch-all router that forwards all requests to the proxy handler.
-/// Use this with `.nest()` to forward specific path prefixes.
+/// This creates a router that forwards authenticated requests to the Secure service.
+/// The router handles both regular HTTP requests and WebSocket connections.
 ///
-/// ## Example:
-/// ```rust
+/// ## Architecture
+///
+/// ```text
+/// Client Request
+///       ↓
+/// Core Auth Layer (JWT/API Key)
+///       ↓
+/// Proxy Handler
+///       ↓
+/// Internal JWT Generation
+///       ↓
+/// Secure Service
+/// ```
+///
+/// ## Request Flow
+///
+/// 1. **Authentication**: Verify client JWT or API key
+/// 2. **Context Building**: Create auth context with user info and permissions
+/// 3. **Internal JWT**: Generate short-lived token for service-to-service auth
+/// 4. **Request Forwarding**: Forward to Secure with internal JWT
+/// 5. **Response Handling**: Return Secure's response to client
+///
+/// ## Security Features
+///
+/// - **Double Authentication**: Client auth + internal JWT
+/// - **Request Signing**: SHA256 digest of request body
+/// - **Short-lived Tokens**: Internal JWTs expire in 60 seconds
+/// - **Permission Scoping**: Auth context includes user permissions
+///
+/// ## Example Usage
+///
+/// ```rust,ignore
 /// let app = Router::new()
-///     // These paths are handled locally
-///     .route("/auth/login", post(login))
-///     .route("/auth/register", post(register))
-///
-///     // These paths are forwarded to Secure
 ///     .nest("/api/datasets", proxy_routes())
 ///     .nest("/api/algorithms", proxy_routes())
 ///     .nest("/api/tasks", proxy_routes())
-///
-///     // Apply authentication middleware
-///     .layer(middleware::from_fn(auth_middleware));
 /// ```
 pub fn proxy_routes() -> axum::Router<AppState> {
     use axum::routing::{Router, any};
 
     Router::new()
-        // Catch all methods and paths
+        // Catch all methods and paths for HTTP
         .route("/{*path}", any(proxy_handler))
         // Also handle the root path
         .route("/", any(proxy_handler))
 }
 
+/// WebSocket query parameters
+#[derive(Debug, Deserialize)]
+pub struct WsQuery {
+    /// Task ID for this WebSocket connection
+    pub task_id: String,
+}
+
+/// Handle WebSocket proxy connections
+pub async fn websocket_proxy_handler(
+    ws: WebSocketUpgrade,
+    Query(params): Query<WsQuery>,
+    State(state): State<AppState>,
+    auth_user: AuthUser,
+) -> impl IntoResponse {
+    info!(
+        "WebSocket proxy request for task_id: {} from user: {} via {:?}",
+        params.task_id,
+        auth_user.user_id(),
+        auth_user.auth_method
+    );
+
+    // Check if proxy client is available
+    let proxy_client = match &state.proxy_client {
+        Some(client) => client.clone(),
+        None => {
+            error!("WebSocket proxy requested but proxy client not configured");
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Proxy service not available",
+            )
+                .into_response();
+        }
+    };
+
+    // Build proxy auth context from our auth context
+    let proxy_auth_context = ProxyAuthContext {
+        user_id: auth_user.user_id().to_string(),
+        email: auth_user.email().to_string(),
+        auth_method: match auth_user.auth_method {
+            AuthMethod::Jwt => "jwt".to_string(),
+            AuthMethod::ApiKey => "api_key".to_string(),
+        },
+        tenant_id: None,
+        scopes: vec!["read".to_string(), "write".to_string()],
+        client_ip: None,
+        request_id: format!("ws-{}", Uuid::new_v4()),
+    };
+
+    // Accept the WebSocket upgrade
+    ws.on_upgrade(move |socket| {
+        handle_websocket_proxy(socket, params.task_id, proxy_client, proxy_auth_context)
+    })
+}
+
+/// Handle the WebSocket proxy connection
+async fn handle_websocket_proxy(
+    client_socket: WebSocket,
+    task_id: String,
+    proxy_client: std::sync::Arc<ProxyClient>,
+    _auth_context: ProxyAuthContext,
+) {
+    info!("Starting WebSocket proxy for task_id: {}", task_id);
+
+    // Connect to the Secure service WebSocket
+    let secure_base_url = &proxy_client.config.secure_service_url;
+    let secure_ws_url = format!(
+        "{}/ws?task_id={}",
+        secure_base_url
+            .replace("http://", "ws://")
+            .replace("https://", "wss://"),
+        task_id
+    );
+
+    // Create WebSocket client to Secure service
+    let secure_ws = match tokio_tungstenite::connect_async(&secure_ws_url).await {
+        Ok((ws_stream, _)) => ws_stream,
+        Err(e) => {
+            error!("Failed to connect to Secure WebSocket: {}", e);
+            // Send close frame to client
+            let mut client_socket = client_socket;
+            let _ = client_socket
+                .send(WsMessage::Close(Some(axum::extract::ws::CloseFrame {
+                    code: 1011,
+                    reason: "Failed to connect to backend service".into(),
+                })))
+                .await;
+            return;
+        }
+    };
+
+    // Split both WebSocket connections
+    let (mut client_sender, mut client_receiver) = client_socket.split();
+    let (mut secure_sender, mut secure_receiver) = secure_ws.split();
+
+    // Forward messages from client to secure service
+    let task_id_for_client = task_id.clone();
+    let client_to_secure = tokio::spawn(async move {
+        while let Some(msg) = client_receiver.next().await {
+            match msg {
+                Ok(WsMessage::Text(text)) => {
+                    let text_str = text.to_string();
+                    debug!(
+                        "Forwarding text message from client: {} bytes",
+                        text_str.len()
+                    );
+                    if let Err(e) = secure_sender
+                        .send(tokio_tungstenite::tungstenite::Message::Text(
+                            text_str.into(),
+                        ))
+                        .await
+                    {
+                        error!("Failed to forward text to secure: {}", e);
+                        break;
+                    }
+                }
+                Ok(WsMessage::Binary(data)) => {
+                    debug!(
+                        "Forwarding binary message from client: {} bytes",
+                        data.len()
+                    );
+                    if let Err(e) = secure_sender
+                        .send(tokio_tungstenite::tungstenite::Message::Binary(
+                            data.to_vec().into(),
+                        ))
+                        .await
+                    {
+                        error!("Failed to forward binary to secure: {}", e);
+                        break;
+                    }
+                }
+                Ok(WsMessage::Ping(data)) => {
+                    if let Err(e) = secure_sender
+                        .send(tokio_tungstenite::tungstenite::Message::Ping(
+                            data.to_vec().into(),
+                        ))
+                        .await
+                    {
+                        error!("Failed to forward ping: {}", e);
+                        break;
+                    }
+                }
+                Ok(WsMessage::Pong(data)) => {
+                    if let Err(e) = secure_sender
+                        .send(tokio_tungstenite::tungstenite::Message::Pong(
+                            data.to_vec().into(),
+                        ))
+                        .await
+                    {
+                        error!("Failed to forward pong: {}", e);
+                        break;
+                    }
+                }
+                Ok(WsMessage::Close(_)) => {
+                    info!(
+                        "Client closing WebSocket for task_id: {}",
+                        task_id_for_client
+                    );
+                    let _ = secure_sender
+                        .send(tokio_tungstenite::tungstenite::Message::Close(None))
+                        .await;
+                    break;
+                }
+                Err(e) => {
+                    error!("Client WebSocket error: {}", e);
+                    break;
+                }
+            }
+        }
+    });
+
+    // Forward messages from secure service to client
+    let task_id_clone = task_id.clone();
+    let secure_to_client = tokio::spawn(async move {
+        while let Some(msg) = secure_receiver.next().await {
+            match msg {
+                Ok(tokio_tungstenite::tungstenite::Message::Text(text)) => {
+                    debug!("Forwarding text message from secure: {} bytes", text.len());
+                    if let Err(e) = client_sender
+                        .send(WsMessage::Text(text.to_string().into()))
+                        .await
+                    {
+                        error!("Failed to forward text to client: {}", e);
+                        break;
+                    }
+                }
+                Ok(tokio_tungstenite::tungstenite::Message::Binary(data)) => {
+                    debug!(
+                        "Forwarding binary message from secure: {} bytes",
+                        data.len()
+                    );
+                    if let Err(e) = client_sender
+                        .send(WsMessage::Binary(axum::body::Bytes::from(data)))
+                        .await
+                    {
+                        error!("Failed to forward binary to client: {}", e);
+                        break;
+                    }
+                }
+                Ok(tokio_tungstenite::tungstenite::Message::Ping(data)) => {
+                    if let Err(e) = client_sender
+                        .send(WsMessage::Ping(axum::body::Bytes::from(data)))
+                        .await
+                    {
+                        error!("Failed to forward ping: {}", e);
+                        break;
+                    }
+                }
+                Ok(tokio_tungstenite::tungstenite::Message::Pong(data)) => {
+                    if let Err(e) = client_sender
+                        .send(WsMessage::Pong(axum::body::Bytes::from(data)))
+                        .await
+                    {
+                        error!("Failed to forward pong: {}", e);
+                        break;
+                    }
+                }
+                Ok(tokio_tungstenite::tungstenite::Message::Close(_)) => {
+                    info!(
+                        "Secure service closing WebSocket for task_id: {}",
+                        task_id_clone
+                    );
+                    let _ = client_sender.send(WsMessage::Close(None)).await;
+                    break;
+                }
+                Ok(tokio_tungstenite::tungstenite::Message::Frame(_)) => {
+                    // Frame messages are handled internally by tungstenite
+                }
+                Err(e) => {
+                    error!("Secure WebSocket error: {}", e);
+                    break;
+                }
+            }
+        }
+    });
+
+    // Wait for either forwarding task to complete
+    tokio::select! {
+        _ = client_to_secure => {
+            debug!("Client to secure forwarding completed for task_id: {}", task_id);
+        }
+        _ = secure_to_client => {
+            debug!("Secure to client forwarding completed for task_id: {}", task_id);
+        }
+    }
+
+    info!("WebSocket proxy closed for task_id: {}", task_id);
+}
+
 /// Health check endpoint for Secure service
-///
-/// This endpoint checks if the Secure service is reachable.
-/// Check health status of Secure TEE service
-#[utoipa::path(
-    get,
-    path = "/api/secure/health",
-    tag = "Proxy",
-    responses(
-        (status = 200, description = "Secure service health status")
-    ),
-    security(
-        ("bearer_auth" = []),
-        ("api_key" = [])
-    )
-)]
-pub async fn secure_health_check(State(state): State<AppState>) -> AppResult<impl IntoResponse> {
+pub async fn secure_health_check(
+    State(state): State<AppState>,
+) -> AppResult<Json<serde_json::Value>> {
     let proxy_client = state
         .proxy_client
         .as_ref()
-        .ok_or_else(|| AppError::Config("Proxy client not configured".to_string()))?;
+        .ok_or_else(|| AppError::Config("Proxy service not configured".to_string()))?;
 
     match proxy_client.health_check().await {
-        Ok(true) => Ok((
-            StatusCode::OK,
-            Json(json!({
-                "status": "healthy",
-                "service": "secure",
-                "message": "Secure service is reachable"
-            })),
-        )),
-        Ok(false) => Ok((
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(json!({
-                "status": "unhealthy",
-                "service": "secure",
-                "message": "Secure service is not responding"
-            })),
-        )),
-        Err(e) => {
-            error!("Health check failed: {}", e);
-            Ok((
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(json!({
-                    "status": "error",
-                    "service": "secure",
-                    "message": format!("Health check failed: {}", e)
-                })),
-            ))
-        }
-    }
-}
-
-/// Proxy configuration middleware
-///
-/// This middleware can be used to add additional headers or modify requests
-/// before they are forwarded to the Secure service.
-pub async fn proxy_config_middleware(
-    mut req: Request<Body>,
-    next: Next,
-) -> Result<Response, StatusCode> {
-    // Add custom headers for proxied requests
-    req.headers_mut()
-        .insert("x-forwarded-by", "delong-core".parse().unwrap());
-
-    // Add forwarded proto header
-    let scheme = req.uri().scheme_str().unwrap_or("http").to_string();
-    req.headers_mut()
-        .insert("x-forwarded-proto", scheme.parse().unwrap());
-
-    Ok(next.run(req).await)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_extract_client_ip() {
-        let mut headers = HeaderMap::new();
-
-        // Test X-Forwarded-For with multiple IPs
-        headers.insert("x-forwarded-for", "192.168.1.1, 10.0.0.1".parse().unwrap());
-        assert_eq!(extract_client_ip(&headers), Some("192.168.1.1".to_string()));
-
-        // Test X-Real-IP
-        headers.clear();
-        headers.insert("x-real-ip", "192.168.1.2".parse().unwrap());
-        assert_eq!(extract_client_ip(&headers), Some("192.168.1.2".to_string()));
-
-        // Test no IP headers
-        headers.clear();
-        assert_eq!(extract_client_ip(&headers), None);
-    }
-
-    #[test]
-    fn test_get_user_scopes() {
-        let mut user = User {
-            id: 1,
-            email: "test@example.com".to_string(),
-            username: "test".to_string(),
-            password_hash: Some("hash".to_string()),
-            role: "scientist".to_string(),
-            status: "active".to_string(),
-            wallet_address: None,
-            google_id: None,
-            avatar_url: None,
-            provider: "local".to_string(),
-            provider_data: serde_json::json!({}),
-            email_verified: Some(false),
-            two_factor_enabled: Some(false),
-            last_login: None,
-            last_provider_sync: None,
-            profile_data: serde_json::json!({}),
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        };
-
-        // Unverified user only gets read scope
-        assert_eq!(get_user_scopes(&user), vec!["read".to_string()]);
-
-        // Verified user gets read and write scopes
-        user.email_verified = Some(true);
-        assert_eq!(
-            get_user_scopes(&user),
-            vec!["read".to_string(), "write".to_string()]
-        );
+        Ok(true) => Ok(Json(json!({
+            "status": "healthy",
+            "service": "secure",
+            "available": true
+        }))),
+        Ok(false) => Ok(Json(json!({
+            "status": "unhealthy",
+            "service": "secure",
+            "available": false
+        }))),
+        Err(e) => Err(e),
     }
 }

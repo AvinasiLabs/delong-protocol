@@ -18,15 +18,14 @@
 //!
 //! ## Usage
 //!
-//! ```rust
-//! use delong_core::{AppState, create_app};
-//! use std::sync::Arc;
+//! ```rust,no_run
+//! use delong_core::{Config, create_app_state, routes::create_router};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     let config = core::Config::load()?;
-//!     let state = AppState::new(config).await?;
-//!     let app = create_app(state);
+//!     let config = Config::load()?;
+//!     let state = create_app_state(config).await?;
+//!     let app = create_router(state);
 //!
 //!     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
 //!     axum::serve(listener, app).await?;
@@ -153,18 +152,20 @@ pub async fn create_app_state(mut config: Config) -> AppResult<AppState> {
     // Initialize proxy client for forwarding requests to Secure service
     let proxy_client = if std::env::var("SECURE_SERVICE_URL").is_ok() {
         info!("Initializing proxy client for Secure service...");
-        let proxy_client =
-            infra::proxy::create_proxy_client(config_arc.proxy.clone(), &config_arc.jwt_secret)
-                .await
-                .map_err(|e| {
-                    warn!(
-                        "Failed to initialize proxy client: {}. Proxy features will be disabled.",
-                        e
-                    );
-                    e
-                })
-                .ok()
-                .map(Arc::new);
+        let proxy_client = infra::proxy::create_proxy_client(
+            config_arc.proxy.clone(),
+            &config_arc.internal_jwt_secret,
+        )
+        .await
+        .map_err(|e| {
+            warn!(
+                "Failed to initialize proxy client: {}. Proxy features will be disabled.",
+                e
+            );
+            e
+        })
+        .ok()
+        .map(Arc::new);
 
         if proxy_client.is_some() {
             info!("Proxy client initialized successfully");
@@ -207,15 +208,14 @@ pub async fn create_app_state(mut config: Config) -> AppResult<AppState> {
 ///
 /// # Examples
 ///
-/// ```rust
-/// use delong_core::{AppState, create_app};
-/// use std::sync::Arc;
+/// ```rust,no_run
+/// use delong_core::{Config, create_app_state, routes::create_router};
 ///
 /// #[tokio::main]
 /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     let config = core::Config::load()?;
-///     let state = AppState::new(config).await?;
-///     let app = create_app(state);
+///     let config = Config::load()?;
+///     let state = create_app_state(config).await?;
+///     let app = create_router(state);
 ///
 ///     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
 ///     axum::serve(listener, app).await?;

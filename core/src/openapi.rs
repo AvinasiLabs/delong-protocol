@@ -57,7 +57,6 @@ use utoipa_scalar::Scalar;
         crate::handlers::api_key::update_api_key,
         crate::handlers::api_key::revoke_api_key,
         crate::handlers::api_key::get_user_api_key_stats,
-        crate::handlers::api_key::validate_api_key,
 
         // AI Audit endpoints
         crate::handlers::ai_audit::create_ai_audit,
@@ -73,7 +72,7 @@ use utoipa_scalar::Scalar;
         crate::handlers::admin::check_permission,
 
         // Proxy endpoints
-        crate::handlers::proxy::secure_health_check,
+        // Note: secure_health_check is not included as it doesn't have utoipa annotations
     ),
     components(
         schemas(
@@ -94,8 +93,6 @@ use utoipa_scalar::Scalar;
             // API Key schemas
             crate::handlers::api_key::CreateApiKeyRequest,
             crate::handlers::api_key::UpdateApiKeyRequest,
-            crate::handlers::api_key::ValidateApiKeyRequest,
-            crate::handlers::api_key::ValidateApiKeyResponse,
             crate::handlers::api_key::ApiKeyResponse,
             crate::handlers::api_key::ApiKeyListResponse,
             crate::handlers::api_key::ApiKeyStats,

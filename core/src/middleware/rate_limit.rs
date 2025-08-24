@@ -286,10 +286,13 @@ pub async fn rate_limit_middleware(
 
     // Determine rate limit based on user type
     let (identifier, limit) = if let Some(user) = auth_user {
-        if user.roles.contains(&"admin".to_string()) {
-            (format!("user:{}", user.id), config.admin_limit)
+        if user.is_admin() {
+            (format!("user:{}", user.user_id()), config.admin_limit)
         } else {
-            (format!("user:{}", user.id), config.authenticated_limit)
+            (
+                format!("user:{}", user.user_id()),
+                config.authenticated_limit,
+            )
         }
     } else {
         // For anonymous users, use IP address

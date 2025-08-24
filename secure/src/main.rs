@@ -16,11 +16,15 @@ use secure::infra::contracts::ContractCaller;
 use secure::infra::db::Database;
 use secure::infra::Notifier;
 use secure::infra::{TeeClientBuilder, TeeEthereum};
-use secure::workers::algo_executor::{AlgoExecutor, ExecutorConfig};
+use secure::workers::algo_executor::AlgoExecutor;
 use secure::workers::ChainSyncWorker;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Load configuration from environment variables (supports .env file)
+    let config = secure::Config::load()?;
+    info!("Configuration loaded successfully");
+
     // Initialize tracing
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -30,10 +34,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     info!("Starting DeLong Protocol Secure Service");
-
-    // Load configuration from environment variables (supports .env file)
-    let config = secure::Config::load()?;
-    info!("Configuration loaded successfully");
 
     // Initialize database
     let db = Database::new(&config.database).await?;
@@ -72,14 +72,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let contract_caller = Arc::new(contract_caller);
 
-    // Initialize algorithm executor
-    let executor_config = ExecutorConfig {
-        build_size_limit: 100 * 1024 * 1024, // 100MB
-        execution_timeout: 3600,             // 1 hour
-        working_directory: std::path::PathBuf::from("/tmp/delong-algo"),
-        max_concurrent: 10,
-        dataset_base_path: std::path::PathBuf::from(&config.runtime.dataset_base_path),
-    };
+    // Initialize algorithm executor - use config from environment
+    let executor_config = config.executor.clone();
 
     let algo_executor = secure::workers::algo_executor::create_executor_service(
         Arc::new(db.clone()),

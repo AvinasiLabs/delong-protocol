@@ -232,6 +232,26 @@ impl ContractCaller {
         Ok(provider)
     }
 
+    /// Create a WebSocket provider instance with the TEE wallet (for event subscriptions)
+    async fn create_tee_ws_provider(&self) -> Result<impl Provider> {
+        // Use WebSocket URL if available, otherwise fall back to HTTP URL
+        let provider_url = self.config.ws_url.as_ref().unwrap_or(&self.config.rpc_url);
+
+        let tee_wallet = self.tee_wallet.as_ref().ok_or_else(|| {
+            ContractError::InvalidConfig("TEE wallet not initialized".to_string())
+        })?;
+
+        let provider = ProviderBuilder::new()
+            .wallet(tee_wallet.clone())
+            .connect(provider_url)
+            .await
+            .map_err(|e| {
+                ContractError::ProviderError(format!("Failed to connect to WebSocket: {}", e))
+            })?;
+
+        Ok(provider)
+    }
+
     /// Ensure the TEE wallet has sufficient balance (funded by official wallet if needed)
     pub async fn ensure_sufficient_balance(&self, required_eth: f64) -> Result<()> {
         // First check if TEE wallet is initialized
@@ -246,7 +266,7 @@ impl ContractCaller {
         let balance = provider
             .get_balance(tee_address)
             .await
-            .map_err(|e| ContractError::ProviderError(e.to_string()))?;
+            .map_err(|e| ContractError::ProviderError(format!("Failed to get balance: {}", e)))?;
         let balance_eth = balance.to::<u128>() as f64 / 1e18;
 
         if balance_eth < required_eth {
@@ -258,10 +278,12 @@ impl ContractCaller {
 
             // Check official wallet balance first
             let official_address = self.official_wallet.default_signer().address();
-            let official_balance = provider
-                .get_balance(official_address)
-                .await
-                .map_err(|e| ContractError::ProviderError(e.to_string()))?;
+            let official_balance = provider.get_balance(official_address).await.map_err(|e| {
+                ContractError::ProviderError(format!(
+                    "Failed to get official wallet balance: {}",
+                    e
+                ))
+            })?;
             let official_balance_eth = official_balance.to::<u128>() as f64 / 1e18;
 
             let transfer_amount = required_eth - balance_eth + 0.01; // Add a small buffer
@@ -686,8 +708,8 @@ impl ContractCaller {
             ])
             .from_block(BlockNumberOrTag::Latest);
 
-        // Subscribe to logs
-        let provider = self.create_tee_provider().await?;
+        // Subscribe to logs using WebSocket provider
+        let provider = self.create_tee_ws_provider().await?;
         let sub = provider
             .subscribe_logs(&filter)
             .await

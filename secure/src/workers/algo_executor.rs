@@ -5,6 +5,7 @@
 //! and recording results on the blockchain.
 
 use crate::{
+    config::ExecutorConfig,
     infra::{contracts::ContractCaller, db::Database},
     models::{
         algo::Algo,
@@ -70,33 +71,6 @@ pub enum ExecutorError {
 }
 
 type Result<T> = std::result::Result<T, ExecutorError>;
-
-/// Configuration for the algorithm executor
-#[derive(Debug, Clone)]
-pub struct ExecutorConfig {
-    /// Maximum size for Docker build context (bytes)
-    pub build_size_limit: u64,
-    /// Execution timeout (seconds)
-    pub execution_timeout: u64,
-    /// Working directory for algorithm extraction
-    pub working_directory: PathBuf,
-    /// Maximum concurrent executions
-    pub max_concurrent: usize,
-    /// Dataset base path
-    pub dataset_base_path: PathBuf,
-}
-
-impl Default for ExecutorConfig {
-    fn default() -> Self {
-        Self {
-            build_size_limit: 100 << 20, // 100MB
-            execution_timeout: 3600,     // 1 hour
-            working_directory: PathBuf::from("/tmp/delong-algo"),
-            max_concurrent: 5,
-            dataset_base_path: PathBuf::from("/data/datasets"),
-        }
-    }
-}
 
 /// Algorithm execution event
 #[derive(Debug, Clone)]

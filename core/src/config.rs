@@ -25,6 +25,8 @@ pub struct Config {
     pub proxy: ProxyConfig,
     /// JWT secret for authentication
     pub jwt_secret: String,
+    /// Internal JWT secret for service-to-service communication
+    pub internal_jwt_secret: String,
     /// Development mode flag
     pub development_mode: bool,
     /// Redis pool for caching and session storage
@@ -199,6 +201,8 @@ impl Config {
             },
             jwt_secret: env::var("JWT_SECRET")
                 .unwrap_or_else(|_| "your-secret-key-change-in-production".to_string()),
+            internal_jwt_secret: env::var("INTERNAL_JWT_SECRET")
+                .unwrap_or_else(|_| "internal-secret-key-change-in-production".to_string()),
             development_mode: env::var("ENVIRONMENT").unwrap_or_else(|_| "development".to_string())
                 == "development",
             redis_pool: None,
@@ -244,6 +248,7 @@ impl Default for Config {
                 max_retries: 3,
             },
             jwt_secret: "test-secret-key".to_string(),
+            internal_jwt_secret: "internal-test-secret-key".to_string(),
             development_mode: false,
             redis_pool: None,
         }

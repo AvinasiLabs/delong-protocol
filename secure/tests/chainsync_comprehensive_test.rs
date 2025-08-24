@@ -96,7 +96,7 @@ impl TestEnvironment {
             ipfs_api_backend_hyper::IpfsClient::from_str(&config.ipfs.api_url)
                 .expect("Failed to create IPFS client"),
         );
-        let executor_config = secure::workers::algo_executor::ExecutorConfig {
+        let executor_config = secure::config::ExecutorConfig {
             build_size_limit: 1024 * 1024 * 100,
             working_directory: std::path::PathBuf::from("/tmp/algo_executor_test"),
             max_concurrent: 5,

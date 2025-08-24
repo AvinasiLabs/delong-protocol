@@ -640,9 +640,7 @@ pub async fn update_wallet_address(
         ));
     }
 
-    let user_id = auth_user
-        .user_id()
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let user_id = auth_user.user_id();
 
     // Update wallet address
     if let Err(e) =

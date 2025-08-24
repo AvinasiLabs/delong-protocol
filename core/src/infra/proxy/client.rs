@@ -16,7 +16,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::config::ProxyConfig;
 use avinapi::prelude::*;
@@ -75,7 +75,7 @@ struct RequestSignature {
 /// Proxy client for forwarding requests to Secure service
 pub struct ProxyClient {
     client: Client,
-    config: ProxyConfig,
+    pub config: ProxyConfig,
     jwt_key: EncodingKey,
 }
 
@@ -104,6 +104,9 @@ impl ProxyClient {
         body: Option<Bytes>,
         auth_context: AuthContext,
     ) -> AppResult<Response<Body>> {
+        // Debug: Log the path we're about to use
+        info!("ProxyClient: forward_request called with path: '{}'", path);
+
         // Generate internal JWT
         let internal_jwt = self.generate_internal_jwt(&method, path, &body, &auth_context)?;
 
@@ -186,6 +189,11 @@ impl ProxyClient {
             body_digest,
             timestamp: now,
         };
+
+        info!(
+            "ProxyClient: Generating internal JWT with signature - method: {}, path: '{}'",
+            method, path
+        );
 
         let claims = InternalJwtClaims {
             sub: auth_context.user_id.clone(),

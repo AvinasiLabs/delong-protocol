@@ -6,7 +6,6 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use chrono::Utc;
 use common::{
     authenticated_request, extract_json_body, generate_test_email, generate_test_username,
     json_request, setup_clean_test_app,
@@ -220,6 +219,16 @@ async fn test_api_key_list_with_filters() {
     assert_eq!(response.status(), StatusCode::OK);
 
     let body = extract_json_body(response).await;
+    println!("Response body for list_with_filters: {:?}", body);
+
+    // Check if the response has the expected structure
+    assert_eq!(body["code"], "SUCCESS", "Response code should be SUCCESS");
+    assert!(body["data"].is_object(), "Response should have data object");
+    assert!(
+        body["data"]["items"].is_array(),
+        "Data should have items array"
+    );
+
     let items = body["data"]["items"].as_array().unwrap();
     assert_eq!(items.len(), 1);
 }
@@ -477,167 +486,25 @@ async fn test_api_key_get_stats() {
     assert_eq!(response.status(), StatusCode::OK);
 
     let body = extract_json_body(response).await;
+
+    // Debug: Print the full stats response
+    eprintln!(
+        "Stats response: {}",
+        serde_json::to_string_pretty(&body).unwrap()
+    );
+
     assert_eq!(body["code"], "SUCCESS");
 
     let stats = &body["data"];
+
+    // Debug: Print individual stat values
+    eprintln!("total_keys: {:?}", stats["total_keys"]);
+    eprintln!("active_keys: {:?}", stats["active_keys"]);
+    eprintln!("inactive_keys: {:?}", stats["inactive_keys"]);
+
     assert_eq!(stats["total_keys"], 3);
     assert_eq!(stats["active_keys"], 2);
     assert_eq!(stats["inactive_keys"], 1);
-}
-
-#[tokio::test]
-async fn test_api_key_validate_success() {
-    let app = setup_clean_test_app().await;
-    let (token, _) = setup_test_user(&app).await;
-
-    // Create an API key
-    let create_payload = json!({
-        "name": "Key to Validate",
-        "permissions": ["dataset:read", "dataset:write"]
-    });
-
-    let request = authenticated_request("POST", "/api/api-keys", create_payload, &token);
-    let response = app.clone().oneshot(request).await.unwrap();
-    let created = extract_json_body(response).await;
-    let api_key = created["data"]["api_key"].as_str().unwrap().to_string();
-
-    // Validate the API key (no auth required for validation)
-    let validate_payload = json!({
-        "api_key": api_key
-    });
-
-    let request = json_request("POST", "/api/api-keys/validate", validate_payload);
-    let response = app.oneshot(request).await.unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-
-    let body = extract_json_body(response).await;
-
-    // Debug: Print the full response to understand the structure
-    eprintln!(
-        "Validation response for valid key: {}",
-        serde_json::to_string_pretty(&body).unwrap()
-    );
-
-    assert_eq!(body["code"], "SUCCESS");
-
-    let validation = &body["data"];
-    assert_eq!(validation["valid"], true);
-    assert!(validation["user_id"].is_number());
-    assert_eq!(
-        validation["permissions"],
-        json!(["dataset:read", "dataset:write"])
-    );
-}
-
-#[tokio::test]
-async fn test_api_key_validate_invalid() {
-    let app = setup_clean_test_app().await;
-
-    // Validate a non-existent API key
-    let validate_payload = json!({
-        "api_key": "dl_invalid_key_that_does_not_exist_1234"
-    });
-
-    let request = json_request("POST", "/api/api-keys/validate", validate_payload);
-    let response = app.oneshot(request).await.unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-
-    let body = extract_json_body(response).await;
-    assert_eq!(body["code"], "SUCCESS");
-
-    let validation = &body["data"];
-    assert_eq!(validation["valid"], false);
-    assert_eq!(validation["user_id"], serde_json::Value::Null);
-}
-
-#[tokio::test]
-async fn test_api_key_validate_expired() {
-    let app = setup_clean_test_app().await;
-    let (token, _) = setup_test_user(&app).await;
-
-    // Create an API key with past expiration
-    let past_date = (Utc::now() - chrono::Duration::days(1)).to_rfc3339();
-    let create_payload = json!({
-        "name": "Expired Key",
-        "permissions": [],
-        "expires_at": past_date
-    });
-
-    let request = authenticated_request("POST", "/api/api-keys", create_payload, &token);
-    let response = app.clone().oneshot(request).await.unwrap();
-    let created = extract_json_body(response).await;
-    let api_key = created["data"]["api_key"].as_str().unwrap().to_string();
-
-    // Validate the expired API key
-    let validate_payload = json!({
-        "api_key": api_key
-    });
-
-    let request = json_request("POST", "/api/api-keys/validate", validate_payload);
-    let response = app.oneshot(request).await.unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-
-    let body = extract_json_body(response).await;
-
-    // Debug: Print the full response to understand the structure
-    eprintln!(
-        "Validation response for expired key: {}",
-        serde_json::to_string_pretty(&body).unwrap()
-    );
-
-    let validation = &body["data"];
-    assert_eq!(validation["valid"], false);
-}
-
-#[tokio::test]
-async fn test_api_key_validate_inactive() {
-    let app = setup_clean_test_app().await;
-    let (token, _) = setup_test_user(&app).await;
-
-    // Create an API key
-    let create_payload = json!({
-        "name": "Inactive Key",
-        "permissions": []
-    });
-
-    let request = authenticated_request("POST", "/api/api-keys", create_payload, &token);
-    let response = app.clone().oneshot(request).await.unwrap();
-    let created = extract_json_body(response).await;
-    let api_key = created["data"]["api_key"].as_str().unwrap().to_string();
-    let key_id = created["data"]["id"].as_i64().unwrap();
-
-    // Deactivate the key
-    let update_payload = json!({
-        "is_active": false
-    });
-
-    let request = authenticated_request(
-        "PUT",
-        &format!("/api/api-keys/{}", key_id),
-        update_payload,
-        &token,
-    );
-    app.clone().oneshot(request).await.unwrap();
-
-    // Validate the inactive API key
-    let validate_payload = json!({
-        "api_key": api_key
-    });
-
-    let request = json_request("POST", "/api/api-keys/validate", validate_payload);
-    let response = app.oneshot(request).await.unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-
-    let body = extract_json_body(response).await;
-
-    // Debug: Print the full response to understand the structure
-    eprintln!(
-        "Validation response for inactive key: {}",
-        serde_json::to_string_pretty(&body).unwrap()
-    );
-
-    let validation = &body["data"];
-    assert_eq!(validation["valid"], false);
 }
 
 #[tokio::test]

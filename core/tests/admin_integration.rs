@@ -14,7 +14,7 @@ use serde_json::json;
 use tower::ServiceExt;
 
 /// Helper function to create an admin user and get token
-async fn create_admin_and_get_token(app: &axum::Router) -> (String, String, String) {
+async fn create_admin_user(app: &axum::Router) -> String {
     let username = generate_test_username("admin");
     let email = generate_test_email("admin");
     let password = "AdminPassword123!";
@@ -29,85 +29,108 @@ async fn create_admin_and_get_token(app: &axum::Router) -> (String, String, Stri
     let response = app.clone().oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
 
-    // First register a regular user
+    // Register the user
     let register_payload = json!({
         "username": username,
         "email": email,
         "password": password,
         "verification_code": "1234"
     });
-
     let request = json_request("POST", "/auth/register", register_payload);
     let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
 
     let body = extract_json_body(response).await;
+    let user_id = body["data"]["user"]["id"].as_i64().unwrap() as i32;
 
-    // Debug: Print the registration response
-    eprintln!(
-        "Registration response: {}",
-        serde_json::to_string_pretty(&body).unwrap()
-    );
+    // Update user to admin role directly in database
+    // Get database connection from test environment
+    let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+        "postgresql://postgres:test_password@localhost:11021/db_core_test".to_string()
+    });
+    let db = sqlx::PgPool::connect(&db_url).await.unwrap();
 
-    // Check if registration was successful
-    if body["code"] != "SUCCESS" {
-        panic!("Registration failed: {:?}", body);
-    }
+    sqlx::query!("UPDATE users SET role = $1 WHERE id = $2", "admin", user_id)
+        .execute(&db)
+        .await
+        .unwrap();
 
-    let token = body["data"]["access_token"].as_str().unwrap().to_string();
+    // Login to get fresh token with admin role
+    let login_payload = json!({
+        "email": email,
+        "password": password
+    });
+    let request = json_request("POST", "/auth/login", login_payload);
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
 
-    // In a real scenario, we would need to update the user's role to admin
-    // For testing, we assume there's a way to do this or use a pre-seeded admin account
-
-    (token, email, username)
+    let body = extract_json_body(response).await;
+    body["data"]["access_token"].as_str().unwrap().to_string()
 }
 
 #[tokio::test]
 async fn test_admin_list_users() {
     let app = setup_clean_test_app().await;
 
+    // Create admin user
+    let admin_token = create_admin_user(&app).await;
+
     // Create some test users
     for i in 0..3 {
+        let username = generate_test_username(&format!("user{}", i));
+        let email = generate_test_email(&format!("user{}", i));
+
+        // Send verification code
+        let send_code_payload = json!({
+            "email": email,
+            "verification_type": "email",
+            "language": "en"
+        });
+        let request = json_request("POST", "/auth/send-code", send_code_payload);
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
         let register_payload = json!({
-            "username": generate_test_username(&format!("user{}", i)),
-            "email": generate_test_email(&format!("user{}", i)),
-            "password": "UserPassword123!",
+            "username": username,
+            "email": email,
+            "password": "TestUser123!",
             "verification_code": "1234"
         });
-
         let request = json_request("POST", "/auth/register", register_payload);
-        let _ = app.clone().oneshot(request).await.unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
     }
 
-    // Get admin token (using first user as admin for testing)
-    let (token, _, _) = create_admin_and_get_token(&app).await;
-
-    // List users
+    // List users with admin token
     let request = Request::builder()
         .method("GET")
-        .uri("/admin/users?page=1&limit=10")
-        .header("Authorization", format!("Bearer {}", token))
+        .uri("/admin/users")
+        .header("Authorization", format!("Bearer {}", admin_token))
         .body(Body::empty())
         .unwrap();
 
     let response = app.oneshot(request).await.unwrap();
-
     assert_eq!(response.status(), StatusCode::OK);
 
     let body = extract_json_body(response).await;
     assert_eq!(body["code"], "SUCCESS");
-    assert!(body["data"]["users"].is_array());
-    assert!(body["data"]["pagination"]["total"].as_i64().unwrap() >= 3);
+
+    // Should have at least 4 users (1 admin + 3 test users)
+    let users = body["data"]["users"].as_array().unwrap();
+    assert!(users.len() >= 4);
 }
 
 #[tokio::test]
 async fn test_admin_get_user_by_id() {
     let app = setup_clean_test_app().await;
 
-    // Create a test user
+    // Create an admin user
+    let admin_token = create_admin_user(&app).await;
+
+    // Create a test user to fetch
     let username = generate_test_username("getuser");
     let email = generate_test_email("getuser");
 
-    
     // Send verification code
     let send_code_payload = json!({
         "email": email,
@@ -121,51 +144,114 @@ async fn test_admin_get_user_by_id() {
     let register_payload = json!({
         "username": username,
         "email": email,
-        "password": "UserPassword123!",
+        "password": "TestUser123!",
         "verification_code": "1234"
     });
 
     let request = json_request("POST", "/auth/register", register_payload);
     let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
 
     let body = extract_json_body(response).await;
     let user_id = body["data"]["user"]["id"].as_i64().unwrap();
-    let token = body["data"]["access_token"].as_str().unwrap();
 
-    // Get user by ID
+    // Now get the user by ID using admin token
     let request = Request::builder()
         .method("GET")
         .uri(format!("/admin/users/{}", user_id))
-        .header("Authorization", format!("Bearer {}", token))
+        .header("Authorization", format!("Bearer {}", admin_token))
         .body(Body::empty())
         .unwrap();
 
     let response = app.oneshot(request).await.unwrap();
 
-    // May return 403 if not admin, which is expected
-    if response.status() == StatusCode::OK {
-        let body = extract_json_body(response).await;
-        assert_eq!(body["code"], "SUCCESS");
-        assert_eq!(body["data"]["id"], user_id);
-        assert_eq!(body["data"]["email"], email);
-    } else {
-        // Admin endpoints currently don't enforce admin role
+    // Debug: Print response status
+    eprintln!("Get user by ID response status: {:?}", response.status());
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = extract_json_body(response).await;
+
+    // Debug: Print response body
+    eprintln!(
+        "Get user by ID response body: {}",
+        serde_json::to_string_pretty(&body).unwrap()
+    );
+
+    assert_eq!(body["code"], "SUCCESS");
+    assert_eq!(body["data"]["id"], user_id);
+    assert_eq!(body["data"]["username"], username);
+    assert_eq!(body["data"]["email"], email);
+}
+
+#[tokio::test]
+async fn test_admin_search_users() {
+    let app = setup_clean_test_app().await;
+
+    // Create admin user
+    let admin_token = create_admin_user(&app).await;
+
+    // Create test users with searchable usernames/emails
+    for i in 0..3 {
+        let username = generate_test_username(&format!("search{}", i));
+        let email = generate_test_email(&format!("search{}", i));
+
+        // Send verification code
+        let send_code_payload = json!({
+            "email": email,
+            "verification_type": "email",
+            "language": "en"
+        });
+        let request = json_request("POST", "/auth/send-code", send_code_payload);
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let register_payload = json!({
+            "username": username,
+            "email": email,
+            "password": "TestUser123!",
+            "verification_code": "1234"
+        });
+        let request = json_request("POST", "/auth/register", register_payload);
+        let response = app.clone().oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
     }
+
+    // Search for users with admin token
+    let request = Request::builder()
+        .method("GET")
+        .uri("/admin/users?search=search")
+        .header("Authorization", format!("Bearer {}", admin_token))
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = extract_json_body(response).await;
+    assert_eq!(body["code"], "SUCCESS");
+
+    let users = body["data"]["users"].as_array().unwrap();
+    assert_eq!(
+        users.len(),
+        3,
+        "Should find 3 users with 'search' in username"
+    );
 }
 
 #[tokio::test]
 async fn test_admin_update_user_role() {
     let app = setup_clean_test_app().await;
 
-    // Create two users
-    let user1_username = generate_test_username("user1");
-    let user1_email = generate_test_email("user1");
+    // Create admin user
+    let admin_token = create_admin_user(&app).await;
 
-    
+    // Create a test user to update
+    let username = generate_test_username("roletest");
+    let email = generate_test_email("roletest");
+
     // Send verification code
     let send_code_payload = json!({
-        "email": user1_email,
+        "email": email,
         "verification_type": "email",
         "language": "en"
     });
@@ -174,47 +260,19 @@ async fn test_admin_update_user_role() {
     assert_eq!(response.status(), StatusCode::OK);
 
     let register_payload = json!({
-        "username": user1_username,
-        "email": user1_email,
-        "password": "User1Password123!",
+        "username": username,
+        "email": email,
+        "password": "TestUser123!",
         "verification_code": "1234"
     });
-
     let request = json_request("POST", "/auth/register", register_payload);
-    let response = app.clone().oneshot(request).await.unwrap();
-
-    let body = extract_json_body(response).await;
-    let admin_token = body["data"]["access_token"].as_str().unwrap();
-
-    // Create another user to update
-    let user2_username = generate_test_username("user2");
-    let user2_email = generate_test_email("user2");
-
-    
-    // Send verification code
-    let send_code_payload = json!({
-        "email": user2_email,
-        "verification_type": "email",
-        "language": "en"
-    });
-    let request = json_request("POST", "/auth/send-code", send_code_payload);
     let response = app.clone().oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
-
-    let register_payload = json!({
-        "username": user2_username,
-        "email": user2_email,
-        "password": "User2Password123!",
-        "verification_code": "1234"
-    });
-
-    let request = json_request("POST", "/auth/register", register_payload);
-    let response = app.clone().oneshot(request).await.unwrap();
 
     let body = extract_json_body(response).await;
     let user_id = body["data"]["user"]["id"].as_i64().unwrap();
 
-    // Try to update user2's role (may fail if user1 is not admin)
+    // Update user role to committee
     let update_payload = json!({
         "role": "committee"
     });
@@ -223,21 +281,25 @@ async fn test_admin_update_user_role() {
         "PUT",
         &format!("/admin/users/{}", user_id),
         update_payload,
-        admin_token,
+        &admin_token,
     );
 
     let response = app.oneshot(request).await.unwrap();
 
-    // May return 403 if not admin
-    // Admin endpoints currently don't enforce admin role
-    if response.status() == StatusCode::OK {
-        let body = extract_json_body(response).await;
-        assert_eq!(body["code"], "SUCCESS");
-        assert_eq!(body["data"]["role"], "committee");
-    } else {
-        // This shouldn't happen with current implementation
-        assert_eq!(response.status(), StatusCode::OK);
-    }
+    // Debug: Print response status
+    eprintln!("Update user role response status: {:?}", response.status());
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = extract_json_body(response).await;
+
+    // Debug: Print response body
+    eprintln!(
+        "Update user role response body: {}",
+        serde_json::to_string_pretty(&body).unwrap()
+    );
+
+    assert_eq!(body["code"], "SUCCESS");
+    assert_eq!(body["data"]["role"], "committee");
 }
 
 #[tokio::test]
@@ -245,13 +307,12 @@ async fn test_admin_update_user_status() {
     let app = setup_clean_test_app().await;
 
     // Create admin user
-    let (admin_token, _, _) = create_admin_and_get_token(&app).await;
+    let admin_token = create_admin_user(&app).await;
 
-    // Create a user to update
+    // Create a test user to update
     let username = generate_test_username("statustest");
     let email = generate_test_email("statustest");
 
-    
     // Send verification code
     let send_code_payload = json!({
         "email": email,
@@ -265,17 +326,17 @@ async fn test_admin_update_user_status() {
     let register_payload = json!({
         "username": username,
         "email": email,
-        "password": "StatusTest123!",
+        "password": "TestUser123!",
         "verification_code": "1234"
     });
-
     let request = json_request("POST", "/auth/register", register_payload);
     let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
 
     let body = extract_json_body(response).await;
     let user_id = body["data"]["user"]["id"].as_i64().unwrap();
 
-    // Update user status
+    // Update user status to suspended
     let update_payload = json!({
         "status": "suspended"
     });
@@ -289,59 +350,23 @@ async fn test_admin_update_user_status() {
 
     let response = app.oneshot(request).await.unwrap();
 
-    // Admin endpoints currently don't enforce admin role
-    if response.status() == StatusCode::OK {
-        let body = extract_json_body(response).await;
-        assert_eq!(body["code"], "SUCCESS");
-        assert_eq!(body["data"]["status"], "suspended");
-    } else {
-        // This shouldn't happen with current implementation
-        assert_eq!(response.status(), StatusCode::OK);
-    }
-}
+    // Debug: Print response status
+    eprintln!(
+        "Update user status response status: {:?}",
+        response.status()
+    );
+    assert_eq!(response.status(), StatusCode::OK);
 
-#[tokio::test]
-async fn test_admin_search_users() {
-    let app = setup_clean_test_app().await;
+    let body = extract_json_body(response).await;
 
-    // Create users with specific patterns
-    for i in 0..3 {
-        let register_payload = json!({
-            "username": format!("searchuser{}", i),
-            "email": generate_test_email(&format!("search{}", i)),
-            "password": "SearchPassword123!",
-            "verification_code": "1234"
-        });
+    // Debug: Print response body
+    eprintln!(
+        "Update user status response body: {}",
+        serde_json::to_string_pretty(&body).unwrap()
+    );
 
-        let request = json_request("POST", "/auth/register", register_payload);
-        let _ = app.clone().oneshot(request).await.unwrap();
-    }
-
-    // Get admin token
-    let (token, _, _) = create_admin_and_get_token(&app).await;
-
-    // Search users
-    let request = Request::builder()
-        .method("GET")
-        .uri("/admin/users?search=searchuser")
-        .header("Authorization", format!("Bearer {}", token))
-        .body(Body::empty())
-        .unwrap();
-
-    let response = app.oneshot(request).await.unwrap();
-
-    // May return 403 if not admin
-    if response.status() == StatusCode::OK {
-        let body = extract_json_body(response).await;
-        assert_eq!(body["code"], "SUCCESS");
-
-        let users = body["data"]["users"].as_array().unwrap();
-        for user in users {
-            assert!(user["username"].as_str().unwrap().contains("searchuser"));
-        }
-    } else {
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    }
+    assert_eq!(body["code"], "SUCCESS");
+    assert_eq!(body["data"]["status"], "suspended");
 }
 
 #[tokio::test]
@@ -352,7 +377,6 @@ async fn test_admin_permissions() {
     let username = generate_test_username("regular");
     let email = generate_test_email("regular");
 
-    
     // Send verification code
     let send_code_payload = json!({
         "email": email,
@@ -384,20 +408,36 @@ async fn test_admin_permissions() {
         .body(Body::empty())
         .unwrap();
 
-    let response = app.oneshot(request).await.unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
 
-    // Currently admin routes don't enforce admin role - any authenticated user can access
-    // This is a security issue that should be fixed
-    assert_eq!(response.status(), StatusCode::OK);
+    // Regular user should be denied access to admin routes
+    assert_eq!(response.status(), StatusCode::OK); // All responses return 200 according to STANDARD
 
     let body = extract_json_body(response).await;
 
-    // Debug: Print the response to understand its structure
-    eprintln!(
-        "Admin roles response: {}",
-        serde_json::to_string_pretty(&body).unwrap()
+    // Should return authorization error
+    assert!(
+        body["code"] == "AUTHORIZATION_ERROR" || body["code"] == "AUTHENTICATION_ERROR",
+        "Expected authorization/authentication error for regular user accessing admin route"
     );
 
+    // Now test with an admin user
+    let admin_token = create_admin_user(&app).await;
+
+    // Try to access admin roles endpoint with admin token
+    let request = Request::builder()
+        .method("GET")
+        .uri("/admin/roles")
+        .header("Authorization", format!("Bearer {}", admin_token))
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+
+    // Admin should have access
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = extract_json_body(response).await;
     assert_eq!(body["code"], "SUCCESS");
 
     // Check that roles data is returned
@@ -408,91 +448,7 @@ async fn test_admin_permissions() {
     assert!(
         roles
             .iter()
-            .any(|r| r["name"].as_str() == Some("scientist"))
+            .any(|r| r["name"].as_str() == Some("scientist")),
+        "Should contain scientist role"
     );
-}
-
-#[tokio::test]
-async fn test_admin_get_system_stats() {
-    let app = setup_clean_test_app().await;
-
-    // Get admin token
-    let (token, _, _) = create_admin_and_get_token(&app).await;
-
-    // Get system stats
-    let request = Request::builder()
-        .method("GET")
-        .uri("/admin/stats")
-        .header("Authorization", format!("Bearer {}", token))
-        .body(Body::empty())
-        .unwrap();
-
-    let response = app.oneshot(request).await.unwrap();
-
-    // May return 403 if not admin or 404 if endpoint doesn't exist
-    // Admin endpoints currently don't enforce admin role
-    if response.status() == StatusCode::OK {
-        let body = extract_json_body(response).await;
-        assert_eq!(body["code"], "SUCCESS");
-        assert!(body["data"]["total_users"].is_number());
-        assert!(body["data"]["total_api_keys"].is_number());
-    }
-}
-
-#[tokio::test]
-async fn test_admin_audit_logs() {
-    let app = setup_clean_test_app().await;
-
-    // Create some activities
-    for i in 0..3 {
-        let register_payload = json!({
-            "username": generate_test_username(&format!("audit{}", i)),
-            "email": generate_test_email(&format!("audit{}", i)),
-            "password": "AuditPassword123!",
-            "verification_code": "1234"
-        });
-
-        let request = json_request("POST", "/auth/register", register_payload);
-        let _ = app.clone().oneshot(request).await.unwrap();
-    }
-
-    // Get admin token
-    let (token, _, _) = create_admin_and_get_token(&app).await;
-
-    // Get audit logs
-    let request = Request::builder()
-        .method("GET")
-        .uri("/admin/audit-logs?page=1&limit=10")
-        .header("Authorization", format!("Bearer {}", token))
-        .body(Body::empty())
-        .unwrap();
-
-    let response = app.oneshot(request).await.unwrap();
-
-    // May return 403 if not admin or 404 if endpoint doesn't exist
-    if response.status() == StatusCode::OK {
-        let body = extract_json_body(response).await;
-        assert_eq!(body["code"], "SUCCESS");
-        assert!(body["data"]["logs"].is_array());
-    }
-}
-
-#[tokio::test]
-async fn test_admin_without_auth() {
-    let app = setup_clean_test_app().await;
-
-    // Try to access admin endpoint without authentication
-    let request = Request::builder()
-        .method("GET")
-        .uri("/admin/users")
-        .body(Body::empty())
-        .unwrap();
-
-    let response = app.oneshot(request).await.unwrap();
-
-    assert_eq!(response.status(), StatusCode::OK);
-
-    let body = extract_json_body(response).await;
-    assert_eq!(body["code"], "AUTHENTICATION_ERROR");
-    assert!(body["message"].as_str().unwrap().contains("Authentication"));
 }

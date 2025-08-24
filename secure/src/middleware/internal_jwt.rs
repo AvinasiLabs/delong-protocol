@@ -3,21 +3,20 @@
 //! This middleware validates internal JWT tokens sent by the Core service
 //! when forwarding authenticated requests to the Secure service.
 
+use avinapi::prelude::AppError;
 use axum::{
     body::Body,
-    extract::Request,
-    http::{HeaderMap, Method, StatusCode},
+    extract::{OriginalUri, Request},
+    http::{HeaderMap, Method},
     middleware::Next,
-    response::{IntoResponse, Response},
-    Json,
+    response::Response,
 };
 use bytes::Bytes;
 use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 
 /// Authentication context from Core service
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,9 +71,10 @@ struct RequestSignature {
 
 /// Middleware to verify internal JWT from Core service
 pub async fn internal_jwt_middleware(
+    OriginalUri(original_uri): OriginalUri,
     mut req: Request<Body>,
     next: Next,
-) -> Result<Response, StatusCode> {
+) -> Result<Response, AppError> {
     // Skip authentication in test mode
     if std::env::var("TEST_MODE").unwrap_or_default() == "true"
         || std::env::var("SKIP_AUTH").unwrap_or_default() == "true"
@@ -105,51 +105,48 @@ pub async fn internal_jwt_middleware(
     }
 
     // Extract the internal JWT from header
-    let token = match extract_internal_jwt(req.headers()) {
-        Some(token) => token,
-        None => {
-            warn!("Missing X-Internal-JWT header");
-            return Ok(unauthorized_response(
-                "Missing internal authentication token",
-            ));
-        }
-    };
+    let token = extract_internal_jwt(req.headers()).ok_or_else(|| {
+        warn!("Missing X-Internal-JWT header");
+        AppError::Authentication("Missing internal authentication token".into())
+    })?;
 
     // Get JWT secret from environment
-    let jwt_secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| {
-        error!("JWT_SECRET not configured");
-        "test-secret-key-for-testing-only".to_string()
-    });
+    let jwt_secret = std::env::var("INTERNAL_JWT_SECRET").map_err(|_| {
+        error!("INTERNAL_JWT_SECRET not configured");
+        AppError::Config("INTERNAL_JWT_SECRET not configured".to_string())
+    })?;
 
     // Decode and validate the JWT
-    let claims = match decode_and_validate_jwt(&token, &jwt_secret) {
-        Ok(claims) => claims,
-        Err(e) => {
-            warn!("JWT validation failed: {}", e);
-            return Ok(unauthorized_response(&format!(
-                "Invalid authentication token: {}",
-                e
-            )));
-        }
-    };
+    let claims = decode_and_validate_jwt(&token, &jwt_secret).map_err(|e| {
+        warn!("JWT validation failed: {}", e);
+        AppError::Authentication(format!("Invalid authentication token: {}", e))
+    })?;
 
     // Verify request integrity
     let method = req.method().clone();
-    let path = req.uri().path().to_string();
+    let path = original_uri.path().to_string();
+
+    info!(
+        "SECURE JWT: Verifying request - method: {}, path from OriginalUri: '{}'",
+        method, path
+    );
 
     // Read and replace the body for digest verification
-    let body_bytes = match read_body_bytes(&mut req).await {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            error!("Failed to read request body: {}", e);
-            return Ok(internal_error_response("Failed to process request"));
-        }
-    };
+    let body_bytes = read_body_bytes(&mut req).await.map_err(|e| {
+        error!("Failed to read request body: {}", e);
+        AppError::Internal(format!("Failed to process request: {}", e))
+    })?;
 
     // Verify request signature
+    info!(
+        "SECURE JWT: Signature contains - method: {}, path: '{}'",
+        claims.request_signature.method, claims.request_signature.path
+    );
     if !verify_request_signature(&claims.request_signature, &method, &path, &body_bytes) {
         warn!("Request signature verification failed");
-        return Ok(unauthorized_response("Request integrity check failed"));
+        return Err(AppError::Authentication(
+            "Request integrity check failed".into(),
+        ));
     }
 
     // Log the authenticated request
@@ -219,7 +216,7 @@ fn verify_request_signature(
     // Verify method and path match
     if signature.method != method.to_string() || signature.path != path {
         warn!(
-            "Request signature mismatch: expected method={}, path={}, got method={}, path={}",
+            "Request signature mismatch: signature has method='{}', path='{}', but request has method='{}', path='{}'",
             signature.method, signature.path, method, path
         );
         return false;
@@ -289,30 +286,6 @@ async fn read_body_bytes(req: &mut Request<Body>) -> Result<Option<Bytes>, Strin
     *req.body_mut() = Body::from(bytes.clone());
 
     Ok(Some(bytes))
-}
-
-/// Create an unauthorized response
-fn unauthorized_response(message: &str) -> Response {
-    (
-        StatusCode::UNAUTHORIZED,
-        Json(json!({
-            "error": "Unauthorized",
-            "message": message
-        })),
-    )
-        .into_response()
-}
-
-/// Create an internal error response
-fn internal_error_response(message: &str) -> Response {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(json!({
-            "error": "Internal Server Error",
-            "message": message
-        })),
-    )
-        .into_response()
 }
 
 /// Authenticated user information extracted from internal JWT
