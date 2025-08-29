@@ -115,7 +115,7 @@ impl ProxyConfig {
 
         Ok(Self {
             secure_service_url: env::var("SECURE_SERVICE_URL")
-                .unwrap_or_else(|_| "http://localhost:8081".to_string()),
+                .unwrap_or_else(|_| "http://localhost:11000".to_string()),
             timeout_seconds: env::var("PROXY_TIMEOUT")
                 .unwrap_or_else(|_| "30".to_string())
                 .parse()?,
@@ -135,14 +135,14 @@ impl ProxyConfig {
 impl Config {
     /// Load configuration from environment variables
     pub fn load() -> Result<Self, Box<dyn std::error::Error>> {
-        // Load .env file if it exists
-        dotenv().ok();
+        // Try to load .env file from core directory first, then current directory
+        dotenvy::from_filename("core/.env").or_else(|_| dotenv()).ok();
 
         Ok(Self {
             server: ServerConfig {
                 host: env::var("SERVICE_HOST").unwrap_or_else(|_| "0.0.0.0".to_string()),
                 port: env::var("SERVICE_PORT")
-                    .unwrap_or_else(|_| "8080".to_string())
+                    .unwrap_or_else(|_| "11000".to_string())
                     .parse()?,
                 timeout_seconds: env::var("REQUEST_TIMEOUT")
                     .unwrap_or_else(|_| "30".to_string())
