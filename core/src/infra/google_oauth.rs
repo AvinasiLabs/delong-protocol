@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// Google OAuth service
 #[derive(Clone)]
@@ -255,7 +255,7 @@ impl OAuthStateStore {
 
         let state_data = OAuthState {
             state: state.to_string(),
-            return_to,
+            return_to: return_to.clone(),
             created_at: Utc::now(),
         };
 
@@ -265,6 +265,8 @@ impl OAuthStateStore {
             AppError::Internal(format!("Serialization error: {}", e))
         })?;
 
+        info!("Storing OAuth state: key={}, return_to={:?}", key, return_to);
+
         // Store with 10 minute expiry
         use deadpool_redis::redis::AsyncCommands;
         let _: () = conn.set_ex(&key, &value, 600).await.map_err(|e| {
@@ -272,6 +274,7 @@ impl OAuthStateStore {
             AppError::Internal(format!("Failed to store state: {}", e))
         })?;
 
+        info!("Successfully stored OAuth state: {}", state);
         Ok(())
     }
 
@@ -286,16 +289,18 @@ impl OAuthStateStore {
         })?;
 
         let key = format!("oauth:state:{}", state);
+        info!("Retrieving OAuth state: key={}", key);
 
-        // Get and delete in one operation
         use deadpool_redis::redis::AsyncCommands;
+        
+        // Get and delete in one atomic operation
         let value: Option<String> = conn.get_del(&key).await.map_err(|e| {
             error!("Failed to retrieve OAuth state: {}", e);
             AppError::Internal(format!("Failed to retrieve state: {}", e))
         })?;
 
         let value = value.ok_or_else(|| {
-            warn!("OAuth state not found or expired: {}", state);
+            warn!("OAuth state not found: {}", state);
             AppError::Authentication("Invalid or expired state parameter".to_string())
         })?;
 

@@ -110,9 +110,9 @@ impl Config {
     /// Load configuration from environment variables
     /// This will try to load from .env file first if it exists
     pub fn load() -> Result<Self, String> {
-        // Try to load .env file from current directory or parent directories
+        // Try to load .env file from secure directory first, then current directory
         // This is non-fatal - if .env doesn't exist, we'll use system env vars
-        dotenvy::dotenv().ok();
+        dotenvy::from_filename("secure/.env").or_else(|_| dotenvy::dotenv()).ok();
 
         Ok(Config {
             server: ServerConfig {
@@ -307,7 +307,7 @@ pub fn init_config() -> Config {
 
 /// Get database URL from environment
 pub fn get_database_url() -> String {
-    dotenvy::dotenv().ok();
+    dotenvy::from_filename("secure/.env").or_else(|_| dotenvy::dotenv()).ok();
     env::var("DATABASE_URL").unwrap_or_else(|_| {
         "postgres://secure_user:secure_dev_password@localhost:11001/secure_db".to_string()
     })

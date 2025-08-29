@@ -477,7 +477,11 @@ pub async fn google_auth_callback(
     State(state): State<AppState>,
     ValidatedQuery(params): ValidatedQuery<GoogleCallbackQuery>,
 ) -> JsonResult<AuthResponse> {
-    info!("Google OAuth callback request");
+    info!("Google OAuth callback request with params: code={:?}, state={:?}, error={:?}", 
+        params.code.as_ref().map(|c| &c[..c.len().min(10)]), // Log only first 10 chars of code for security
+        params.state,
+        params.error
+    );
 
     // Check for error parameter
     if let Some(error) = params.error {
@@ -491,16 +495,18 @@ pub async fn google_auth_callback(
     })?;
 
     let state_param = params.state.ok_or_else(|| {
-        warn!("Missing state parameter");
+        warn!("Missing state parameter in callback");
         AppError::Validation("Missing state parameter".to_string())
     })?;
+
+    info!("Verifying OAuth state: {}", state_param);
 
     // Verify state parameter and retrieve return_to URL
     let _oauth_state = if let Some(redis_pool) = state.config.redis_pool.as_ref() {
         crate::infra::google_oauth::OAuthStateStore::retrieve_state(redis_pool, &state_param)
             .await
             .map_err(|e| {
-                warn!("Invalid OAuth state: {}", e);
+                warn!("Invalid OAuth state '{}': {}", state_param, e);
                 AppError::Authentication("Invalid or expired state parameter".to_string())
             })?
     } else {
