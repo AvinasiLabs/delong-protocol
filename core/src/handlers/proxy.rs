@@ -66,11 +66,19 @@ pub async fn proxy_handler(
 
     // OriginalUri contains the full original path including /api prefix
     let path = original_uri.path();
+    let query = original_uri.query();
+
+    // Build the full path including query parameters
+    let full_path = if let Some(query_str) = query {
+        format!("{}?{}", path, query_str)
+    } else {
+        path.to_string()
+    };
 
     info!(
         "Proxying {} request to path: {} for user: {} using {:?}",
         method,
-        path,
+        full_path,
         auth_user.user_id(),
         auth_user.auth_method
     );
@@ -116,7 +124,7 @@ pub async fn proxy_handler(
     };
 
     proxy_client
-        .forward_request(method, path, headers, request_body, auth_context)
+        .forward_request(method, &full_path, headers, request_body, auth_context)
         .await
 }
 

@@ -115,6 +115,7 @@ pub async fn create_app_state(mut config: Config) -> AppResult<AppState> {
         info!("Initializing Redis verification store");
         Arc::new(infra::verification::VerificationStore::new(
             redis_pool.clone(),
+            config.verification.clone(),
         ))
     } else {
         error!("Redis pool not available - verification service will not work");

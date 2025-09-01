@@ -4,11 +4,10 @@
 //! including registration, login, verification code management,
 //! and Google OAuth integration.
 
-use avinapi::prelude::{AppError, JsonResult, ValidatedJson, ValidatedQuery, data};
+use avinapi::prelude::{AppError, JsonResult, ValidatedJson, ValidatedQuery, data, empty};
 use axum::extract::State;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 
 use regex::Regex;
 use std::sync::LazyLock;
@@ -17,6 +16,7 @@ use utoipa::ToSchema;
 use validator::Validate;
 
 use crate::{
+    infra::email::EmailService,
     middleware::AuthUser,
     models::{auth::VerificationType, user::User},
     routes::AppState,
@@ -355,7 +355,7 @@ pub async fn register_user(
 pub async fn send_verification_code(
     State(state): State<AppState>,
     ValidatedJson(payload): ValidatedJson<SendVerificationCodeRequest>,
-) -> JsonResult<serde_json::Value> {
+) -> JsonResult<()> {
     info!(
         "Send verification code request for email: {}",
         payload.email
@@ -390,29 +390,22 @@ pub async fn send_verification_code(
         }
     };
 
-    // In development mode, include the code in response
-    if state.config.development_mode {
+    // Send email with verification code
+    if state.config.email.enabled {
+        EmailService::send_verification_code(
+            &state.config.email,
+            &payload.email,
+            &verification_code,
+        )
+        .await?
+    } else {
         info!(
-            "Development mode: Verification code for {}: {}",
+            "Email service disabled - verification code for {}: {}",
             payload.email, verification_code
         );
-        return data!(json!({
-            "message": "Verification code sent successfully",
-            "dev_mode": true,
-            "dev_code": verification_code
-        }));
     }
 
-    // TODO: Send email via email service
-    // For now, just log the code
-    info!(
-        "Verification code for {}: {}",
-        payload.email, verification_code
-    );
-
-    data!(json!({
-        "message": "Verification code sent successfully"
-    }))
+    empty!()
 }
 
 /// Get Google OAuth URL handler

@@ -76,13 +76,8 @@ tower-http = { version = "0.6", features = [
 # redis is re-exported from deadpool-redis to avoid version conflicts
 
 # Email sending
-lettre = { version = "0.11", default-features = false, features = [
-    "tokio1-rustls-tls",
-    "smtp-transport",
-    "pool",
-    "hostname",
-    "builder",
-] }
+mail-send = { version = "0.5.1" }
+mail-builder = "0.4.4"
 
 # File upload handling
 multer = { version = "3.1" }
@@ -123,3 +118,4 @@ futures-util.workspace = true
 [dev-dependencies]
 tokio-test = "0.4"
 # axum-test = "15"  # Commented out due to version conflict with axum 0.8
+# Email sending

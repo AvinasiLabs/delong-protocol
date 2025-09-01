@@ -15,7 +15,7 @@ pub mod verification;
 // Claims is now exported from utils::jwt module
 pub use ai_audit::{AiAuditService, AuditFileResult, AuditSummary, SecurityBreach};
 pub use db::{Database, DatabaseStats};
-pub use email::{EmailConfig, EmailSendResult, EmailService, EmailTemplate};
+pub use email::{EmailService, EmailTemplate};
 pub use google_oauth::{GoogleOAuthService, GoogleUserInfo, OAuthState, OAuthStateStore};
 pub use proxy::{AuthContext, ProxyClient, create_proxy_client};
-pub use verification::{VerificationConfig, VerificationStore};
+pub use verification::VerificationStore;

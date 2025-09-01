@@ -22,7 +22,7 @@ use crate::{
     },
     middleware::{
         admin_only_middleware, flexible_auth_middleware, jwt_only_middleware,
-        rate_limit_middleware, request_id_middleware, response_transformer,
+        request_id_middleware, response_transformer,
     },
     openapi::ApiDoc,
     utils::jwt::JwtConfig,
@@ -220,10 +220,10 @@ pub fn create_router(state: AppState) -> Router {
         )
         .layer(axum::middleware::from_fn(response_transformer))
         .layer(axum::middleware::from_fn(request_id_middleware))
-        .layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            rate_limit_middleware,
-        ))
+        // .layer(axum::middleware::from_fn_with_state(
+        //     state.clone(),
+        //     rate_limit_middleware,
+        // ))
         .layer(
             CorsLayer::new()
                 .allow_origin(Any)

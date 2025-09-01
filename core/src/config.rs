@@ -23,12 +23,14 @@ pub struct Config {
     pub api: ApiConfig,
     /// Proxy configuration for forwarding to Secure service
     pub proxy: ProxyConfig,
+    /// Verification configuration for email/phone verification
+    pub verification: VerificationConfig,
+    /// Email configuration for SMTP service
+    pub email: EmailConfig,
     /// JWT secret for authentication
     pub jwt_secret: String,
     /// Internal JWT secret for service-to-service communication
     pub internal_jwt_secret: String,
-    /// Development mode flag
-    pub development_mode: bool,
     /// Redis pool for caching and session storage
     #[serde(skip)]
     pub redis_pool: Option<Arc<deadpool_redis::Pool>>,
@@ -132,6 +134,40 @@ impl ProxyConfig {
     }
 }
 
+/// Verification configuration for email/phone verification
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerificationConfig {
+    /// Code expiration time in minutes
+    pub expiration_minutes: u64,
+    /// Maximum verification attempts
+    pub max_attempts: u32,
+    /// Whether to use fixed code (for testing/development)
+    pub use_fixed_code: bool,
+    /// Fixed code for development/testing
+    pub fixed_code: String,
+}
+
+/// Email configuration for SMTP service
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmailConfig {
+    /// Whether email service is enabled
+    pub enabled: bool,
+    /// SMTP server host
+    pub smtp_host: String,
+    /// SMTP server port
+    pub smtp_port: u16,
+    /// SMTP username for authentication
+    pub smtp_username: String,
+    /// SMTP password for authentication
+    pub smtp_password: String,
+    /// Sender email address
+    pub from_email: String,
+    /// Sender display name
+    pub from_name: String,
+    /// Whether to use TLS
+    pub use_tls: bool,
+}
+
 impl Config {
     /// Load configuration from environment variables
     pub fn load() -> Result<Self, Box<dyn std::error::Error>> {
@@ -199,12 +235,52 @@ impl Config {
                     .unwrap_or_else(|_| "3".to_string())
                     .parse()?,
             },
+            verification: VerificationConfig {
+                expiration_minutes: env::var("VERIFICATION_EXPIRATION_MINUTES")
+                    .unwrap_or_else(|_| "15".to_string())
+                    .parse()?,
+                max_attempts: env::var("VERIFICATION_MAX_ATTEMPTS")
+                    .unwrap_or_else(|_| "5".to_string())
+                    .parse()?,
+                use_fixed_code: env::var("VERIFICATION_USE_FIXED_CODE")
+                    .unwrap_or_else(|_| {
+                        // Use fixed code in test/development environments
+                        let is_test = env::var("ENVIRONMENT")
+                            .unwrap_or_else(|_| "development".to_string())
+                            .to_lowercase()
+                            == "test";
+                        let is_dev = env::var("ENVIRONMENT")
+                            .unwrap_or_else(|_| "development".to_string())
+                            .to_lowercase()
+                            == "development";
+                        (is_test || is_dev || cfg!(test)).to_string()
+                    })
+                    .parse()?,
+                fixed_code: env::var("VERIFICATION_FIXED_CODE")
+                    .unwrap_or_else(|_| "1234".to_string()),
+            },
+            email: EmailConfig {
+                enabled: env::var("EMAIL_ENABLED")
+                    .unwrap_or_else(|_| "false".to_string())
+                    .parse()?,
+                smtp_host: env::var("SMTP_HOST").unwrap_or_else(|_| "smtp.gmail.com".to_string()),
+                smtp_port: env::var("SMTP_PORT")
+                    .unwrap_or_else(|_| "587".to_string())
+                    .parse()?,
+                smtp_username: env::var("SMTP_USERNAME").unwrap_or_else(|_| String::new()),
+                smtp_password: env::var("SMTP_PASSWORD").unwrap_or_else(|_| String::new()),
+                from_email: env::var("SMTP_FROM")
+                    .unwrap_or_else(|_| "noreply@delong-protocol.com".to_string()),
+                from_name: env::var("SMTP_FROM_NAME")
+                    .unwrap_or_else(|_| "DeLong Protocol".to_string()),
+                use_tls: env::var("SMTP_USE_TLS")
+                    .unwrap_or_else(|_| "true".to_string())
+                    .parse()?,
+            },
             jwt_secret: env::var("JWT_SECRET")
                 .unwrap_or_else(|_| "your-secret-key-change-in-production".to_string()),
             internal_jwt_secret: env::var("INTERNAL_JWT_SECRET")
                 .unwrap_or_else(|_| "internal-secret-key-change-in-production".to_string()),
-            development_mode: env::var("ENVIRONMENT").unwrap_or_else(|_| "development".to_string())
-                == "development",
             redis_pool: None,
         })
     }
@@ -247,9 +323,25 @@ impl Default for Config {
                 jwt_expiration_seconds: 60,
                 max_retries: 3,
             },
+            verification: VerificationConfig {
+                expiration_minutes: 15,
+                max_attempts: 5,
+                use_fixed_code: cfg!(test),
+                fixed_code: "1234".to_string(),
+            },
+            email: EmailConfig {
+                enabled: false,
+                smtp_host: "smtp.gmail.com".to_string(),
+                smtp_port: 587,
+                smtp_username: String::new(),
+                smtp_password: String::new(),
+                from_email: "noreply@delong-protocol.com".to_string(),
+                from_name: "DeLong Protocol".to_string(),
+                use_tls: true,
+            },
             jwt_secret: "test-secret-key".to_string(),
             internal_jwt_secret: "internal-test-secret-key".to_string(),
-            development_mode: false,
+            // development_mode: false,
             redis_pool: None,
         }
     }

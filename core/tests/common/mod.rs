@@ -86,7 +86,10 @@ pub async fn setup_test_app() -> Router {
 
     // Initialize Redis pool for verification store
     let redis_pool = setup_test_redis_pool().await;
-    let verification_store = Arc::new(VerificationStore::new(redis_pool));
+    let verification_store = Arc::new(VerificationStore::new(
+        redis_pool,
+        config.verification.clone(),
+    ));
 
     // Initialize JWT config
     let jwt_config = Arc::new(create_jwt_config());
@@ -149,7 +152,10 @@ pub async fn setup_clean_test_app() -> Router {
 
     // Initialize Redis pool for verification store
     let redis_pool = setup_test_redis_pool().await;
-    let verification_store = Arc::new(VerificationStore::new(redis_pool));
+    let verification_store = Arc::new(VerificationStore::new(
+        redis_pool,
+        config.verification.clone(),
+    ));
     println!("Verification store initialized");
 
     // Initialize JWT config
@@ -304,6 +310,95 @@ pub fn generate_test_username(prefix: &str) -> String {
     let uuid = Uuid::new_v4().to_string();
     let suffix = &uuid[..8];
     format!("{}_{}", prefix, suffix)
+}
+
+/// Create a test user and get JWT token
+///
+/// This function creates a new user with email verification and returns
+/// a JWT token and the user ID.
+#[allow(dead_code)]
+pub async fn create_test_user_with_jwt(app: &Router) -> (String, i32) {
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode, header},
+    };
+    use serde_json::json;
+    use tower::ServiceExt;
+
+    let email = generate_test_email("test");
+    let username = generate_test_username("test");
+    let password = "TestPassword123!";
+
+    // Send verification code
+    let request = Request::builder()
+        .method("POST")
+        .uri("/auth/send-code")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            serde_json::to_string(&json!({
+                "email": email,
+                "verification_type": "email",
+                "language": "en"
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Register with fixed test code
+    let request = Request::builder()
+        .method("POST")
+        .uri("/auth/register")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            serde_json::to_string(&json!({
+                "email": email,
+                "username": username,
+                "password": password,
+                "verification_code": "1234"  // Fixed code in test mode
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let response_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let user_id = response_json["data"]["user"]["id"].as_i64().unwrap() as i32;
+
+    // Login to get JWT
+    let request = Request::builder()
+        .method("POST")
+        .uri("/auth/login")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            serde_json::to_string(&json!({
+                "email": email,
+                "password": password
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let response_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let token = response_json["data"]["access_token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    (token, user_id)
 }
 
 #[cfg(test)]
