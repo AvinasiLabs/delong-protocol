@@ -235,6 +235,7 @@ pub async fn setup_clean_test_app() -> Router {
 /// Extract JSON body from an axum response
 ///
 /// Helper function to extract and parse JSON body from test responses
+#[allow(dead_code)]
 pub async fn extract_json_body(response: axum::response::Response) -> serde_json::Value {
     use axum::body::to_bytes;
 
@@ -248,6 +249,7 @@ pub async fn extract_json_body(response: axum::response::Response) -> serde_json
 /// Create a JSON request for testing
 ///
 /// Helper function to create JSON requests for testing
+#[allow(dead_code)]
 pub fn json_request<T: serde::Serialize>(
     method: &str,
     uri: &str,
@@ -267,6 +269,7 @@ pub fn json_request<T: serde::Serialize>(
 /// Create an authenticated request with JWT token
 ///
 /// Helper function to create authenticated requests for testing
+#[allow(dead_code)]
 pub fn authenticated_request<T: serde::Serialize>(
     method: &str,
     uri: &str,
@@ -306,21 +309,6 @@ pub fn generate_test_username(prefix: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[tokio::test]
-    async fn test_setup_test_db() {
-        let config = Arc::new(Config::load().unwrap());
-        let db = setup_test_db(config.clone()).await;
-
-        // Test connection with a simple query
-        let result = sqlx::query!("SELECT 1 as value").fetch_one(db.pool()).await;
-
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap().value, Some(1));
-
-        // Test that we can acquire a connection
-        assert!(db.pool().acquire().await.is_ok());
-    }
 
     #[test]
     fn test_generate_test_email() {

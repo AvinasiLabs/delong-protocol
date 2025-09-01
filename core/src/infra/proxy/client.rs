@@ -128,9 +128,23 @@ impl ProxyClient {
 
         // Forward relevant headers
         for (key, value) in headers.iter() {
-            let key_str = key.as_str();
-            // Skip host and connection headers
-            if !matches!(key_str, "host" | "connection" | "content-length") {
+            let key_str = key.as_str().to_lowercase();
+            // Skip headers that should not be forwarded or will be set by reqwest
+            // This prevents content-length mismatch issues
+            if !matches!(
+                key_str.as_str(),
+                "host"
+                    | "connection"
+                    | "content-length"
+                    | "transfer-encoding"
+                    | "content-encoding"
+                    | "keep-alive"
+                    | "upgrade"
+                    | "te"
+                    | "trailer"
+                    | "proxy-authenticate"
+                    | "proxy-authorization"
+            ) {
                 request = request.header(key.clone(), value.clone());
             }
         }
@@ -231,20 +245,27 @@ impl ProxyClient {
         // Forward relevant headers
         for (key, value) in headers.iter() {
             let key_str = key.as_str();
-            // Skip connection-related headers
+            // Skip connection-related headers, content-length and other problematic headers
+            // These will be set correctly by Axum based on the actual body
             if !matches!(
-                key_str,
-                "connection" | "transfer-encoding" | "content-encoding"
+                key_str.to_lowercase().as_str(),
+                "connection"
+                    | "transfer-encoding"
+                    | "content-encoding"
+                    | "content-length"
+                    | "keep-alive"
+                    | "upgrade"
             ) {
                 builder = builder.header(key.clone(), value.clone());
             }
         }
 
-        // Set content-length
-        builder = builder.header("content-length", body_bytes.len());
+        // Create the body and let Axum handle content-length automatically
+        // Do NOT manually set content-length as it may conflict with Axum's internal handling
+        let body = Body::from(body_bytes);
 
         builder
-            .body(Body::from(body_bytes))
+            .body(body)
             .map_err(|e| AppError::Internal(format!("Failed to build response: {}", e)))
     }
 

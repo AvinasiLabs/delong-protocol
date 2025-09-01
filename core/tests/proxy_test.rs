@@ -190,6 +190,7 @@ mod proxy_tests {
     }
 
     // Helper function to build test auth context
+    #[allow(dead_code)]
     fn build_test_auth_context(
         user: &delong_core::models::user::User,
         auth_method: &str,

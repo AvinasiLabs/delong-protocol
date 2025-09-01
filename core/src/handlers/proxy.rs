@@ -105,13 +105,9 @@ pub async fn proxy_handler(
     // Only include body for methods that typically have a body
     let request_body = match method {
         Method::GET | Method::HEAD | Method::DELETE | Method::OPTIONS => {
-            // These methods typically don't have a body
-            if body.is_empty() {
-                None
-            } else {
-                // If there is actually a body, include it
-                Some(body)
-            }
+            // These methods should NOT have a body according to HTTP spec
+            // Even if a body is present, we don't forward it to avoid content-length issues
+            None
         }
         _ => {
             // POST, PUT, PATCH, etc. - include body even if empty
