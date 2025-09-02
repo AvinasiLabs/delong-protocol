@@ -83,7 +83,7 @@ ON CONFLICT (role_id, permission_id) DO NOTHING;
 -- Password hash generated using bcrypt with 12 rounds
 -- IMPORTANT: Change this password immediately after first login!
 INSERT INTO users (username, email, password_hash, role, status, email_verified, provider) VALUES
-('admin', 'admin@delong.com', '$2b$12$818A0.u8S7A8ya4VPDXqweT/YRHY8mWQzBA9xKOroYc2phHCvGD9S', 'admin', 'active', true, 'email')
+('admin', 'admin@delong.com', '$2b$12$q1Mp93fMBjVDmnhS6D3.j.hMc9da0Fd1.fkBd8DNdj0EKFk/7Dt52', 'admin', 'active', true, 'email')
 ON CONFLICT (username) DO NOTHING;
 
 -- Output migration results

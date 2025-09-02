@@ -171,9 +171,9 @@ impl EmailService {
 
     /// Create verification code email template
     pub fn create_verification_code_template(code: &str) -> EmailTemplate {
-        let subject = "DeLong Protocol - Verification Code".to_string();
+        let subject = "DeLong Hub - Verification Code".to_string();
         let body_text = format!(
-            "Your DeLong Protocol verification code is: {}\n\n\
+            "Your DeLong Hub verification code is: {}\n\n\
              This code will expire in 15 minutes.\n\n\
              If you didn't request this verification, please ignore this email.",
             code
@@ -187,7 +187,7 @@ impl EmailService {
             </head>
             <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
                 <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-                    <h2>DeLong Protocol - Verification Code</h2>
+                    <h2>DeLong Hub - Verification Code</h2>
                     <p>Your verification code is:</p>
                     <div style="font-size: 24px; font-weight: bold; color: #007bff; padding: 10px; background: #f8f9fa; text-align: center; margin: 20px 0;">
                         {}
@@ -209,8 +209,8 @@ impl EmailService {
     /// Create test email template
     pub fn create_test_email_template() -> EmailTemplate {
         EmailTemplate {
-            subject: "DeLong Protocol - Test Email".to_string(),
-            body_text: "This is a test email from DeLong Protocol.\n\n\
+            subject: "DeLong Hub - Test Email".to_string(),
+            body_text: "This is a test email from DeLong Hub.\n\n\
                        If you received this email, the email service is working correctly."
                 .to_string(),
             body_html: Some(
@@ -218,7 +218,7 @@ impl EmailService {
                 <html>
                 <body style="font-family: Arial, sans-serif;">
                     <h2>Test Email</h2>
-                    <p>This is a test email from DeLong Protocol.</p>
+                    <p>This is a test email from DeLong Hub.</p>
                     <p>If you received this email, the email service is working correctly.</p>
                 </body>
                 </html>"#
@@ -230,29 +230,29 @@ impl EmailService {
     /// Create welcome email template
     pub fn create_welcome_email_template(username: &str) -> EmailTemplate {
         EmailTemplate {
-            subject: "Welcome to DeLong Protocol".to_string(),
+            subject: "Welcome to DeLong Hub".to_string(),
             body_text: format!(
                 "Welcome {}, \n\n\
-                 Thank you for joining DeLong Protocol, the decentralized AI audit platform.\n\n\
+                 Thank you for joining DeLong Hub, the decentralized AI audit platform.\n\n\
                  You can now submit AI algorithms for audit and participate in the committee voting process.\n\n\
                  Best regards,\n\
-                 The DeLong Protocol Team",
+                 The DeLong Hub Team",
                 username
             ),
             body_html: Some(format!(
                 r#"<!DOCTYPE html>
                 <html>
                 <body style="font-family: Arial, sans-serif;">
-                    <h2>Welcome to DeLong Protocol</h2>
+                    <h2>Welcome to DeLong Hub</h2>
                     <p>Dear {},</p>
-                    <p>Thank you for joining DeLong Protocol, the decentralized AI audit platform.</p>
+                    <p>Thank you for joining DeLong Hub, the decentralized AI audit platform.</p>
                     <p>You can now:</p>
                     <ul>
                         <li>Submit AI algorithms for audit</li>
                         <li>Participate in the committee voting process</li>
                         <li>View audit reports and results</li>
                     </ul>
-                    <p>Best regards,<br/>The DeLong Protocol Team</p>
+                    <p>Best regards,<br/>The DeLong Hub Team</p>
                 </body>
                 </html>"#,
                 username
@@ -263,9 +263,9 @@ impl EmailService {
     /// Create password reset email template
     pub fn create_password_reset_template(reset_token: &str) -> EmailTemplate {
         EmailTemplate {
-            subject: "DeLong Protocol - Password Reset Request".to_string(),
+            subject: "DeLong Hub - Password Reset Request".to_string(),
             body_text: format!(
-                "You requested a password reset for your DeLong Protocol account.\n\n\
+                "You requested a password reset for your DeLong Hub account.\n\n\
                  Your password reset code is: {}\n\n\
                  This code will expire in 15 minutes.\n\n\
                  If you didn't request this reset, please ignore this email and your password will remain unchanged.",
@@ -276,7 +276,7 @@ impl EmailService {
                 <html>
                 <body style="font-family: Arial, sans-serif;">
                     <h2>Password Reset Request</h2>
-                    <p>You requested a password reset for your DeLong Protocol account.</p>
+                    <p>You requested a password reset for your DeLong Hub account.</p>
                     <p>Your password reset code is:</p>
                     <div style="font-size: 24px; font-weight: bold; color: #dc3545; padding: 10px; background: #f8f9fa; text-align: center;">
                         {}
@@ -441,7 +441,6 @@ mod tests {
             smtp_password: String::new(),
             from_email: "test@example.com".to_string(),
             from_name: "Test".to_string(),
-            use_tls: true,
         };
 
         let result =
@@ -460,7 +459,6 @@ mod tests {
             smtp_password: "password".to_string(),
             from_email: "test@example.com".to_string(),
             from_name: "Test".to_string(),
-            use_tls: true,
         };
 
         let service = EmailService::new(config).await;
@@ -477,7 +475,6 @@ mod tests {
             smtp_password: String::new(),
             from_email: "test@example.com".to_string(),
             from_name: "Test".to_string(),
-            use_tls: true,
         };
 
         let service = EmailService::new(config).await;

@@ -124,7 +124,11 @@ pub async fn internal_jwt_middleware(
 
     // Verify request integrity
     let method = req.method().clone();
-    let path = original_uri.path().to_string();
+    let path = if let Some(query) = original_uri.query() {
+        format!("{}?{}", original_uri.path(), query)
+    } else {
+        original_uri.path().to_string()
+    };
 
     info!(
         "SECURE JWT: Verifying request - method: {}, path from OriginalUri: '{}'",

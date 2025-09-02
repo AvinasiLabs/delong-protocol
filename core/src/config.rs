@@ -164,8 +164,6 @@ pub struct EmailConfig {
     pub from_email: String,
     /// Sender display name
     pub from_name: String,
-    /// Whether to use TLS
-    pub use_tls: bool,
 }
 
 impl Config {
@@ -265,17 +263,13 @@ impl Config {
                     .parse()?,
                 smtp_host: env::var("SMTP_HOST").unwrap_or_else(|_| "smtp.gmail.com".to_string()),
                 smtp_port: env::var("SMTP_PORT")
-                    .unwrap_or_else(|_| "587".to_string())
+                    .unwrap_or_else(|_| "465".to_string())
                     .parse()?,
                 smtp_username: env::var("SMTP_USERNAME").unwrap_or_else(|_| String::new()),
                 smtp_password: env::var("SMTP_PASSWORD").unwrap_or_else(|_| String::new()),
-                from_email: env::var("SMTP_FROM")
+                from_email: env::var("FROM_EMAIL")
                     .unwrap_or_else(|_| "noreply@delong-protocol.com".to_string()),
-                from_name: env::var("SMTP_FROM_NAME")
-                    .unwrap_or_else(|_| "DeLong Protocol".to_string()),
-                use_tls: env::var("SMTP_USE_TLS")
-                    .unwrap_or_else(|_| "true".to_string())
-                    .parse()?,
+                from_name: env::var("FROM_NAME").unwrap_or_else(|_| "DeLong Protocol".to_string()),
             },
             jwt_secret: env::var("JWT_SECRET")
                 .unwrap_or_else(|_| "your-secret-key-change-in-production".to_string()),
@@ -337,7 +331,6 @@ impl Default for Config {
                 smtp_password: String::new(),
                 from_email: "noreply@delong-protocol.com".to_string(),
                 from_name: "DeLong Protocol".to_string(),
-                use_tls: true,
             },
             jwt_secret: "test-secret-key".to_string(),
             internal_jwt_secret: "internal-test-secret-key".to_string(),

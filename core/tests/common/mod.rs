@@ -123,6 +123,7 @@ pub async fn setup_test_app() -> Router {
 /// Set up a clean test application (clears test data before setup)
 ///
 /// This function creates a test application with a fresh database state
+#[allow(dead_code)]
 pub async fn setup_clean_test_app() -> Router {
     println!("Loading configuration for clean test app...");
     // Load configuration once
