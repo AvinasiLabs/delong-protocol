@@ -95,22 +95,46 @@ impl ChainSyncWorker {
             self.process_events_polling().await
         } else {
             info!("Using WebSocket subscription for event processing");
-            // Subscribe to events
-            let worker = self.clone();
-            self.contract_caller
-                .subscribe_events(move |log| {
-                    let worker = worker.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = worker.handle_log(log).await {
-                            error!("Failed to handle log: {}", e);
-                        }
-                    });
-                })
-                .await?;
 
-            // Keep the task alive
+            // Reconnect loop for WebSocket subscription
             loop {
-                time::sleep(Duration::from_secs(60)).await;
+                info!("Establishing WebSocket subscription...");
+
+                let worker = self.clone();
+                match self
+                    .contract_caller
+                    .subscribe_events(move |log| {
+                        let worker = worker.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = worker.handle_log(log).await {
+                                error!("Failed to handle log: {}", e);
+                            }
+                        });
+                    })
+                    .await
+                {
+                    Ok(handle) => {
+                        info!("WebSocket subscription established successfully");
+
+                        // Wait for the subscription task to complete (it shouldn't in normal operation)
+                        match handle.await {
+                            Ok(_) => {
+                                warn!("WebSocket subscription task ended normally");
+                            }
+                            Err(e) => {
+                                error!("WebSocket subscription task panicked: {}", e);
+                            }
+                        }
+
+                        warn!("WebSocket connection lost, will reconnect in 5 seconds...");
+                    }
+                    Err(e) => {
+                        error!("Failed to establish WebSocket subscription: {}, retrying in 5 seconds...", e);
+                    }
+                }
+
+                // Wait before reconnecting
+                time::sleep(Duration::from_secs(5)).await;
             }
         }
     }
@@ -256,13 +280,15 @@ impl ChainSyncWorker {
 
         // Update transaction status (assuming success since we received the event)
         let status = crate::models::TransactionStatus::Confirmed;
+        let tx_hash_str = format!("{:?}", tx_hash);
+
         sqlx::query!(
             r#"
             UPDATE blockchain_transaction
             SET status = $2, block_number = $3, block_timestamp = $4, updated_at = NOW()
             WHERE tx_hash = $1
             "#,
-            format!("{:?}", tx_hash),
+            tx_hash_str.clone(),
             status as crate::models::TransactionStatus,
             block_number as i64,
             block_timestamp
@@ -271,15 +297,14 @@ impl ChainSyncWorker {
         .await?;
 
         // Fetch the updated transaction
-        let transaction =
-            BlockchainTransaction::find_by_tx_hash(self.db.pool(), &format!("{:?}", tx_hash))
-                .await?
-                .ok_or_else(|| AppError::NotFound("Transaction not found".to_string()))?;
+        let transaction = BlockchainTransaction::find_by_tx_hash(self.db.pool(), &tx_hash_str)
+            .await?
+            .ok_or_else(|| AppError::NotFound("Transaction not found".to_string()))?;
 
         // Push transaction result
         if let Err(e) = self
             .notifier
-            .push_tx_result(format!("{:?}", tx_hash), &transaction)
+            .push_tx_result(tx_hash_str, &transaction)
             .await
         {
             warn!("Failed to send data registration notification: {}", e);
@@ -328,13 +353,15 @@ impl ChainSyncWorker {
 
         // Update transaction status
         let status = crate::models::TransactionStatus::Confirmed;
+        let tx_hash_str = format!("{:?}", tx_hash);
+
         sqlx::query!(
             r#"
             UPDATE blockchain_transaction
             SET status = $2, block_number = $3, block_timestamp = $4, updated_at = NOW()
             WHERE tx_hash = $1
             "#,
-            format!("{:?}", tx_hash),
+            tx_hash_str.clone(),
             status as crate::models::TransactionStatus,
             block_number as i64,
             block_timestamp
@@ -358,15 +385,14 @@ impl ChainSyncWorker {
         .await?;
 
         // Fetch the updated transaction
-        let transaction =
-            BlockchainTransaction::find_by_tx_hash(self.db.pool(), &format!("{:?}", tx_hash))
-                .await?
-                .ok_or_else(|| AppError::NotFound("Transaction not found".to_string()))?;
+        let transaction = BlockchainTransaction::find_by_tx_hash(self.db.pool(), &tx_hash_str)
+            .await?
+            .ok_or_else(|| AppError::NotFound("Transaction not found".to_string()))?;
 
         // Push transaction result
         if let Err(e) = self
             .notifier
-            .push_tx_result(format!("{:?}", tx_hash), &transaction)
+            .push_tx_result(tx_hash_str, &transaction)
             .await
         {
             warn!("Failed to send data usage notification: {}", e);
@@ -421,11 +447,8 @@ impl ChainSyncWorker {
         // So we don't create a new transaction record, just push nil result
 
         // Push nil transaction result (matches Go behavior)
-        if let Err(e) = self
-            .notifier
-            .push_tx_result(format!("{:?}", tx_hash), &())
-            .await
-        {
+        let tx_hash_str = format!("{:?}", tx_hash);
+        if let Err(e) = self.notifier.push_tx_result(tx_hash_str, &()).await {
             warn!("Failed to send algorithm resolution notification: {}", e);
         }
 
@@ -482,13 +505,15 @@ impl ChainSyncWorker {
 
         // Update transaction status
         let status = crate::models::TransactionStatus::Confirmed;
+        let tx_hash_str = format!("{:?}", tx_hash);
+
         sqlx::query!(
             r#"
             UPDATE blockchain_transaction
             SET status = $2, block_number = $3, block_timestamp = $4, updated_at = NOW()
             WHERE tx_hash = $1
             "#,
-            format!("{:?}", tx_hash),
+            tx_hash_str.clone(),
             status as crate::models::TransactionStatus,
             block_number as i64,
             block_timestamp
@@ -497,15 +522,14 @@ impl ChainSyncWorker {
         .await?;
 
         // Fetch the updated transaction
-        let transaction =
-            BlockchainTransaction::find_by_tx_hash(self.db.pool(), &format!("{:?}", tx_hash))
-                .await?
-                .ok_or_else(|| AppError::NotFound("Transaction not found".to_string()))?;
+        let transaction = BlockchainTransaction::find_by_tx_hash(self.db.pool(), &tx_hash_str)
+            .await?
+            .ok_or_else(|| AppError::NotFound("Transaction not found".to_string()))?;
 
         // Push transaction result
         if let Err(e) = self
             .notifier
-            .push_tx_result(format!("{:?}", tx_hash), &transaction)
+            .push_tx_result(tx_hash_str, &transaction)
             .await
         {
             warn!("Failed to send committee update notification: {}", e);
@@ -549,6 +573,8 @@ impl ChainSyncWorker {
 
         // Update transaction status
         let status = crate::models::TransactionStatus::Confirmed;
+        let tx_hash_str = format!("{:?}", tx_hash);
+
         let _transaction = sqlx::query!(
             r#"
             UPDATE blockchain_transaction
@@ -556,7 +582,7 @@ impl ChainSyncWorker {
             WHERE tx_hash = $1
             RETURNING id, entity_id, entity_type
             "#,
-            format!("{:?}", tx_hash),
+            tx_hash_str.clone(),
             status as crate::models::TransactionStatus,
             block_number as i64,
             block_timestamp
@@ -611,15 +637,14 @@ impl ChainSyncWorker {
         }
 
         // Fetch the updated transaction and send result
-        let transaction =
-            BlockchainTransaction::find_by_tx_hash(self.db.pool(), &format!("{:?}", tx_hash))
-                .await?
-                .ok_or_else(|| AppError::NotFound("Transaction not found".to_string()))?;
+        let transaction = BlockchainTransaction::find_by_tx_hash(self.db.pool(), &tx_hash_str)
+            .await?
+            .ok_or_else(|| AppError::NotFound("Transaction not found".to_string()))?;
 
         // Push transaction result
         if let Err(e) = self
             .notifier
-            .push_tx_result(format!("{:?}", tx_hash), &transaction)
+            .push_tx_result(tx_hash_str, &transaction)
             .await
         {
             warn!("Failed to send execution submission notification: {}", e);
@@ -665,6 +690,9 @@ impl ChainSyncWorker {
         let voted_at =
             chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(voted_at_naive, chrono::Utc);
 
+        // Format tx_hash once for consistency
+        let tx_hash_str = format!("{:?}", tx_hash);
+
         // Begin transaction to ensure atomicity
         let mut tx = self.db.pool().begin().await?;
 
@@ -692,7 +720,7 @@ impl ChainSyncWorker {
             INSERT INTO blockchain_transaction (tx_hash, entity_id, entity_type, status, block_number, block_timestamp)
             VALUES ($1, $2, $3, $4, $5, $6)
             "#,
-            format!("{:?}", tx_hash),
+            tx_hash_str.clone(),
             vote.id,
             "VOTE",
             status as crate::models::TransactionStatus,
@@ -711,15 +739,14 @@ impl ChainSyncWorker {
         );
 
         // Fetch the updated transaction
-        let transaction =
-            BlockchainTransaction::find_by_tx_hash(self.db.pool(), &format!("{:?}", tx_hash))
-                .await?
-                .ok_or_else(|| AppError::NotFound("Transaction not found".to_string()))?;
+        let transaction = BlockchainTransaction::find_by_tx_hash(self.db.pool(), &tx_hash_str)
+            .await?
+            .ok_or_else(|| AppError::NotFound("Transaction not found".to_string()))?;
 
         // Push transaction result
         if let Err(e) = self
             .notifier
-            .push_tx_result(format!("{:?}", tx_hash), &transaction)
+            .push_tx_result(tx_hash_str, &transaction)
             .await
         {
             warn!("Failed to send vote notification: {}", e);

@@ -1,8 +1,9 @@
 use alloy::primitives::Address;
 use avinapi::prelude::{
-    data, AppError, JsonResult, PaginatedResult, PaginationQuery, ValidatedJson, ValidatedQuery,
+    data, AppError, JsonResult, PaginatedResult, PaginationQuery, ValidatedJson,
+    ValidatedMultipartForm, ValidatedQuery,
 };
-use axum::extract::{Multipart, Path, State};
+use axum::extract::{Path, State};
 use ipfs_api_backend_hyper::IpfsApi;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -50,9 +51,10 @@ pub struct UpdateDatasetRequest {
     pub desc: Option<String>,
 }
 
-/// Form data for creating dataset (for validation after multipart parsing)
-#[derive(Debug, Validate)]
-struct CreateDatasetForm {
+/// Form data for creating dataset with file handling
+/// This is specifically designed to work with multipart form data that includes a file
+#[derive(Debug, Serialize, Deserialize, Validate)]
+pub struct CreateDatasetForm {
     #[validate(length(
         min = 1,
         max = 100,
@@ -61,7 +63,7 @@ struct CreateDatasetForm {
     pub name: String,
     #[validate(regex(
         path = "crate::ETHEREUM_ADDRESS_REGEX",
-        message = "Invalid Ethereum address"
+        message = "Invalid Ethereum address format. Expected: '0x' followed by 40 hexadecimal characters (e.g., 0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb9)"
     ))]
     pub author_wallet: String,
     pub ui_name: String,
@@ -70,96 +72,30 @@ struct CreateDatasetForm {
     pub author: Option<String>,
 }
 
-/// Create a new dataset
+/// Create a new dataset with file upload
 pub async fn create_dataset(
     State(state): State<AppState>,
-    mut multipart: Multipart,
+    ValidatedMultipartForm {
+        form: form_data,
+        files,
+    }: ValidatedMultipartForm<CreateDatasetForm>,
 ) -> JsonResult<CreateDatasetResponse> {
-    // Parse multipart form data
-    let mut form_data = CreateDatasetForm {
-        name: String::new(),
-        author_wallet: String::new(),
-        ui_name: String::new(),
-        desc: None,
-        file_format: String::new(),
-        author: None,
-    };
+    // Extract file data from the files HashMap
+    let file_data = files
+        .get("file")
+        .ok_or_else(|| AppError::Validation("No file uploaded".to_string()))?;
 
-    let mut file_data: Vec<u8> = Vec::new();
-    let mut file_path: Option<String> = None;
+    let file_path = file_data.filename.clone();
+    let file_bytes = &file_data.bytes;
 
-    while let Some(field) = multipart
-        .next_field()
-        .await
-        .map_err(|e| AppError::Validation(format!("Failed to read multipart field: {}", e)))?
-    {
-        let field_name = field
-            .name()
-            .ok_or_else(|| AppError::Validation("Field name is missing".to_string()))?
-            .to_string();
-
-        match field_name.as_str() {
-            "file" => {
-                file_path = field.file_name().map(|s| s.to_string());
-                file_data = field
-                    .bytes()
-                    .await
-                    .map_err(|e| AppError::Validation(format!("Failed to read file: {}", e)))?
-                    .to_vec();
-            }
-            "name" => {
-                form_data.name = field
-                    .text()
-                    .await
-                    .map_err(|e| AppError::Validation(format!("Failed to read name: {}", e)))?;
-            }
-            "author_wallet" => {
-                form_data.author_wallet = field.text().await.map_err(|e| {
-                    AppError::Validation(format!("Failed to read author_wallet: {}", e))
-                })?;
-            }
-            "ui_name" => {
-                form_data.ui_name = field
-                    .text()
-                    .await
-                    .map_err(|e| AppError::Validation(format!("Failed to read ui_name: {}", e)))?;
-            }
-            "desc" => {
-                form_data.desc =
-                    Some(field.text().await.map_err(|e| {
-                        AppError::Validation(format!("Failed to read desc: {}", e))
-                    })?);
-            }
-            "file_format" => {
-                form_data.file_format = field.text().await.map_err(|e| {
-                    AppError::Validation(format!("Failed to read file_format: {}", e))
-                })?;
-            }
-            "author" => {
-                form_data.author =
-                    Some(field.text().await.map_err(|e| {
-                        AppError::Validation(format!("Failed to read author: {}", e))
-                    })?);
-            }
-            _ => {
-                // Ignore unknown fields
-            }
-        }
+    // Validate that we have actual file content
+    if file_bytes.is_empty() {
+        return Err(AppError::Validation("Uploaded file is empty".to_string()));
     }
-
-    // Validate that we have a file
-    if file_data.is_empty() {
-        return Err(AppError::Validation("No file uploaded".to_string()));
-    }
-
-    // Validate form data
-    form_data
-        .validate()
-        .map_err(|e| AppError::Validation(e.to_string()))?;
 
     // Calculate file hash
     let mut hasher = Sha256::new();
-    hasher.update(&file_data);
+    hasher.update(file_bytes);
     let file_hash = format!("0x{}", hex::encode(hasher.finalize()));
 
     // Check for duplicate file hash
@@ -179,7 +115,7 @@ pub async fn create_dataset(
     info!("Encrypting dataset for author: {}", key_author);
     let encrypted_data = state
         .tee_crypto
-        .encrypt_dataset(&file_data, key_author)
+        .encrypt_dataset(file_bytes, key_author)
         .await
         .map_err(|e| AppError::Internal(format!("Failed to encrypt dataset: {}", e)))?;
 
@@ -202,7 +138,7 @@ pub async fn create_dataset(
 
         match state
             .sample_generator
-            .generate_csv_sample(&file_data, None)
+            .generate_csv_sample(file_bytes, None)
             .await
         {
             Ok(sample_csv) => {
@@ -236,7 +172,7 @@ pub async fn create_dataset(
         desc: form_data.desc,
         file_hash: file_hash.clone(),
         ipfs_cid: ipfs_cid.clone(),
-        file_size: file_data.len() as i64,
+        file_size: file_bytes.len() as i64,
         file_format: form_data.file_format,
         author: form_data.author,
         author_wallet: form_data.author_wallet.clone(),

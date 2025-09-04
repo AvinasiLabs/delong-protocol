@@ -694,7 +694,7 @@ impl ContractCaller {
     }
 
     /// Subscribe to contract events
-    pub async fn subscribe_events<F>(&self, callback: F) -> Result<()>
+    pub async fn subscribe_events<F>(&self, callback: F) -> Result<tokio::task::JoinHandle<()>>
     where
         F: Fn(Log) + Send + Sync + 'static,
     {
@@ -715,17 +715,23 @@ impl ContractCaller {
             .await
             .map_err(|e| ContractError::ProviderError(e.to_string()))?;
 
-        // Spawn a task to handle events
-        tokio::spawn(async move {
+        // Spawn a task to handle events and return the handle
+        // IMPORTANT: Move provider into the task to keep it alive
+        let handle = tokio::spawn(async move {
+            // Keep provider alive by moving it into this task
+            let _provider = provider;
             let mut stream = sub.into_stream();
             use futures::StreamExt;
+
+            info!("WebSocket event stream started");
             while let Some(log) = stream.next().await {
                 callback(log);
             }
+            warn!("WebSocket event stream ended");
         });
 
         info!("Subscribed to contract events");
-        Ok(())
+        Ok(handle)
     }
 
     /// Get past events from the contracts
