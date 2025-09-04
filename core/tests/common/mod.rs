@@ -295,6 +295,70 @@ pub fn authenticated_request<T: serde::Serialize>(
         .unwrap()
 }
 
+/// Create an authenticated request with cookie
+///
+/// Helper function to create cookie-authenticated requests for testing
+#[allow(dead_code)]
+pub fn cookie_authenticated_request<T: serde::Serialize>(
+    method: &str,
+    uri: &str,
+    body: T,
+    access_token: &str,
+    refresh_token: &str,
+) -> axum::http::Request<axum::body::Body> {
+    use axum::body::Body;
+    use axum::http::{Request, header};
+
+    Request::builder()
+        .method(method)
+        .uri(uri)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(
+            header::COOKIE,
+            format!(
+                "access_token={}; refresh_token={}",
+                access_token, refresh_token
+            ),
+        )
+        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+        .unwrap()
+}
+
+/// Extract cookies from response headers
+///
+/// Helper function to extract access_token and refresh_token cookies from response
+#[allow(dead_code)]
+pub fn extract_cookies_from_response(
+    response: &axum::http::Response<axum::body::Body>,
+) -> (Option<String>, Option<String>) {
+    use axum::http::header;
+
+    let mut access_token = None;
+    let mut refresh_token = None;
+
+    for cookie_header in response.headers().get_all(header::SET_COOKIE) {
+        if let Ok(cookie_str) = cookie_header.to_str() {
+            if cookie_str.starts_with("access_token=") {
+                let token = cookie_str
+                    .split(';')
+                    .next()
+                    .and_then(|s| s.strip_prefix("access_token="))
+                    .map(|s| s.to_string());
+                access_token = token;
+            } else if cookie_str.starts_with("refresh_token=") {
+                let token = cookie_str
+                    .split(';')
+                    .next()
+                    .and_then(|s| s.strip_prefix("refresh_token="))
+                    .map(|s| s.to_string());
+                refresh_token = token;
+            }
+        }
+    }
+
+    (access_token, refresh_token)
+}
+
 /// Generate a test email address
 ///
 /// Creates a unique email address for testing

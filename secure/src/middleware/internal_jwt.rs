@@ -27,12 +27,6 @@ pub struct AuthContext {
     pub email: String,
     /// Authentication method (jwt or api_key)
     pub auth_method: String,
-    /// Tenant/organization ID if applicable
-    pub tenant_id: Option<String>,
-    /// Permission scopes
-    pub scopes: Vec<String>,
-    /// Original client IP
-    pub client_ip: Option<String>,
     /// Request ID for tracing
     pub request_id: String,
 }
@@ -86,9 +80,6 @@ pub async fn internal_jwt_middleware(
             user_id: "test-user-001".to_string(),
             email: "test@example.com".to_string(),
             auth_method: "test".to_string(),
-            tenant_id: None,
-            scopes: vec!["read".to_string(), "write".to_string()],
-            client_ip: Some("127.0.0.1".to_string()),
             request_id: "test-request-id".to_string(),
         };
 
@@ -97,7 +88,6 @@ pub async fn internal_jwt_middleware(
             user_id: mock_context.user_id.clone(),
             email: mock_context.email.clone(),
             auth_method: mock_context.auth_method.clone(),
-            scopes: mock_context.scopes.clone(),
         });
         req.extensions_mut().insert(mock_context);
 
@@ -154,10 +144,11 @@ pub async fn internal_jwt_middleware(
     }
 
     // Log the authenticated request
-    debug!(
+    info!(
         "Authenticated request from Core: user={}, method={}, path={}, auth_method={}",
         claims.context.user_id, method, path, claims.context.auth_method
     );
+    info!("User Context in jwt: {:?}", claims.context);
 
     // Store auth context in request extensions
     req.extensions_mut().insert(claims.context.clone());
@@ -165,7 +156,6 @@ pub async fn internal_jwt_middleware(
         user_id: claims.context.user_id.clone(),
         email: claims.context.email.clone(),
         auth_method: claims.context.auth_method.clone(),
-        scopes: claims.context.scopes.clone(),
     });
 
     // Continue with the request
@@ -298,30 +288,6 @@ pub struct AuthenticatedUser {
     pub user_id: String,
     pub email: String,
     pub auth_method: String,
-    pub scopes: Vec<String>,
-}
-
-/// Extension trait for extracting authenticated user from request
-pub trait AuthExt {
-    fn auth_context(&self) -> Option<&AuthContext>;
-    fn authenticated_user(&self) -> Option<&AuthenticatedUser>;
-    fn has_scope(&self, scope: &str) -> bool;
-}
-
-impl AuthExt for Request<Body> {
-    fn auth_context(&self) -> Option<&AuthContext> {
-        self.extensions().get::<AuthContext>()
-    }
-
-    fn authenticated_user(&self) -> Option<&AuthenticatedUser> {
-        self.extensions().get::<AuthenticatedUser>()
-    }
-
-    fn has_scope(&self, scope: &str) -> bool {
-        self.authenticated_user()
-            .map(|user| user.scopes.contains(&scope.to_string()))
-            .unwrap_or(false)
-    }
 }
 
 #[cfg(test)]
@@ -382,9 +348,6 @@ mod tests {
                 user_id: "user123".to_string(),
                 email: "test@example.com".to_string(),
                 auth_method: "jwt".to_string(),
-                tenant_id: None,
-                scopes: vec!["read".to_string(), "write".to_string()],
-                client_ip: Some("192.168.1.1".to_string()),
                 request_id: "req123".to_string(),
             },
             request_signature: RequestSignature {

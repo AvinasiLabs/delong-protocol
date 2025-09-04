@@ -3,17 +3,20 @@
 //! This module sets up all HTTP routes, middleware, and application state
 //! for the core service.
 
+use axum::http::{HeaderName, Method, header};
 use axum::{
     Router,
     routing::{delete, get, post, put},
 };
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 use utoipa::OpenApi;
 use utoipa_scalar::Scalar;
 
 use sqlx::PgPool;
 use std::sync::Arc;
+use tracing::info;
 
+use crate::middleware::admin_cookie_auth_middleware;
 use crate::{
     Config, handlers,
     infra::{
@@ -21,8 +24,10 @@ use crate::{
         verification::VerificationStore,
     },
     middleware::{
-        admin_only_middleware, flexible_auth_middleware, jwt_only_middleware,
-        request_id_middleware, response_transformer,
+        flexible_auth_middleware,
+        // jwt_only_middleware,
+        request_id_middleware,
+        response_transformer,
     },
     openapi::ApiDoc,
     utils::jwt::JwtConfig,
@@ -77,10 +82,11 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/update-wallet",
             post(handlers::auth::update_wallet_address),
-        )
+        ) // Protected auth route - requires authentication
+        .route("/me", get(handlers::auth::get_current_user))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
-            jwt_only_middleware,
+            crate::middleware::auth::cookie_auth_middleware,
         ));
 
     // Protected AI audit routes (JWT only - no API keys allowed)
@@ -88,7 +94,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/", get(handlers::ai_audit::get_ai_audit_reports))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
-            jwt_only_middleware,
+            crate::middleware::auth::cookie_auth_middleware,
         ));
 
     // Protected API key management routes (JWT only - API keys cannot manage themselves)
@@ -101,7 +107,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/stats", get(handlers::api_key::get_user_api_key_stats))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
-            jwt_only_middleware,
+            crate::middleware::auth::cookie_auth_middleware,
         ));
 
     // Protected admin routes (JWT only with admin role)
@@ -118,16 +124,16 @@ pub fn create_router(state: AppState) -> Router {
         )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
-            admin_only_middleware,
+            admin_cookie_auth_middleware,
         ))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
-            jwt_only_middleware,
+            crate::middleware::auth::cookie_auth_middleware,
         ));
 
     // Protected proxy routes to Secure service (if configured)
     let secure_proxy_routes = if state.proxy_client.is_some() {
-        println!("Creating secure proxy routes - proxy_client is available");
+        info!("Creating secure proxy routes - proxy_client is available");
         Router::new()
             // WebSocket endpoint (flexible - accepts both JWT and API Key)
             .route(
@@ -187,6 +193,8 @@ pub fn create_router(state: AppState) -> Router {
         // Public auth routes
         .route("/auth/register", post(handlers::auth::register_user))
         .route("/auth/login", post(handlers::auth::login_user))
+        .route("/auth/logout", post(handlers::auth::logout_user))
+        .route("/auth/refresh", post(handlers::auth::refresh_token))
         .route(
             "/auth/send-code",
             post(handlers::auth::send_verification_code),
@@ -226,9 +234,30 @@ pub fn create_router(state: AppState) -> Router {
         // ))
         .layer(
             CorsLayer::new()
-                .allow_origin(Any)
-                .allow_methods(Any)
-                .allow_headers(Any),
+                .allow_origin(AllowOrigin::list([
+                    "http://localhost:3000".parse().unwrap(),
+                    "http://localhost:8080".parse().unwrap(),
+                    "http://127.0.0.1:3000".parse().unwrap(),
+                    "http://127.0.0.1:8080".parse().unwrap(),
+                ]))
+                .allow_methods(AllowMethods::list([
+                    Method::GET,
+                    Method::POST,
+                    Method::PUT,
+                    Method::DELETE,
+                    Method::OPTIONS,
+                    Method::PATCH,
+                ]))
+                .allow_headers(AllowHeaders::list([
+                    header::CONTENT_TYPE,
+                    header::AUTHORIZATION,
+                    header::ACCEPT,
+                    header::ORIGIN,
+                    header::COOKIE,
+                    HeaderName::from_static("x-request-id"),
+                    HeaderName::from_static("x-api-key"),
+                ]))
+                .allow_credentials(true),
         )
         .with_state(state)
 }

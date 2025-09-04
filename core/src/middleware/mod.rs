@@ -10,11 +10,13 @@ pub use auth::{
     AuthMethod,
     // Core types
     AuthUser,
-    admin_only_middleware,
-    api_key_only_middleware,
     flexible_auth_middleware,
-    // Middleware functions
-    jwt_only_middleware,
+};
+
+// Export cookie authentication middleware
+pub use auth::{
+    admin_cookie_auth_middleware, clear_auth_cookies, cookie_auth_middleware,
+    optional_cookie_auth_middleware, set_auth_cookies,
 };
 
 // Export rate limiting middleware

@@ -93,6 +93,29 @@ pub fn generate_token(user: &User, config: &JwtConfig) -> AppResult<String> {
         .map_err(|e| AppError::Config(format!("JWT encoding error: {}", e)))
 }
 
+/// Generate refresh token for a user with longer expiration
+pub fn generate_refresh_token(user: &User, config: &JwtConfig) -> AppResult<String> {
+    let now = Utc::now();
+    // Refresh token expires in 30 days
+    let exp = now + Duration::days(30);
+
+    let claims = Claims {
+        sub: user.id.to_string(),
+        email: user.email.clone(),
+        username: user.username.clone(),
+        iat: now.timestamp(),
+        exp: exp.timestamp(),
+        roles: vec![user.role.clone()],
+        permissions: vec![],
+    };
+
+    let header = Header::default();
+    let encoding_key = EncodingKey::from_secret(config.secret.as_ref());
+
+    encode(&header, &claims, &encoding_key)
+        .map_err(|e| AppError::Config(format!("JWT encoding error: {}", e)))
+}
+
 /// Verify JWT token and extract claims
 pub fn verify_token(token: &str, config: &JwtConfig) -> AppResult<Claims> {
     let decoding_key = DecodingKey::from_secret(config.secret.as_ref());
@@ -111,6 +134,30 @@ pub fn verify_token(token: &str, config: &JwtConfig) -> AppResult<Claims> {
                 AppError::Authentication("Invalid signature".to_string())
             }
             _ => AppError::Authentication("Token verification failed".to_string()),
+        })
+}
+
+/// Verify refresh token and extract claims
+/// Refresh tokens have relaxed validation rules compared to access tokens
+pub fn verify_refresh_token(token: &str, config: &JwtConfig) -> AppResult<Claims> {
+    let decoding_key = DecodingKey::from_secret(config.secret.as_ref());
+    let mut validation = Validation::default();
+    // Refresh tokens can have longer expiration, but we still validate it
+    validation.leeway = 60; // Allow 60 seconds of leeway for clock skew
+
+    decode::<Claims>(token, &decoding_key, &validation)
+        .map(|data| data.claims)
+        .map_err(|e| match e.kind() {
+            jsonwebtoken::errors::ErrorKind::ExpiredSignature => {
+                AppError::Authentication("Refresh token expired".to_string())
+            }
+            jsonwebtoken::errors::ErrorKind::InvalidToken => {
+                AppError::Authentication("Invalid refresh token".to_string())
+            }
+            jsonwebtoken::errors::ErrorKind::InvalidSignature => {
+                AppError::Authentication("Invalid refresh token signature".to_string())
+            }
+            _ => AppError::Authentication("Refresh token verification failed".to_string()),
         })
 }
 
@@ -148,29 +195,23 @@ pub fn is_token_expired(token: &str, config: &JwtConfig) -> bool {
     }
 }
 
-/// Refresh JWT token
-pub fn refresh_token(old_token: &str, config: &JwtConfig) -> AppResult<String> {
-    // Verify the old token (allow expired tokens for refresh)
-    let decoding_key = DecodingKey::from_secret(config.secret.as_ref());
-    let mut validation = Validation::default();
-    validation.validate_exp = false; // Don't validate expiration for refresh
+/// Refresh JWT token using a refresh token
+pub fn refresh_token(refresh_token_str: &str, config: &JwtConfig) -> AppResult<String> {
+    // Verify the refresh token (must be valid and not expired)
+    let claims = verify_refresh_token(refresh_token_str, config)?;
 
-    let old_claims = decode::<Claims>(old_token, &decoding_key, &validation)
-        .map(|data| data.claims)
-        .map_err(|_| AppError::Authentication("Invalid token for refresh".to_string()))?;
-
-    // Generate new token with same user info but new expiration
+    // Generate new access token with same user info but new expiration
     let now = Utc::now();
     let exp = now + Duration::hours(config.expiration_hours);
 
     let new_claims = Claims {
-        sub: old_claims.sub,
-        email: old_claims.email,
-        username: old_claims.username,
+        sub: claims.sub,
+        email: claims.email,
+        username: claims.username,
         iat: now.timestamp(),
         exp: exp.timestamp(),
-        roles: old_claims.roles,
-        permissions: old_claims.permissions,
+        roles: claims.roles,
+        permissions: claims.permissions,
     };
 
     let header = Header::default();

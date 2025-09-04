@@ -23,8 +23,8 @@ pub use api_key::{
     update_api_key,
 };
 pub use auth::{
-    google_auth_callback, google_auth_url, login_user, register_user, send_verification_code,
-    update_wallet_address,
+    get_current_user, google_auth_callback, google_auth_url, login_user, register_user,
+    send_verification_code, update_wallet_address,
 };
 pub use health::health;
 pub use proxy::{extract_auth_method, proxy_handler, proxy_routes, secure_health_check};

@@ -1,19 +1,23 @@
 //! Simplified authentication middleware for Core service
 
+use crate::models::api_key::ApiKey;
 use crate::{
     AppState,
-    models::{api_key::ApiKey, user::User},
+    models::user::User,
     utils::jwt::{extract_user_id, verify_token},
 };
 use avinapi::prelude::AppError;
-use axum::{
-    body::Body,
-    extract::{FromRequestParts, State},
-    http::{Request, request::Parts},
-    middleware::Next,
-    response::Response,
-};
+use axum::{body::Body, extract::State, http::Request, middleware::Next, response::Response};
+use axum::{extract::FromRequestParts, http::request::Parts};
+use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
+use cookie::time::Duration as TimeDuration;
 use tracing::{debug, error};
+
+// Cookie configuration constants
+const ACCESS_TOKEN_COOKIE: &str = "access_token";
+const REFRESH_TOKEN_COOKIE: &str = "refresh_token";
+const ACCESS_TOKEN_DURATION_HOURS: i64 = 24;
+const REFRESH_TOKEN_DURATION_DAYS: i64 = 30;
 
 // ============================================================================
 // Core Types
@@ -125,62 +129,10 @@ where
 // Middleware Functions
 // ============================================================================
 
-/// JWT-only authentication middleware
-pub async fn jwt_only_middleware(
-    State(state): State<AppState>,
-    mut req: Request<Body>,
-    next: Next,
-) -> Result<Response, AppError> {
-    // Check for API key (not allowed)
-    if extract_api_key(&req).is_some() {
-        return Err(AppError::Authentication(
-            "This endpoint requires JWT authentication. API keys are not accepted.".into(),
-        ));
-    }
-
-    // Extract and validate JWT
-    let token = extract_jwt_token(&req)
-        .ok_or_else(|| AppError::Authentication("JWT token required".into()))?;
-
-    // Validate token and get user
-    let user = validate_jwt_token(&state, &token).await?;
-
-    // Store auth context
-    req.extensions_mut().insert(AuthUser::from_jwt(user, token));
-
-    Ok(next.run(req).await)
-}
-
-/// API key-only authentication middleware
-pub async fn api_key_only_middleware(
-    State(state): State<AppState>,
-    mut req: Request<Body>,
-    next: Next,
-) -> Result<Response, AppError> {
-    // Check for JWT (not allowed)
-    if extract_jwt_token(&req).is_some() {
-        return Err(AppError::Authentication(
-            "This endpoint requires API key authentication. JWT tokens are not accepted.".into(),
-        ));
-    }
-
-    // Extract and validate API key
-    let api_key =
-        extract_api_key(&req).ok_or_else(|| AppError::Authentication("API key required".into()))?;
-
-    let (key_record, user) =
-        validate_api_key(&state, &api_key, req.uri().path(), req.method().as_str()).await?;
-
-    // Store auth context
-    req.extensions_mut()
-        .insert(AuthUser::from_api_key(user, key_record));
-
-    Ok(next.run(req).await)
-}
-
-/// Flexible authentication middleware - accepts both JWT and API key
+/// Flexible authentication middleware - accepts JWT (from header or cookie) and API key
 pub async fn flexible_auth_middleware(
     State(state): State<AppState>,
+    jar: CookieJar,
     mut req: Request<Body>,
     next: Next,
 ) -> Result<Response, AppError> {
@@ -188,67 +140,29 @@ pub async fn flexible_auth_middleware(
     if let Some(api_key) = extract_api_key(&req) {
         debug!("Using API key authentication");
         let (key_record, user) =
-            validate_api_key(&state, &api_key, req.uri().path(), req.method().as_str()).await?;
+            validate_apikey_and_get_user(&state, &api_key, req.uri().path(), req.method().as_str())
+                .await?;
         req.extensions_mut()
             .insert(AuthUser::from_api_key(user, key_record));
         return Ok(next.run(req).await);
     }
 
-    // Try JWT
-    if let Some(token) = extract_jwt_token(&req) {
-        debug!("Using JWT authentication");
-        let user = validate_jwt_token(&state, &token).await?;
+    // Try JWT from httpOnly cookie
+    if let Some(token) = extract_access_token(&jar) {
+        debug!("Using JWT authentication from cookie");
+        let user = validate_jwt_and_get_user(&state, &token).await?;
         req.extensions_mut().insert(AuthUser::from_jwt(user, token));
         return Ok(next.run(req).await);
     }
 
     Err(AppError::Authentication(
-        "Authentication required. Please provide either a JWT token or API key.".into(),
+        "Authentication required. Please provide either a JWT token (in Authorization header or cookie) or API key.".into(),
     ))
-}
-
-/// Admin-only middleware (JWT authentication required)
-pub async fn admin_only_middleware(
-    State(state): State<AppState>,
-    mut req: Request<Body>,
-    next: Next,
-) -> Result<Response, AppError> {
-    // Admin endpoints only support JWT
-    let token = extract_jwt_token(&req).ok_or_else(|| {
-        AppError::Authentication("Admin access requires JWT authentication".into())
-    })?;
-
-    // Validate token and get user
-    let user = validate_jwt_token(&state, &token).await?;
-
-    // Check admin role
-    if user.role != "admin" {
-        return Err(AppError::Authorization("Admin access required".to_string()));
-    }
-
-    // Store auth context
-    req.extensions_mut().insert(AuthUser::from_jwt(user, token));
-
-    Ok(next.run(req).await)
 }
 
 // ============================================================================
 // Helper Functions
 // ============================================================================
-
-/// Extract JWT token from request headers
-fn extract_jwt_token(req: &Request<Body>) -> Option<String> {
-    req.headers()
-        .get("Authorization")
-        .and_then(|h| h.to_str().ok())
-        .and_then(|auth| {
-            if auth.starts_with("Bearer ") {
-                Some(auth[7..].to_string())
-            } else {
-                None
-            }
-        })
-}
 
 /// Extract API key from request headers
 fn extract_api_key(req: &Request<Body>) -> Option<String> {
@@ -276,12 +190,13 @@ fn extract_api_key(req: &Request<Body>) -> Option<String> {
 }
 
 /// Validate JWT token and return user
-async fn validate_jwt_token(state: &AppState, token: &str) -> Result<User, AppError> {
+async fn validate_jwt_and_get_user(state: &AppState, token: &str) -> Result<User, AppError> {
     // Validate the JWT token using the actual JWT service
     let _claims = verify_token(token, &state.jwt_config)?;
 
     // Extract user ID from the token
     let user_id = extract_user_id(token, &state.jwt_config)?;
+    debug!("extracted user id: {}", user_id);
 
     // Fetch the user from database
     User::find_by_id(&state.db, user_id)
@@ -291,7 +206,7 @@ async fn validate_jwt_token(state: &AppState, token: &str) -> Result<User, AppEr
 }
 
 /// Validate API key and return key record and user
-async fn validate_api_key(
+async fn validate_apikey_and_get_user(
     state: &AppState,
     api_key: &str,
     path: &str,
@@ -330,4 +245,150 @@ async fn validate_api_key(
         .ok_or_else(|| AppError::Authentication("User not found for API key".into()))?;
 
     Ok((key_record, user))
+}
+
+// ============================================================================
+// Cookie Helper Functions
+// ============================================================================
+
+/// Set authentication cookies with httpOnly flag
+pub fn set_auth_cookies(jar: CookieJar, access_token: &str, refresh_token: &str) -> CookieJar {
+    // Set access token cookie
+    let access_cookie = Cookie::build((ACCESS_TOKEN_COOKIE, access_token.to_string()))
+        .http_only(true)
+        .same_site(SameSite::Lax)
+        .path("/")
+        .max_age(TimeDuration::hours(ACCESS_TOKEN_DURATION_HOURS))
+        .build();
+
+    let jar = jar.add(access_cookie);
+
+    // Set refresh token cookie
+    let refresh_cookie = Cookie::build((REFRESH_TOKEN_COOKIE, refresh_token.to_string()))
+        .http_only(true)
+        .same_site(SameSite::Lax)
+        .path("/")
+        .max_age(TimeDuration::days(REFRESH_TOKEN_DURATION_DAYS))
+        .build();
+
+    let jar = jar.add(refresh_cookie);
+
+    debug!("Auth cookies set successfully");
+    jar
+}
+
+/// Clear authentication cookies
+pub fn clear_auth_cookies(jar: CookieJar) -> CookieJar {
+    // Create expired access token cookie with same path and attributes
+    let access_cookie = Cookie::build((ACCESS_TOKEN_COOKIE, ""))
+        .http_only(true)
+        .same_site(SameSite::Lax)
+        .path("/")
+        .max_age(TimeDuration::seconds(0)) // Set to 0 to expire immediately
+        .build();
+
+    let jar = jar.add(access_cookie);
+
+    // Create expired refresh token cookie with same path and attributes
+    let refresh_cookie = Cookie::build((REFRESH_TOKEN_COOKIE, ""))
+        .http_only(true)
+        .same_site(SameSite::Lax)
+        .path("/")
+        .max_age(TimeDuration::seconds(0)) // Set to 0 to expire immediately
+        .build();
+
+    let jar = jar.add(refresh_cookie);
+
+    debug!("Auth cookies cleared");
+    jar
+}
+
+/// Extract access token from cookies
+pub fn extract_access_token(jar: &CookieJar) -> Option<String> {
+    jar.get(ACCESS_TOKEN_COOKIE)
+        .map(|cookie| cookie.value().to_string())
+}
+
+/// Extract refresh token from cookies
+pub fn extract_refresh_token(jar: &CookieJar) -> Option<String> {
+    jar.get(REFRESH_TOKEN_COOKIE)
+        .map(|cookie| cookie.value().to_string())
+}
+
+// ============================================================================
+// Middleware Functions
+// ============================================================================
+
+/// Cookie-based authentication middleware
+/// Extracts JWT from httpOnly cookies and validates it
+pub async fn cookie_auth_middleware(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    mut req: Request<Body>,
+    next: Next,
+) -> Result<Response, AppError> {
+    // Try to extract access token from cookies
+    let token = extract_access_token(&jar).ok_or_else(|| {
+        debug!("No access token found in cookies");
+        AppError::Authentication("Authentication required".into())
+    })?;
+
+    // Validate token and get user
+    match validate_jwt_and_get_user(&state, &token).await {
+        Ok(user) => {
+            // Store auth context in request extensions
+            req.extensions_mut().insert(AuthUser::from_jwt(user, token));
+            Ok(next.run(req).await)
+        }
+        Err(e) => {
+            error!("Token validation failed: {:?}", e);
+            Err(e)
+        }
+    }
+}
+
+/// Optional cookie authentication middleware
+/// Tries to authenticate via cookies but doesn't fail if no cookies present
+pub async fn optional_cookie_auth_middleware(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    mut req: Request<Body>,
+    next: Next,
+) -> Result<Response, AppError> {
+    // Try to extract access token from cookies
+    if let Some(token) = extract_access_token(&jar) {
+        // Try to validate token
+        if let Ok(user) = validate_jwt_and_get_user(&state, &token).await {
+            // Store auth context if successful
+            req.extensions_mut().insert(AuthUser::from_jwt(user, token));
+        }
+    }
+
+    // Continue regardless of authentication status
+    Ok(next.run(req).await)
+}
+
+/// Admin-only cookie authentication middleware
+pub async fn admin_cookie_auth_middleware(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    mut req: Request<Body>,
+    next: Next,
+) -> Result<Response, AppError> {
+    // Extract and validate token from cookies
+    let token = extract_access_token(&jar)
+        .ok_or_else(|| AppError::Authentication("Admin access requires authentication".into()))?;
+
+    // Validate token and get user
+    let user = validate_jwt_and_get_user(&state, &token).await?;
+
+    // Check admin role
+    if user.role != "admin" {
+        return Err(AppError::Authorization("Admin access required".to_string()));
+    }
+
+    // Store auth context
+    req.extensions_mut().insert(AuthUser::from_jwt(user, token));
+
+    Ok(next.run(req).await)
 }

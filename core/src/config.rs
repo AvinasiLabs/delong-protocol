@@ -27,6 +27,8 @@ pub struct Config {
     pub verification: VerificationConfig,
     /// Email configuration for SMTP service
     pub email: EmailConfig,
+    /// Environment (development, staging, production)
+    pub environment: String,
     /// JWT secret for authentication
     pub jwt_secret: String,
     /// Internal JWT secret for service-to-service communication
@@ -271,6 +273,7 @@ impl Config {
                     .unwrap_or_else(|_| "noreply@delong-protocol.com".to_string()),
                 from_name: env::var("FROM_NAME").unwrap_or_else(|_| "DeLong Protocol".to_string()),
             },
+            environment: env::var("ENVIRONMENT").unwrap_or_else(|_| "development".to_string()),
             jwt_secret: env::var("JWT_SECRET")
                 .unwrap_or_else(|_| "your-secret-key-change-in-production".to_string()),
             internal_jwt_secret: env::var("INTERNAL_JWT_SECRET")
@@ -326,12 +329,13 @@ impl Default for Config {
             email: EmailConfig {
                 enabled: false,
                 smtp_host: "smtp.gmail.com".to_string(),
-                smtp_port: 587,
+                smtp_port: 465,
                 smtp_username: String::new(),
                 smtp_password: String::new(),
                 from_email: "noreply@delong-protocol.com".to_string(),
                 from_name: "DeLong Protocol".to_string(),
             },
+            environment: "development".to_string(),
             jwt_secret: "test-secret-key".to_string(),
             internal_jwt_secret: "internal-test-secret-key".to_string(),
             // development_mode: false,

@@ -279,7 +279,11 @@ fn init_logging() -> AppResult<()> {
 
     tracing_subscriber::registry()
         .with(env_filter)
-        .with(tracing_subscriber::fmt::layer())
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_file(true)
+                .with_line_number(true),
+        )
         .init();
 
     info!("Logging initialized");

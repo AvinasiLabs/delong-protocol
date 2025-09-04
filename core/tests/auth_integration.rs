@@ -7,7 +7,7 @@ use axum::{
     http::{Request, StatusCode},
 };
 use common::{
-    authenticated_request, extract_json_body, generate_test_email, generate_test_username,
+    extract_cookies_from_response, extract_json_body, generate_test_email, generate_test_username,
     json_request, setup_clean_test_app,
 };
 use serde_json::json;
@@ -83,8 +83,9 @@ async fn test_user_registration_flow() {
     println!("Response body: {:?}", body);
 
     assert_eq!(body["code"], "SUCCESS");
-    assert!(body["data"]["access_token"].is_string());
-    assert!(body["data"]["refresh_token"].is_string());
+    // Tokens are now in httpOnly cookies, not in response body
+    assert_eq!(body["data"]["access_token"], "");
+    assert_eq!(body["data"]["refresh_token"], "");
     assert_eq!(body["data"]["user"]["username"], username);
     assert_eq!(body["data"]["user"]["email"], email);
     println!("Test completed successfully");
@@ -133,8 +134,9 @@ async fn test_user_login_flow() {
 
     let body = extract_json_body(response).await;
     assert_eq!(body["code"], "SUCCESS");
-    assert!(body["data"]["access_token"].is_string());
-    assert!(body["data"]["refresh_token"].is_string());
+    // Tokens are now in httpOnly cookies, not in response body
+    assert_eq!(body["data"]["access_token"], "");
+    assert_eq!(body["data"]["refresh_token"], "");
     assert_eq!(body["data"]["user"]["email"], email);
 }
 
@@ -282,15 +284,26 @@ async fn test_protected_endpoint_with_auth() {
     let response = app.clone().oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
 
-    let body = extract_json_body(response).await;
-    let token = body["data"]["access_token"].as_str().unwrap();
+    // Extract cookies from response
+    let (access_token, refresh_token) = common::extract_cookies_from_response(&response);
+    let access_token = access_token.expect("Should have access_token cookie");
+    let refresh_token = refresh_token.expect("Should have refresh_token cookie");
 
-    // Now access protected endpoint with token (using update wallet endpoint as a simple test)
+    let body = extract_json_body(response).await;
+    assert_eq!(body["data"]["access_token"], ""); // Token should be empty in response body
+
+    // Now access protected endpoint with cookies (using update wallet endpoint as a simple test)
     let wallet_payload = json!({
         "wallet_address": "0x1234567890123456789012345678901234567890"
     });
 
-    let request = authenticated_request("POST", "/api/user/update-wallet", wallet_payload, token);
+    let request = common::cookie_authenticated_request(
+        "POST",
+        "/api/user/update-wallet",
+        wallet_payload,
+        &access_token,
+        &refresh_token,
+    );
     let response = app.oneshot(request).await.unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
@@ -305,12 +318,21 @@ async fn test_protected_endpoint_with_auth() {
 }
 
 #[tokio::test]
-#[ignore = "Refresh token endpoint not implemented yet"]
 async fn test_refresh_token() {
     let app = setup_clean_test_app().await;
 
     let username = generate_test_username("refresh");
     let email = generate_test_email("refresh");
+
+    // First send verification code
+    let send_code_payload = json!({
+        "email": email,
+        "verification_type": "email",
+        "language": "en"
+    });
+    let request = json_request("POST", "/auth/send-code", send_code_payload);
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
 
     // Register a user to get tokens
     let register_payload = json!({
@@ -323,23 +345,41 @@ async fn test_refresh_token() {
     let request = json_request("POST", "/auth/register", register_payload);
     let response = app.clone().oneshot(request).await.unwrap();
 
-    let body = extract_json_body(response).await;
-    let refresh_token = body["data"]["refresh_token"].as_str().unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
 
-    // Use refresh token to get new access token
-    let refresh_payload = json!({
-        "refresh_token": refresh_token
-    });
+    // Extract cookies from registration response
+    let (access_token, refresh_token) = extract_cookies_from_response(&response);
+    assert!(access_token.is_some(), "Access token cookie should be set");
+    assert!(
+        refresh_token.is_some(),
+        "Refresh token cookie should be set"
+    );
 
-    let request = json_request("POST", "/auth/refresh", refresh_payload);
+    // Create refresh request with cookies
+    let request = Request::builder()
+        .method("POST")
+        .uri("/auth/refresh")
+        .header("Content-Type", "application/json")
+        .header(
+            "Cookie",
+            format!("refresh_token={}", refresh_token.unwrap()),
+        )
+        .body(Body::from("{}"))
+        .unwrap();
+
     let response = app.oneshot(request).await.unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
 
     let body = extract_json_body(response).await;
     assert_eq!(body["code"], "SUCCESS");
-    assert!(body["data"]["access_token"].is_string());
-    assert!(body["data"]["refresh_token"].is_string());
+    // Tokens are now in httpOnly cookies, not in response body
+    assert_eq!(body["data"]["access_token"], "");
+    assert_eq!(body["data"]["refresh_token"], "");
+
+    // Verify user data is returned
+    assert!(body["data"]["user"].is_object());
+    assert_eq!(body["data"]["user"]["email"], email);
 }
 
 #[tokio::test]
@@ -370,8 +410,13 @@ async fn test_update_wallet_address() {
     let request = json_request("POST", "/auth/register", register_payload);
     let response = app.clone().oneshot(request).await.unwrap();
 
+    // Extract cookies from response
+    let (access_token, refresh_token) = common::extract_cookies_from_response(&response);
+    let access_token = access_token.expect("Should have access_token cookie");
+    let refresh_token = refresh_token.expect("Should have refresh_token cookie");
+
     let body = extract_json_body(response).await;
-    let token = body["data"]["access_token"].as_str().unwrap();
+    assert_eq!(body["data"]["access_token"], ""); // Token should be empty in response body
 
     // Update wallet address
     let wallet_address = "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb7";
@@ -379,7 +424,13 @@ async fn test_update_wallet_address() {
         "wallet_address": wallet_address
     });
 
-    let request = authenticated_request("POST", "/api/user/update-wallet", update_payload, token);
+    let request = common::cookie_authenticated_request(
+        "POST",
+        "/api/user/update-wallet",
+        update_payload,
+        &access_token,
+        &refresh_token,
+    );
     let response = app.oneshot(request).await.unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
@@ -407,10 +458,8 @@ async fn test_send_verification_code() {
 
     let body = extract_json_body(response).await;
     assert_eq!(body["code"], "SUCCESS");
-    assert_eq!(
-        body["data"]["message"],
-        "Verification code sent successfully"
-    );
+    // Empty response - data should be null
+    assert_eq!(body["data"], serde_json::Value::Null);
 }
 
 #[tokio::test]

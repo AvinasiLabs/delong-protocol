@@ -6,4 +6,4 @@
 pub mod internal_jwt;
 
 // Re-export commonly used middleware components
-pub use internal_jwt::{internal_jwt_middleware, AuthContext, AuthExt, AuthenticatedUser};
+pub use internal_jwt::{internal_jwt_middleware, AuthContext, AuthenticatedUser};

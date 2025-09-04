@@ -26,6 +26,10 @@ base64 = "0.21"
 # Redis support
 deadpool-redis = "0.14"
 
+# Cookie support for authentication
+axum-extra = { version = "0.10", features = ["cookie"] }
+cookie = "0.18"
+
 # Tracing and observability
 tracing = { version = "0.1" }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
