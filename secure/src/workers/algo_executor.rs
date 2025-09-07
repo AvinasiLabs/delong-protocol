@@ -9,10 +9,9 @@ use crate::{
     infra::{contracts::ContractCaller, db::Database},
     models::{
         algo::Algo,
-        algo_exe::AlgoExe,
+        algo_exe::{AlgoExe, ExecutionStatus},
         blockchain_transaction::{BlockchainTransaction, EntityType},
         data_usage::DataUsage,
-        pg_types::ExecutionStatus,
         FindById,
     },
 };
@@ -650,11 +649,20 @@ impl AlgoExecutor {
             .parse::<Address>()
             .map_err(|e| ExecutorError::ContainerFailed(format!("Invalid address: {}", e)))?;
 
+        // Look up the dataset to get its ID
+        let dataset =
+            crate::models::dataset::Dataset::find_by_name(&self.db.pool, &execution.used_dataset)
+                .await?
+                .ok_or_else(|| {
+                    ExecutorError::NotFound(format!("Dataset {} not found", execution.used_dataset))
+                })?;
+
         let tx_hash = self
             .contract_caller
             .record_data_usage(
                 scientist_address,
                 algo.cid.clone(),
+                U256::from(dataset.id as u64),
                 execution.used_dataset.clone(),
             )
             .await
@@ -666,7 +674,7 @@ impl AlgoExecutor {
             tx_hash.clone(),
             usage.id,
             EntityType::DataUsage,
-            crate::models::pg_types::TransactionStatus::Pending,
+            crate::models::blockchain_transaction::TransactionStatus::Pending,
         )
         .await?;
 
@@ -714,8 +722,8 @@ mod tests {
     #[test]
     fn test_config_default() {
         let config = ExecutorConfig::default();
-        assert_eq!(config.build_size_limit, 100 << 20);
+        assert_eq!(config.build_size_limit, 100 * 1024 * 1024);
         assert_eq!(config.execution_timeout, 3600);
-        assert_eq!(config.max_concurrent, 5);
+        assert_eq!(config.max_concurrent, 10);
     }
 }

@@ -160,6 +160,11 @@ pub async fn setup_test_app() -> Router {
     // Initialize notifier
     let notifier = Arc::new(Notifier::new());
 
+    let cfg = deadpool_redis::Config::from_url(&config.redis.url);
+    let pool = cfg
+        .create_pool(Some(deadpool_redis::Runtime::Tokio1))
+        .unwrap();
+
     // Create router with full application setup
     create_app(
         db,
@@ -169,6 +174,7 @@ pub async fn setup_test_app() -> Router {
         notifier,
         tee_service,
         tee_ethereum,
+        pool,
     )
     .await
 }
@@ -231,6 +237,11 @@ pub async fn setup_clean_test_app() -> Router {
     // Initialize notifier
     let notifier = Arc::new(Notifier::new());
 
+    let cfg = deadpool_redis::Config::from_url(&config.redis.url);
+    let pool = cfg
+        .create_pool(Some(deadpool_redis::Runtime::Tokio1))
+        .unwrap();
+
     // Create router with full application setup
     create_app(
         db,
@@ -240,6 +251,7 @@ pub async fn setup_clean_test_app() -> Router {
         notifier,
         tee_service,
         tee_ethereum,
+        pool,
     )
     .await
 }

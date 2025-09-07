@@ -110,6 +110,8 @@ pub struct ProxyConfig {
     pub jwt_expiration_seconds: u64,
     /// Retry attempts for failed requests
     pub max_retries: u32,
+    /// Maximum file upload size in MB (default: 100MB)
+    pub max_upload_size_mb: usize,
 }
 
 impl ProxyConfig {
@@ -131,6 +133,9 @@ impl ProxyConfig {
                 .parse()?,
             max_retries: env::var("PROXY_MAX_RETRIES")
                 .unwrap_or_else(|_| "3".to_string())
+                .parse()?,
+            max_upload_size_mb: env::var("MAX_UPLOAD_SIZE_MB")
+                .unwrap_or_else(|_| "100".to_string())
                 .parse()?,
         })
     }
@@ -234,6 +239,9 @@ impl Config {
                 max_retries: env::var("PROXY_MAX_RETRIES")
                     .unwrap_or_else(|_| "3".to_string())
                     .parse()?,
+                max_upload_size_mb: env::var("MAX_UPLOAD_SIZE_MB")
+                    .unwrap_or_else(|_| "100".to_string())
+                    .parse()?,
             },
             verification: VerificationConfig {
                 expiration_minutes: env::var("VERIFICATION_EXPIRATION_MINUTES")
@@ -319,6 +327,7 @@ impl Default for Config {
                 enable_debug_logging: false,
                 jwt_expiration_seconds: 60,
                 max_retries: 3,
+                max_upload_size_mb: 100,
             },
             verification: VerificationConfig {
                 expiration_minutes: 15,

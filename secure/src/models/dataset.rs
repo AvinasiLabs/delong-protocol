@@ -2,8 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, PgPool};
 
-use super::blockchain_transaction::EntityType;
-use super::pg_types::TransactionStatus;
+use super::blockchain_transaction::{EntityType, TransactionStatus};
 use super::{Create, FindById, Timestamped};
 use crate::{AppError, Result};
 
@@ -55,14 +54,6 @@ pub struct CreateDatasetRequest {
 }
 
 impl Dataset {
-    /// SQL join clause for confirmed transactions
-    const JOIN_CONFIRMED_TX: &'static str = r#"
-        JOIN blockchain_transaction bt
-        ON bt.entity_id = dataset.id
-           AND bt.status = $1
-           AND bt.entity_type = $2
-    "#;
-
     /// Find all datasets with confirmed blockchain transactions
     pub async fn find_all_confirmed(
         pool: &PgPool,
@@ -80,30 +71,35 @@ impl Dataset {
                AND bt.entity_type = $2
             "#,
             TransactionStatus::Confirmed as _,
-            EntityType::Dataset.as_str()
+            EntityType::Dataset as _
         )
         .fetch_one(pool)
         .await?;
 
         // Get paginated results
-        let query = format!(
+        let datasets = sqlx::query_as!(
+            Dataset,
             r#"
-            SELECT dataset.*
+            SELECT dataset.id, dataset.name, dataset.ui_name, dataset."desc",
+                   dataset.file_hash, dataset.ipfs_cid, dataset.file_size,
+                   dataset.file_format, dataset.author, dataset.author_wallet,
+                   dataset.sample_url, dataset.file_path,
+                   dataset.created_at, dataset.updated_at
             FROM dataset
-            {}
+            JOIN blockchain_transaction bt
+            ON bt.entity_id = dataset.id
+               AND bt.status = $1
+               AND bt.entity_type = $2
             ORDER BY dataset.created_at DESC
             LIMIT $3 OFFSET $4
             "#,
-            Self::JOIN_CONFIRMED_TX
-        );
-
-        let datasets = sqlx::query_as::<_, Self>(&query)
-            .bind(TransactionStatus::Confirmed)
-            .bind(EntityType::Dataset.as_str())
-            .bind(per_page as i64)
-            .bind(((page - 1) * per_page) as i64)
-            .fetch_all(pool)
-            .await?;
+            TransactionStatus::Confirmed as _,
+            EntityType::Dataset as _,
+            per_page as i64,
+            ((page - 1) * per_page) as i64
+        )
+        .fetch_all(pool)
+        .await?;
 
         Ok((datasets, total as u64))
     }
@@ -146,43 +142,29 @@ impl Dataset {
         Ok(dataset)
     }
 
-    /// Find dataset by IPFS CID
-    pub async fn find_by_ipfs_cid(pool: &PgPool, ipfs_cid: &str) -> Result<Option<Self>> {
+    /// Find dataset by ID with confirmed transaction
+    pub async fn find_by_id_confirmed(pool: &PgPool, id: i64) -> Result<Option<Self>> {
         let dataset = sqlx::query_as!(
             Dataset,
             r#"
-            SELECT id, name, ui_name, "desc", file_hash, ipfs_cid, file_size,
-                   file_format, author, author_wallet, sample_url, file_path,
-                   created_at, updated_at
+            SELECT dataset.id, dataset.name, dataset.ui_name, dataset."desc",
+                   dataset.file_hash, dataset.ipfs_cid, dataset.file_size,
+                   dataset.file_format, dataset.author, dataset.author_wallet,
+                   dataset.sample_url, dataset.file_path,
+                   dataset.created_at, dataset.updated_at
             FROM dataset
-            WHERE ipfs_cid = $1
+            JOIN blockchain_transaction bt
+            ON bt.entity_id = dataset.id
+               AND bt.status = $1
+               AND bt.entity_type = $2
+            WHERE dataset.id = $3
             "#,
-            ipfs_cid
+            TransactionStatus::Confirmed as _,
+            EntityType::Dataset as _,
+            id
         )
         .fetch_optional(pool)
         .await?;
-
-        Ok(dataset)
-    }
-
-    /// Find dataset by ID with confirmed transaction
-    pub async fn find_by_id_confirmed(pool: &PgPool, id: i64) -> Result<Option<Self>> {
-        let query = format!(
-            r#"
-            SELECT dataset.*
-            FROM dataset
-            {}
-            WHERE dataset.id = $3
-            "#,
-            Self::JOIN_CONFIRMED_TX
-        );
-
-        let dataset = sqlx::query_as::<_, Self>(&query)
-            .bind(TransactionStatus::Confirmed)
-            .bind(EntityType::Dataset.as_str())
-            .bind(id)
-            .fetch_optional(pool)
-            .await?;
 
         Ok(dataset)
     }
@@ -243,6 +225,94 @@ impl Dataset {
             created_at: self.created_at,
             updated_at: self.updated_at,
         }
+    }
+
+    /// Find dataset by file hash with transaction status
+    pub async fn find_by_file_hash_with_status(
+        pool: &PgPool,
+        file_hash: &str,
+    ) -> Result<Option<DatasetWithStatus>> {
+        let result = sqlx::query!(
+            r#"
+            SELECT
+                d.id, d.name, d.ui_name, d."desc", d.file_hash, d.ipfs_cid,
+                d.file_size, d.file_format, d.author, d.author_wallet,
+                d.sample_url, d.file_path, d.created_at, d.updated_at,
+                bt.status as "tx_status?: TransactionStatus",
+                bt.tx_hash as "tx_hash?",
+                bt.block_number as "block_number?",
+                bt.created_at as "tx_created_at?"
+            FROM dataset d
+            LEFT JOIN blockchain_transaction bt
+                ON bt.entity_id = d.id AND bt.entity_type = 'dataset'
+            WHERE d.file_hash = $1
+            ORDER BY bt.created_at DESC
+            LIMIT 1
+            "#,
+            file_hash
+        )
+        .fetch_optional(pool)
+        .await?;
+
+        Ok(result.map(|r| DatasetWithStatus {
+            dataset: Dataset {
+                id: r.id,
+                name: r.name,
+                ui_name: r.ui_name,
+                desc: r.desc,
+                file_hash: r.file_hash,
+                ipfs_cid: r.ipfs_cid,
+                file_size: r.file_size,
+                file_format: r.file_format,
+                author: r.author,
+                author_wallet: r.author_wallet,
+                sample_url: r.sample_url,
+                file_path: r.file_path,
+                created_at: r.created_at,
+                updated_at: r.updated_at,
+            },
+            tx_status: r.tx_status,
+            tx_hash: r.tx_hash,
+            block_number: r.block_number.map(|n| n as u64),
+            tx_created_at: r.tx_created_at,
+        }))
+    }
+
+    /// Delete dataset by ID
+    pub async fn delete_by_id(pool: &PgPool, id: i64) -> Result<bool> {
+        let result = sqlx::query!(
+            r#"
+            DELETE FROM dataset
+            WHERE id = $1
+            "#,
+            id
+        )
+        .execute(pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Clean up timeout pending datasets (older than specified duration)
+    pub async fn cleanup_timeout_datasets(pool: &PgPool, timeout_hours: i32) -> Result<u64> {
+        let result = sqlx::query!(
+            r#"
+            DELETE FROM dataset
+            WHERE id IN (
+                SELECT d.id
+                FROM dataset d
+                LEFT JOIN blockchain_transaction bt
+                    ON bt.entity_id = d.id AND bt.entity_type = 'dataset'
+                WHERE (bt.status = 'pending' OR bt.status IS NULL)
+                    AND d.created_at < NOW() - make_interval(hours => $1)
+            )
+            "#,
+            timeout_hours
+        )
+        .execute(pool)
+        .await?;
+
+        Ok(result.rows_affected())
     }
 }
 
@@ -332,4 +402,15 @@ impl FindById for Dataset {
 
         Ok(dataset)
     }
+}
+
+/// Dataset with blockchain transaction status
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DatasetWithStatus {
+    #[serde(flatten)]
+    pub dataset: Dataset,
+    pub tx_status: Option<TransactionStatus>,
+    pub tx_hash: Option<String>,
+    pub block_number: Option<u64>,
+    pub tx_created_at: Option<DateTime<Utc>>,
 }

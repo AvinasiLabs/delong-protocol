@@ -1,50 +1,61 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::{FromRow, PgPool};
+use sqlx::{FromRow, PgPool, Type};
+use std::fmt;
 
 use super::{Create, FindById, Timestamped};
 use crate::{AppError, Result};
 
-// Re-export TransactionStatus for other modules
-pub use super::pg_types::TransactionStatus;
-
 /// Entity type that the transaction is associated with
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "text", rename_all = "SCREAMING_SNAKE_CASE")]
+#[sqlx(type_name = "text", rename_all = "lowercase")]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum EntityType {
-    #[sqlx(rename = "DATASET")]
     Dataset,
-    #[sqlx(rename = "EXECUTION")]
     Execution,
-    #[sqlx(rename = "DATAUSAGE")]
     DataUsage,
-    #[sqlx(rename = "VOTE")]
     Vote,
-    #[sqlx(rename = "COMMITTEE")]
     Committee,
 }
 
-impl EntityType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Dataset => "DATASET",
-            Self::Execution => "EXECUTION",
-            Self::DataUsage => "DATAUSAGE",
-            Self::Vote => "VOTE",
-            Self::Committee => "COMMITTEE",
-        }
-    }
+// Note: The as_str() method is no longer needed!
+// With rename_all = "lowercase", sqlx automatically handles conversion:
+// - EntityType::Dataset <-> "dataset" in database
+// - EntityType::Execution <-> "execution" in database
+// - etc.
+//
+// You can now use the enum directly in queries:
+// sqlx::query!("SELECT * FROM table WHERE entity_type = $1", entity_type as EntityType)
 
+impl EntityType {
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "DATASET" => Some(Self::Dataset),
-            "STATIC_DATASET" => Some(Self::Dataset), // For backward compatibility
             "EXECUTION" => Some(Self::Execution),
             "DATAUSAGE" => Some(Self::DataUsage),
             "VOTE" => Some(Self::Vote),
             "COMMITTEE" => Some(Self::Committee),
             _ => None,
+        }
+    }
+}
+
+/// Transaction status
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[sqlx(type_name = "transaction_status", rename_all = "lowercase")]
+#[serde(rename_all = "UPPERCASE")]
+pub enum TransactionStatus {
+    Pending,
+    Confirmed,
+    Failed,
+}
+
+impl fmt::Display for TransactionStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TransactionStatus::Pending => write!(f, "pending"),
+            TransactionStatus::Confirmed => write!(f, "confirmed"),
+            TransactionStatus::Failed => write!(f, "failed"),
         }
     }
 }
@@ -115,7 +126,7 @@ impl BlockchainTransaction {
             "#,
             tx_hash,
             entity_id,
-            entity_type.as_str(),
+            entity_type as _,
             status as _,
             block_number.map(|n| n as i64),
             block_timestamp
@@ -166,7 +177,7 @@ impl BlockchainTransaction {
             block_number.map(|n| n as i64),
             block_time,
             entity_id,
-            entity_type.as_str()
+            entity_type as _
         )
         .execute(&mut **tx)
         .await?;
@@ -202,6 +213,88 @@ impl BlockchainTransaction {
         Ok(tx)
     }
 
+    /// UPSERT a blockchain transaction record for a dataset
+    /// This will not overwrite if a confirmed record already exists
+    pub async fn upsert_for_dataset(pool: &PgPool, tx_hash: &str, dataset_id: i64) -> Result<bool> {
+        let result = sqlx::query!(
+            r#"
+            INSERT INTO blockchain_transaction (
+                tx_hash, entity_id, entity_type, status, created_at, updated_at
+            ) VALUES (
+                $1, $2, 'dataset', 'pending', NOW(), NOW()
+            )
+            ON CONFLICT (tx_hash) DO UPDATE SET
+                entity_id = CASE
+                    WHEN blockchain_transaction.status = 'confirmed' THEN blockchain_transaction.entity_id
+                    ELSE EXCLUDED.entity_id
+                END,
+                entity_type = CASE
+                    WHEN blockchain_transaction.status = 'confirmed' THEN blockchain_transaction.entity_type
+                    ELSE EXCLUDED.entity_type
+                END,
+                updated_at = CASE
+                    WHEN blockchain_transaction.status = 'confirmed' THEN blockchain_transaction.updated_at
+                    ELSE NOW()
+                END
+            "#,
+            tx_hash,
+            dataset_id
+        )
+        .execute(pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// UPSERT a blockchain transaction from a chain event
+    /// This is used by chainsync when processing DataRegistered events
+    pub async fn upsert_from_event(
+        pool: &PgPool,
+        tx_hash: &str,
+        entity_id: i64,
+        entity_type: EntityType,
+        status: TransactionStatus,
+        block_number: i64,
+        block_timestamp: Option<DateTime<Utc>>,
+    ) -> Result<bool> {
+        let result = sqlx::query!(
+            r#"
+            INSERT INTO blockchain_transaction (
+                tx_hash, entity_id, entity_type, status, block_number, block_timestamp, created_at, updated_at
+            ) VALUES (
+                $1, $2, $3::text, $4, $5, $6, NOW(), NOW()
+            )
+            ON CONFLICT (tx_hash) DO UPDATE SET
+                status = CASE
+                    WHEN blockchain_transaction.status = 'confirmed' THEN blockchain_transaction.status
+                    ELSE EXCLUDED.status
+                END,
+                block_number = CASE
+                    WHEN blockchain_transaction.status = 'confirmed' THEN blockchain_transaction.block_number
+                    ELSE EXCLUDED.block_number
+                END,
+                block_timestamp = CASE
+                    WHEN blockchain_transaction.status = 'confirmed' THEN blockchain_transaction.block_timestamp
+                    ELSE EXCLUDED.block_timestamp
+                END,
+                updated_at = CASE
+                    WHEN blockchain_transaction.status = 'confirmed' THEN blockchain_transaction.updated_at
+                    ELSE NOW()
+                END
+            "#,
+            tx_hash,
+            entity_id,
+            entity_type as _,
+            status as TransactionStatus,
+            block_number,
+            block_timestamp
+        )
+        .execute(pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
     /// Find pending transactions by entity
     pub async fn find_pending_by_entity(
         pool: &PgPool,
@@ -221,29 +314,7 @@ impl BlockchainTransaction {
             ORDER BY created_at DESC
             "#,
             entity_id,
-            entity_type.as_str(),
-            TransactionStatus::Pending as _
-        )
-        .fetch_all(pool)
-        .await?;
-
-        Ok(txs)
-    }
-
-    /// Find all pending transactions
-    pub async fn find_all_pending(pool: &PgPool) -> Result<Vec<Self>> {
-        let txs = sqlx::query_as!(
-            Self,
-            r#"
-            SELECT id, tx_hash, entity_id,
-                   entity_type,
-                   status as "status: _",
-                   block_number, block_timestamp,
-                   created_at, updated_at
-            FROM blockchain_transaction
-            WHERE status = $1
-            ORDER BY created_at ASC
-            "#,
+            entity_type as _,
             TransactionStatus::Pending as _
         )
         .fetch_all(pool)
@@ -265,7 +336,7 @@ impl BlockchainTransaction {
             WHERE entity_id = $1 AND entity_type = $2 AND status = $3
             "#,
             entity_id,
-            entity_type.as_str(),
+            entity_type as _,
             TransactionStatus::Confirmed as _
         )
         .fetch_one(pool)
@@ -320,7 +391,7 @@ impl CreateTransaction {
             "#,
             &request.tx_hash,
             request.entity_id,
-            request.entity_type.as_str(),
+            request.entity_type as _,
             TransactionStatus::Pending as _
         )
         .fetch_one(&mut **tx)
@@ -358,11 +429,77 @@ impl Create for BlockchainTransaction {
             "#,
             &request.tx_hash,
             request.entity_id,
-            request.entity_type.as_str(),
+            request.entity_type as _,
             TransactionStatus::Pending as _
         )
         .fetch_one(pool)
         .await?;
+
+        Ok(tx)
+    }
+}
+
+impl BlockchainTransaction {
+    /// Find all pending transactions
+    pub async fn find_all_pending(pool: &PgPool) -> Result<Vec<Self>> {
+        let txs = sqlx::query_as!(
+            Self,
+            r#"
+            SELECT id, tx_hash, entity_id,
+                   entity_type,
+                   status as "status: _",
+                   block_number, block_timestamp,
+                   created_at, updated_at
+            FROM blockchain_transaction
+            WHERE status = $1
+            ORDER BY created_at ASC
+            "#,
+            TransactionStatus::Pending as _
+        )
+        .fetch_all(pool)
+        .await?;
+
+        Ok(txs)
+    }
+
+    /// Create a failed transaction record (for immediate failures)
+    pub async fn create_failed(
+        pool: &PgPool,
+        entity_id: i64,
+        entity_type: EntityType,
+        error_message: &str,
+    ) -> Result<Self> {
+        // Generate a pseudo tx hash for failed transactions
+        let tx_hash = format!("failed_{}_{}", entity_id, Utc::now().timestamp());
+
+        let tx = sqlx::query_as!(
+            Self,
+            r#"
+            INSERT INTO blockchain_transaction (
+                tx_hash, entity_id, entity_type, status, created_at, updated_at
+            )
+            VALUES ($1, $2, $3::text, $4, NOW(), NOW())
+            RETURNING id, tx_hash, entity_id,
+                     entity_type,
+                     status as "status: _",
+                     block_number, block_timestamp,
+                     created_at, updated_at
+            "#,
+            tx_hash,
+            entity_id,
+            entity_type as _,
+            TransactionStatus::Failed as _
+        )
+        .fetch_one(pool)
+        .await?;
+
+        // Log the error message (could be stored in a separate error log table)
+        tracing::error!(
+            "Transaction failed for {} {}: {}",
+            format!("{:?}", entity_type),
+            entity_id,
+            error_message
+        );
 
         Ok(tx)
     }
@@ -374,7 +511,7 @@ impl Default for BlockchainTransaction {
             id: 0,
             tx_hash: String::new(),
             entity_id: 0,
-            entity_type: EntityType::Execution.as_str().to_string(),
+            entity_type: "execution".to_string(),
             status: TransactionStatus::Pending,
             block_number: None,
             block_timestamp: None,

@@ -4,6 +4,7 @@
 //! for the secure service running in the TEE environment.
 
 use axum::{
+    extract::DefaultBodyLimit,
     middleware,
     routing::{get, post},
     Router,
@@ -34,6 +35,8 @@ pub struct AppState {
     pub contract_caller: Arc<ContractCaller>,
     /// Notifier for WebSocket notifications
     pub notifier: Arc<Notifier>,
+    /// Redis connection pool for queue management
+    pub redis: deadpool_redis::Pool,
     /// TEE service for secure operations
     pub tee_service: Arc<TeeClient>,
     /// TEE Ethereum manager for TEE-based Ethereum operations
@@ -52,6 +55,7 @@ impl AppState {
         ipfs_client: ipfs_api_backend_hyper::IpfsClient,
         contract_caller: Arc<ContractCaller>,
         notifier: Arc<Notifier>,
+        redis: deadpool_redis::Pool,
         tee_service: Arc<TeeClient>,
         tee_ethereum: Arc<TeeEthereum>,
         tee_crypto: Arc<TeeCryptoService>,
@@ -63,6 +67,7 @@ impl AppState {
             ipfs_client,
             contract_caller,
             notifier,
+            redis,
             tee_service,
             tee_ethereum,
             tee_crypto,
@@ -80,6 +85,7 @@ pub async fn create_app(
     notifier: Arc<Notifier>,
     tee_service: Arc<TeeClient>,
     tee_ethereum: Arc<TeeEthereum>,
+    redis_pool: deadpool_redis::Pool,
 ) -> Router {
     // Create the TEE crypto service
     let tee_crypto = Arc::new(TeeCryptoService::new(tee_service.clone()));
@@ -87,12 +93,16 @@ pub async fn create_app(
     // Create the sample generator service
     let sample_generator = Arc::new(SampleGenerator::new(config.dataset.sample_api_url.clone()));
 
+    // Save max upload size before moving config
+    let max_upload_size_bytes = config.dataset.max_upload_size_mb * 1024 * 1024;
+
     let state = AppState::new(
         db,
         config,
         ipfs_client.as_ref().clone(),
         contract_caller,
         notifier.clone(),
+        redis_pool,
         tee_service,
         tee_ethereum,
         tee_crypto,
@@ -113,6 +123,7 @@ pub async fn create_app(
         .route("/", post(handlers::create_dataset))
         .route("/", get(handlers::list_datasets))
         .route("/{id}", get(handlers::get_dataset))
+        .route("/{id}/status", get(handlers::dataset::get_dataset_status))
         .route("/{id}", axum::routing::put(handlers::update_dataset))
         .route("/{id}", axum::routing::delete(handlers::delete_dataset));
 
@@ -158,6 +169,8 @@ pub async fn create_app(
         .nest("/api", api_routes)
         // WebSocket routes
         .merge(ws_routes)
+        // Set request body limit from configuration for large CSV file uploads
+        .layer(DefaultBodyLimit::max(max_upload_size_bytes))
         .layer(
             CorsLayer::new()
                 .allow_origin(Any)

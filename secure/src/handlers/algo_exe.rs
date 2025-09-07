@@ -6,11 +6,10 @@
 use crate::{
     models::{
         algo::{Algo, CreateAlgo},
-        algo_exe::{AlgoExe, AlgoExeWithAlgo, CreateAlgoExe},
+        algo_exe::{AlgoExe, AlgoExeWithAlgo, CreateAlgoExe, ExecutionStatus, ReviewStatus},
         blockchain_transaction::{CreateTransaction, EntityType},
-        pg_types::{ExecutionStatus, ReviewStatus},
+        Create, FindById,
     },
-    models::{Create, FindById},
     routes::AppState,
 };
 use alloy::primitives::Address;

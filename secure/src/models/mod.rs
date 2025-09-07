@@ -6,19 +6,20 @@ pub mod committee;
 pub mod contract;
 pub mod data_usage;
 pub mod dataset;
-pub mod pg_types;
+
 pub mod vote;
 
 // Re-export all model types
 pub use algo::{Algo, CreateAlgo};
 pub use algo_exe::{AlgoExe, AlgoExeWithAlgo, CreateAlgoExeRequest};
 
+pub use algo_exe::{ExecutionStatus, ReviewStatus};
+pub use blockchain_transaction::TransactionStatus;
 pub use blockchain_transaction::{BlockchainTransaction, EntityType};
 pub use committee::{CommitteeMember, CreateCommitteeMemberRequest};
 pub use contract::{ContractMeta, CreateContractMetaRequest};
 pub use data_usage::{CreateDataUsageRequest, DataUsage};
 pub use dataset::{CreateDatasetRequest, Dataset};
-pub use pg_types::{AlgoExeStatus, AlgoReviewStatus, TransactionStatus};
 pub use vote::{CreateVoteRequest, Vote};
 
 // Common model traits

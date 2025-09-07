@@ -49,6 +49,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tee_ethereum = Arc::new(TeeEthereum::new(tee_client.clone()));
     info!("TEE Ethereum manager initialized");
 
+    // Initialize Redis connection pool
+    let mut redis_config = deadpool_redis::Config::from_url(config.redis.url.clone());
+    redis_config.pool = Some(deadpool_redis::PoolConfig {
+        max_size: config.redis.max_connections,
+        timeouts: deadpool_redis::Timeouts {
+            wait: Some(std::time::Duration::from_secs(
+                config.redis.connection_timeout,
+            )),
+            create: Some(std::time::Duration::from_secs(
+                config.redis.connection_timeout,
+            )),
+            recycle: Some(std::time::Duration::from_secs(
+                config.redis.connection_timeout,
+            )),
+        },
+        ..Default::default()
+    });
+
+    let redis_pool = redis_config
+        .create_pool(Some(deadpool_redis::Runtime::Tokio1))
+        .expect("Failed to create Redis pool");
+
+    info!("Redis connection pool initialized");
+
     // Initialize IPFS client
     let ipfs_client = Arc::new(
         ipfs_api_backend_hyper::IpfsClient::from_str(&config.ipfs.api_url)
@@ -97,6 +121,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         notifier.clone(),
         algo_executor.clone(),
         Arc::new(config.clone()),
+        redis_pool.clone(),
         shutdown_token.clone(),
     );
 
@@ -109,6 +134,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         notifier.clone(),
         tee_client.clone(),
         tee_ethereum.clone(),
+        redis_pool.clone(),
     )
     .await;
 
@@ -141,6 +167,7 @@ fn spawn_chainsync_task(
     notifier: Arc<Notifier>,
     algo_executor: Arc<AlgoExecutor>,
     config: Arc<Config>,
+    redis_pool: deadpool_redis::Pool,
     shutdown_token: CancellationToken,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
@@ -157,7 +184,7 @@ fn spawn_chainsync_task(
         ));
 
         tokio::select! {
-            result = chain_sync.start() => {
+            result = chain_sync.start_with_monitor(redis_pool) => {
                 match result {
                     Ok(_) => info!("Chainsync service completed"),
                     Err(e) => error!("Chainsync service error: {}", e),
@@ -174,7 +201,7 @@ fn spawn_chainsync_task(
     })
 }
 
-/// Create a shutdown signal handler
+/// Graceful shutdown signal handler
 async fn shutdown_signal(shutdown_token: CancellationToken) {
     let ctrl_c = async {
         signal::ctrl_c()

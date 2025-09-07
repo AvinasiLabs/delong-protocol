@@ -1,6 +1,9 @@
 //! Chain synchronization worker
 //! Monitors blockchain events and updates database accordingly
 
+pub mod transaction_monitor;
+
+use self::transaction_monitor::{TransactionMonitor, TransactionMonitorConfig};
 use crate::{
     config::Config,
     error::{Result as AppResult, TimestampExt},
@@ -9,15 +12,18 @@ use crate::{
         db::Database,
         Notifier,
     },
-    models::{blockchain_transaction::BlockchainTransaction, AlgoReviewStatus},
+    models::{
+        blockchain_transaction::BlockchainTransaction, dataset::Dataset, FindById, ReviewStatus,
+    },
     workers::algo_executor::AlgoExecutor,
     AppError,
 };
 use alloy::primitives::{Address, U256};
 use alloy::rpc::types::Log;
 use std::sync::Arc;
+
 use tokio::time::{self, Duration};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 /// Chain sync worker that monitors blockchain events
 #[derive(Clone)]
@@ -79,6 +85,57 @@ impl ChainSyncWorker {
         }
 
         info!("Chain sync worker stopped");
+        Ok(())
+    }
+
+    /// Start the worker with transaction monitor
+    pub async fn start_with_monitor(
+        self: Arc<Self>,
+        redis_pool: deadpool_redis::Pool,
+    ) -> AppResult<()> {
+        info!("Starting chain sync worker with transaction monitor");
+
+        // Create transaction monitor
+        let monitor_config = TransactionMonitorConfig::default();
+        let monitor = Arc::new(TransactionMonitor::new(
+            self.db.clone(),
+            self.contract_caller.clone(),
+            redis_pool,
+            monitor_config,
+        ));
+
+        // Start transaction monitor in background
+        let monitor_clone = monitor.clone();
+        let monitor_handle = tokio::spawn(async move {
+            if let Err(e) = monitor_clone.monitor_loop().await {
+                error!("Transaction monitor error: {}", e);
+            }
+        });
+
+        // Start event processing in background
+        let worker = self.clone();
+        let event_handle = tokio::spawn(async move {
+            if let Err(e) = worker.process_events().await {
+                error!("Event processing error: {}", e);
+            }
+        });
+
+        // Start periodic tasks in background
+        let worker = self.clone();
+        let periodic_handle = tokio::spawn(async move {
+            if let Err(e) = worker.run_periodic_tasks().await {
+                error!("Periodic tasks error: {}", e);
+            }
+        });
+
+        // Wait for tasks to complete (they run indefinitely)
+        tokio::select! {
+            _ = monitor_handle => info!("Transaction monitor task completed"),
+            _ = event_handle => info!("Event processing task completed"),
+            _ = periodic_handle => info!("Periodic tasks completed"),
+        }
+
+        info!("Chain sync worker with monitor stopped");
         Ok(())
     }
 
@@ -196,18 +253,20 @@ impl ChainSyncWorker {
             ParsedEvent::DataRegistered {
                 contributor,
                 cid,
+                dataset_id,
                 dataset,
             } => {
-                self.handle_data_registered(&log, contributor, cid, dataset)
+                self.handle_data_registered(&log, contributor, cid, dataset_id, dataset)
                     .await?;
             }
             ParsedEvent::DataUsed {
                 scientist,
                 cid,
+                dataset_id,
                 dataset,
                 when,
             } => {
-                self.handle_data_used(&log, scientist, cid, dataset, when)
+                self.handle_data_used(&log, scientist, cid, dataset_id, dataset, when)
                     .await?;
             }
             ParsedEvent::AlgorithmResolved {
@@ -251,6 +310,7 @@ impl ChainSyncWorker {
         log: &Log,
         contributor: Address,
         cid: String,
+        dataset_id: U256,
         dataset: String,
     ) -> AppResult<()> {
         info!(
@@ -266,6 +326,8 @@ impl ChainSyncWorker {
             .block_number
             .ok_or_else(|| AppError::Internal("Missing block number".to_string()))?;
 
+        let tx_hash_str = format!("{:?}", tx_hash);
+
         // Get block timestamp
         let block_timestamp = if let Some(timestamp) = log.block_timestamp {
             let naive = (timestamp as i64).to_naive_datetime()?;
@@ -278,10 +340,53 @@ impl ChainSyncWorker {
             Some(chrono::Utc::now())
         };
 
+        // Convert dataset_id from U256 to i64 for database lookup
+        let db_dataset_id = dataset_id.to::<i64>();
+
+        // Find dataset by ID
+        let dataset_record = Dataset::find_by_id(self.db.pool(), db_dataset_id).await?;
+
+        let entity_id = match dataset_record {
+            Some(ds) => ds.id,
+            None => {
+                warn!(
+                    "Dataset not found by ID {} for transaction {}. The transaction may have arrived before the dataset was created.",
+                    db_dataset_id, tx_hash_str
+                );
+                // We'll still create/update the blockchain transaction record without entity_id
+                // The entity_id can be updated later when the dataset is created
+                0 // Use 0 as placeholder for missing dataset
+            }
+        };
+
         // Update transaction status (assuming success since we received the event)
         let status = crate::models::TransactionStatus::Confirmed;
-        let tx_hash_str = format!("{:?}", tx_hash);
 
+        // Use upsert instead of direct update
+        let was_updated = BlockchainTransaction::upsert_from_event(
+            self.db.pool(),
+            &tx_hash_str,
+            entity_id,
+            crate::models::blockchain_transaction::EntityType::Dataset,
+            status,
+            block_number as i64,
+            block_timestamp,
+        )
+        .await?;
+
+        if was_updated {
+            info!(
+                "Updated blockchain transaction for dataset registration: tx={}",
+                tx_hash_str
+            );
+        } else {
+            info!(
+                "Created blockchain transaction for dataset registration: tx={}",
+                tx_hash_str
+            );
+        }
+
+        /* Old direct SQL update - removing this
         sqlx::query!(
             r#"
             UPDATE blockchain_transaction
@@ -295,6 +400,7 @@ impl ChainSyncWorker {
         )
         .execute(self.db.pool())
         .await?;
+        */
 
         // Fetch the updated transaction
         let transaction = BlockchainTransaction::find_by_tx_hash(self.db.pool(), &tx_hash_str)
@@ -319,6 +425,7 @@ impl ChainSyncWorker {
         log: &Log,
         scientist: Address,
         cid: String,
+        _dataset_id: U256,
         dataset: String,
         when: U256,
     ) -> AppResult<()> {
@@ -425,9 +532,9 @@ impl ChainSyncWorker {
 
         // Update algorithm execution status
         let status = if approved {
-            AlgoReviewStatus::Approved
+            ReviewStatus::Approved
         } else {
-            AlgoReviewStatus::Rejected
+            ReviewStatus::Rejected
         };
 
         // UPDATE algo_exe table by execution_id
@@ -438,7 +545,7 @@ impl ChainSyncWorker {
             WHERE id = $1
             "#,
             exe_id,
-            status as AlgoReviewStatus
+            status as ReviewStatus
         )
         .execute(self.db.pool())
         .await?;
@@ -850,7 +957,7 @@ impl ChainSyncWorker {
             interval.tick().await;
 
             // Check for algorithms that need resolution
-            debug!("Running periodic tasks check");
+            trace!("Running periodic tasks check");
         }
     }
 

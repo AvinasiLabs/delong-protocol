@@ -6,6 +6,7 @@
 use axum::http::{HeaderName, Method, header};
 use axum::{
     Router,
+    extract::DefaultBodyLimit,
     routing::{delete, get, post, put},
 };
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
@@ -226,6 +227,10 @@ pub fn create_router(state: AppState) -> Router {
                 Html(html)
             }),
         )
+        // Set request body limit from configuration for large file uploads
+        .layer(DefaultBodyLimit::max(
+            state.config.proxy.max_upload_size_mb * 1024 * 1024,
+        ))
         .layer(axum::middleware::from_fn(response_transformer))
         .layer(axum::middleware::from_fn(request_id_middleware))
         // .layer(axum::middleware::from_fn_with_state(

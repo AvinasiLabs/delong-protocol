@@ -10,8 +10,7 @@ use secure::{
     config::ExecutorConfig,
     models::{
         algo::{Algo, CreateAlgo},
-        algo_exe::{AlgoExe, CreateAlgoExe},
-        pg_types::{ExecutionStatus, ReviewStatus},
+        algo_exe::{AlgoExe, CreateAlgoExe, ExecutionStatus, ReviewStatus},
         Create, FindById,
     },
     workers::algo_executor::AlgoExecutor,
@@ -316,8 +315,9 @@ async fn test_execution_with_error() {
 /// Test finding pending executions
 #[tokio::test]
 async fn test_find_pending_executions() {
-    use secure::models::blockchain_transaction::{BlockchainTransaction, EntityType};
-    use secure::models::pg_types::TransactionStatus;
+    use secure::models::blockchain_transaction::{
+        BlockchainTransaction, EntityType, TransactionStatus,
+    };
 
     let test_id = unique_test_id();
     let (db, _ipfs_client, _contract_caller) = setup_test_state().await;
@@ -459,8 +459,9 @@ async fn test_dataset_path_preparation() {
 #[tokio::test]
 #[ignore = "Requires Docker and IPFS running"]
 async fn test_full_execution_flow() {
-    use secure::models::blockchain_transaction::{BlockchainTransaction, EntityType};
-    use secure::models::pg_types::TransactionStatus;
+    use secure::models::blockchain_transaction::{
+        BlockchainTransaction, EntityType, TransactionStatus,
+    };
 
     println!("Starting full execution flow test");
 

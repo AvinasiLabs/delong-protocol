@@ -56,7 +56,7 @@ impl CommitteeMember {
             WHERE bt.status = $1 AND bt.entity_type = $2
             "#,
             TransactionStatus::Confirmed as _,
-            EntityType::Committee.as_str()
+            EntityType::Committee as _
         )
         .fetch_one(pool)
         .await?;
@@ -73,7 +73,7 @@ impl CommitteeMember {
             LIMIT $3 OFFSET $4
             "#,
             TransactionStatus::Confirmed as _,
-            EntityType::Committee.as_str(),
+            EntityType::Committee as _,
             pagination.get_limit() as i64,
             pagination.get_offset() as i64
         )
@@ -99,7 +99,7 @@ impl CommitteeMember {
             WHERE bt.status = $1 AND bt.entity_type = $2 AND committee_member.id = $3
             "#,
             TransactionStatus::Confirmed as _,
-            EntityType::Committee.as_str(),
+            EntityType::Committee as _,
             id
         )
         .fetch_optional(pool)
@@ -119,7 +119,7 @@ impl CommitteeMember {
             WHERE bt.status = $1 AND bt.entity_type = $2 AND committee_member.member_wallet = $3
             "#,
             TransactionStatus::Confirmed as _,
-            EntityType::Committee.as_str(),
+            EntityType::Committee as _,
             wallet
         )
         .fetch_optional(pool)
@@ -140,7 +140,7 @@ impl CommitteeMember {
             )
             "#,
             TransactionStatus::Confirmed as _,
-            EntityType::Committee.as_str(),
+            EntityType::Committee as _,
             wallet
         )
         .fetch_one(pool)

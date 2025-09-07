@@ -11,4 +11,5 @@ pub mod chainsync;
 // Re-export commonly used items
 pub use crate::config::ExecutorConfig;
 pub use algo_executor::{AlgoExecutor, ExecutorError};
+pub use chainsync::transaction_monitor::{TransactionMonitor, TransactionMonitorConfig};
 pub use chainsync::ChainSyncWorker;

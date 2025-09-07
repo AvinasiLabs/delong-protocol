@@ -7,6 +7,7 @@ use std::{env, path::PathBuf};
 pub struct Config {
     pub server: ServerConfig,
     pub database: DatabaseConfig,
+    pub redis: RedisConfig,
     pub executor: ExecutorConfig,
     pub ipfs: IpfsConfig,
     pub chain: ChainConfig,
@@ -20,6 +21,7 @@ pub struct Config {
 pub struct DatasetConfig {
     pub sample_size: usize,
     pub sample_api_url: String,
+    pub max_upload_size_mb: usize,
 }
 
 /// Server configuration
@@ -38,6 +40,15 @@ pub struct DatabaseConfig {
     pub min_connections: u32,
     pub connect_timeout: u64,
     pub idle_timeout: u64,
+}
+
+/// Redis configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RedisConfig {
+    pub url: String,
+    pub max_connections: usize,
+    pub min_connections: usize,
+    pub connection_timeout: u64,
 }
 
 /// Executor configuration for algorithm execution
@@ -145,6 +156,22 @@ impl Config {
                     .parse()
                     .map_err(|_| "Invalid DATABASE_IDLE_TIMEOUT")?,
             },
+            redis: RedisConfig {
+                url: env::var("REDIS_URL")
+                    .unwrap_or_else(|_| "redis://localhost:11002".to_string()),
+                max_connections: env::var("REDIS_MAX_CONNECTIONS")
+                    .unwrap_or_else(|_| "16".to_string())
+                    .parse()
+                    .map_err(|_| "Invalid REDIS_MAX_CONNECTIONS")?,
+                min_connections: env::var("REDIS_MIN_CONNECTIONS")
+                    .unwrap_or_else(|_| "2".to_string())
+                    .parse()
+                    .map_err(|_| "Invalid REDIS_MIN_CONNECTIONS")?,
+                connection_timeout: env::var("REDIS_CONNECTION_TIMEOUT")
+                    .unwrap_or_else(|_| "5".to_string())
+                    .parse()
+                    .map_err(|_| "Invalid REDIS_CONNECTION_TIMEOUT")?,
+            },
             executor: ExecutorConfig {
                 build_size_limit: env::var("EXECUTOR_BUILD_SIZE_LIMIT")
                     .unwrap_or_else(|_| "104857600".to_string()) // 100MB
@@ -238,6 +265,10 @@ impl Config {
                     .map_err(|_| "Invalid DATASET_SAMPLE_SIZE")?,
                 sample_api_url: env::var("DATASET_SAMPLE_API_URL")
                     .unwrap_or_else(|_| "http://localhost:11008".to_string()),
+                max_upload_size_mb: env::var("DATASET_MAX_UPLOAD_SIZE_MB")
+                    .unwrap_or_else(|_| "100".to_string())
+                    .parse()
+                    .map_err(|_| "Invalid DATASET_MAX_UPLOAD_SIZE_MB")?,
             },
         })
     }
@@ -258,6 +289,12 @@ impl Default for Config {
                 min_connections: 1,
                 connect_timeout: 30,
                 idle_timeout: 600,
+            },
+            redis: RedisConfig {
+                url: "redis://localhost:11002".to_string(),
+                max_connections: 16,
+                min_connections: 2,
+                connection_timeout: 5,
             },
             executor: ExecutorConfig {
                 build_size_limit: 100 * 1024 * 1024, // 100MB
@@ -294,6 +331,7 @@ impl Default for Config {
             dataset: DatasetConfig {
                 sample_size: 100,
                 sample_api_url: "http://localhost:11008".to_string(),
+                max_upload_size_mb: 100,
             },
         }
     }

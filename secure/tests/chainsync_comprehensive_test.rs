@@ -11,7 +11,7 @@ use secure::{
     models::{
         blockchain_transaction::{BlockchainTransaction, TransactionStatus},
         committee::CommitteeMember,
-        AlgoReviewStatus,
+        ReviewStatus,
     },
     workers::ChainSyncWorker,
 };
@@ -297,7 +297,7 @@ async fn test_chainsync_vote_casted_with_resolution() {
 
     // Check if algorithm was resolved
     let algo_exe = sqlx::query!(
-        "SELECT review_status as \"review_status: AlgoReviewStatus\" FROM algo_exe WHERE id = $1",
+        "SELECT review_status as \"review_status: ReviewStatus\" FROM algo_exe WHERE id = $1",
         algo_exe_id
     )
     .fetch_optional(&env.pool)
@@ -367,7 +367,7 @@ async fn test_chainsync_execution_submitted_with_schedule() {
         SELECT
             vote_start_time,
             vote_end_time,
-            review_status as "review_status: AlgoReviewStatus"
+            review_status as "review_status: ReviewStatus"
         FROM algo_exe
         WHERE id = $1
         "#,

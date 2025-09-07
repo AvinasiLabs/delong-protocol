@@ -5714,6 +5714,7 @@ dependencies = [
  "config",
  "csv",
  "ctor",
+ "deadpool-redis",
  "dotenvy",
  "dstack-sdk",
  "flate2",

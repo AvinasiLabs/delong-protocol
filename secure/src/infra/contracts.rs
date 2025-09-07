@@ -12,7 +12,7 @@ use alloy::{
     network::EthereumWallet,
     primitives::{Address, U256},
     providers::ProviderBuilder,
-    rpc::types::{BlockNumberOrTag, Filter, Log},
+    rpc::types::{BlockNumberOrTag, Filter, Log, TransactionRequest},
     signers::local::{LocalSignerError, PrivateKeySigner},
     sol,
 };
@@ -252,6 +252,19 @@ impl ContractCaller {
         Ok(provider)
     }
 
+    /// Get a provider for read-only operations (like checking transaction status)
+    pub async fn provider(&self) -> Result<impl Provider> {
+        // For read-only operations, we can use a provider without a wallet
+        let provider_url = &self.config.rpc_url;
+
+        let provider = ProviderBuilder::new()
+            .connect(provider_url)
+            .await
+            .map_err(|e| ContractError::ProviderError(format!("Failed to connect: {}", e)))?;
+
+        Ok(provider)
+    }
+
     /// Ensure the TEE wallet has sufficient balance (funded by official wallet if needed)
     pub async fn ensure_sufficient_balance(&self, required_eth: f64) -> Result<()> {
         // First check if TEE wallet is initialized
@@ -440,13 +453,20 @@ impl ContractCaller {
         &self,
         scientist_wallet: Address,
         algo_cid: String,
+        dataset_id: U256,
         dataset_name: String,
     ) -> Result<String> {
         let provider = self.create_tee_provider().await?;
         let contract = DataContribution::new(self.addresses.data_contribution, provider);
 
         let when = U256::from(chrono::Utc::now().timestamp() as u64);
-        let call = contract.recordUsage(scientist_wallet, algo_cid.clone(), dataset_name, when);
+        let call = contract.recordUsage(
+            scientist_wallet,
+            algo_cid.clone(),
+            dataset_id,
+            dataset_name,
+            when,
+        );
 
         let pending_tx = call.send().await?;
         let receipt = pending_tx
@@ -466,13 +486,19 @@ impl ContractCaller {
         &self,
         author_wallet: Address,
         ipfs_cid: String,
+        dataset_id: U256,
         dataset_name: String,
     ) -> Result<String> {
         let provider = self.create_tee_provider().await?;
         let contract = DataContribution::new(self.addresses.data_contribution, provider);
 
         // Call the registerData function on the smart contract
-        let call = contract.registerData(author_wallet, ipfs_cid.clone(), dataset_name.clone());
+        let call = contract.registerData(
+            author_wallet,
+            ipfs_cid.clone(),
+            dataset_id,
+            dataset_name.clone(),
+        );
 
         let pending_tx = call.send().await?;
         let receipt = pending_tx
@@ -778,6 +804,15 @@ impl ContractCaller {
                     return Err(ContractError::ParseError("Missing cid topic".to_string()));
                 };
 
+                // Extract dataset_id from topics[3]
+                let dataset_id = if log.topics().len() > 3 {
+                    U256::from_be_bytes(log.topics()[3].into())
+                } else {
+                    return Err(ContractError::ParseError(
+                        "Missing dataset_id topic".to_string(),
+                    ));
+                };
+
                 // Decode the data field to get non-indexed parameters
                 let dataset = String::abi_decode(&log.data().data).map_err(|e| {
                     ContractError::ParseError(format!("Failed to decode dataset: {}", e))
@@ -789,6 +824,7 @@ impl ContractCaller {
                 return Ok(ParsedEvent::DataRegistered {
                     contributor,
                     cid,
+                    dataset_id,
                     dataset,
                 });
             }
@@ -802,6 +838,15 @@ impl ContractCaller {
                     return Err(ContractError::ParseError("Missing cid topic".to_string()));
                 };
 
+                // Extract dataset_id from topics[3]
+                let dataset_id = if log.topics().len() > 3 {
+                    U256::from_be_bytes(log.topics()[3].into())
+                } else {
+                    return Err(ContractError::ParseError(
+                        "Missing dataset_id topic".to_string(),
+                    ));
+                };
+
                 // Decode the data field to get non-indexed parameters (dataset, when)
                 let (dataset, when): (String, U256) =
                     <(String, U256)>::abi_decode(&log.data().data).map_err(|e| {
@@ -813,6 +858,7 @@ impl ContractCaller {
                 return Ok(ParsedEvent::DataUsed {
                     scientist,
                     cid,
+                    dataset_id,
                     dataset,
                     when,
                 });
@@ -897,6 +943,39 @@ impl ContractCaller {
             log.address()
         )))
     }
+
+    /// Get the TEE wallet address
+    pub fn wallet_address(&self) -> Address {
+        self.tee_wallet
+            .as_ref()
+            .map(|wallet| wallet.default_signer().address())
+            .unwrap_or_else(|| self.official_wallet.default_signer().address())
+    }
+
+    /// Send a raw transaction using the TEE wallet
+    pub async fn send_raw_transaction(&self, tx_request: TransactionRequest) -> Result<String> {
+        // Ensure TEE wallet has sufficient balance
+        self.ensure_sufficient_balance(0.1).await?;
+
+        let provider = self.create_tee_provider().await?;
+
+        // Send the transaction
+        let pending_tx = provider.send_transaction(tx_request).await.map_err(|e| {
+            ContractError::TransactionFailed(format!("Failed to send transaction: {}", e))
+        })?;
+
+        // Wait for confirmation
+        let receipt = pending_tx
+            .with_required_confirmations(self.config.confirmations)
+            .get_receipt()
+            .await
+            .map_err(|e| ContractError::TransactionFailed(format!("Transaction failed: {}", e)))?;
+
+        let tx_hash = format!("{:?}", receipt.transaction_hash);
+        info!("Raw transaction sent successfully: {}", tx_hash);
+
+        Ok(tx_hash)
+    }
 }
 
 /// Parsed event types
@@ -907,11 +986,13 @@ pub enum ParsedEvent {
     DataRegistered {
         contributor: Address,
         cid: String, // Note: for indexed string, this will be the hash
+        dataset_id: U256,
         dataset: String,
     },
     DataUsed {
         scientist: Address,
         cid: String, // Note: for indexed string, this will be the hash
+        dataset_id: U256,
         dataset: String,
         when: U256,
     },

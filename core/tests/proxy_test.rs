@@ -120,6 +120,7 @@ mod proxy_tests {
             enable_debug_logging: false,
             jwt_expiration_seconds: 60,
             max_retries: 3,
+            max_upload_size_mb: 100,
         };
 
         let jwt_secret = "test-secret-key";

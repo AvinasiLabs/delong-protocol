@@ -3,11 +3,54 @@ use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, PgPool};
 
 use super::{
-    blockchain_transaction::EntityType,
-    pg_types::{ExecutionStatus, ReviewStatus, TransactionStatus},
+    blockchain_transaction::{EntityType, TransactionStatus},
     Create, FindById, Timestamped,
 };
 use crate::{AppError, Result};
+use sqlx::Type;
+use std::fmt;
+
+/// Algorithm review status
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[sqlx(type_name = "algo_review_status", rename_all = "lowercase")]
+#[serde(rename_all = "UPPERCASE")]
+pub enum ReviewStatus {
+    Reviewing,
+    Approved,
+    Rejected,
+}
+
+impl fmt::Display for ReviewStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ReviewStatus::Reviewing => write!(f, "reviewing"),
+            ReviewStatus::Approved => write!(f, "approved"),
+            ReviewStatus::Rejected => write!(f, "rejected"),
+        }
+    }
+}
+
+/// Algorithm execution status
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[sqlx(type_name = "algo_exe_status", rename_all = "lowercase")]
+#[serde(rename_all = "UPPERCASE")]
+pub enum ExecutionStatus {
+    Queued,
+    Running,
+    Completed,
+    Failed,
+}
+
+impl fmt::Display for ExecutionStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ExecutionStatus::Queued => write!(f, "queued"),
+            ExecutionStatus::Running => write!(f, "running"),
+            ExecutionStatus::Completed => write!(f, "completed"),
+            ExecutionStatus::Failed => write!(f, "failed"),
+        }
+    }
+}
 
 /// Algorithm execution entity
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -29,54 +72,56 @@ pub struct AlgoExe {
 }
 
 impl AlgoExe {
-    /// SQL join clause for confirmed transactions
-    const JOIN_CONFIRMED_TX: &str = r#"
-JOIN blockchain_transaction bt
-ON bt.entity_id = algo_exe.id
-   AND bt.status = ?
-   AND bt.entity_type = ?
-    "#;
-
     /// Find pending executions (RUNNING status) with confirmed transactions
     pub async fn find_pending_confirmed(pool: &PgPool) -> Result<Vec<Self>> {
-        let query = format!(
+        let exes = sqlx::query_as!(
+            AlgoExe,
             r#"
-            SELECT algo_exe.*
+            SELECT algo_exe.id, algo_exe.algo_id, algo_exe.used_dataset, algo_exe.scientist_wallet,
+                   algo_exe.review_status as "review_status: _", algo_exe.vote_start_time, algo_exe.vote_end_time,
+                   algo_exe.status as "status: _", algo_exe.start_time, algo_exe.end_time,
+                   algo_exe.result, algo_exe.error_msg,
+                   algo_exe.created_at, algo_exe.updated_at
             FROM algo_exe
-            {}
-            WHERE algo_exe.status = ?
+            JOIN blockchain_transaction bt
+            ON bt.entity_id = algo_exe.id
+               AND bt.status = $1
+               AND bt.entity_type = $2
+            WHERE algo_exe.status = $3
             "#,
-            Self::JOIN_CONFIRMED_TX
-        );
-
-        let exes = sqlx::query_as::<_, Self>(&query)
-            .bind(TransactionStatus::Confirmed)
-            .bind(EntityType::Execution.as_str())
-            .bind(ExecutionStatus::Running)
-            .fetch_all(pool)
-            .await?;
+            TransactionStatus::Confirmed as _,
+            EntityType::Execution as _,
+            ExecutionStatus::Running as _
+        )
+        .fetch_all(pool)
+        .await?;
 
         Ok(exes)
     }
 
     /// Find reviewing executions with confirmed transactions
     pub async fn find_reviewing_confirmed(pool: &PgPool) -> Result<Vec<Self>> {
-        let query = format!(
+        let exes = sqlx::query_as!(
+            AlgoExe,
             r#"
-            SELECT algo_exe.*
+            SELECT algo_exe.id, algo_exe.algo_id, algo_exe.used_dataset, algo_exe.scientist_wallet,
+                   algo_exe.review_status as "review_status: _", algo_exe.vote_start_time, algo_exe.vote_end_time,
+                   algo_exe.status as "status: _", algo_exe.start_time, algo_exe.end_time,
+                   algo_exe.result, algo_exe.error_msg,
+                   algo_exe.created_at, algo_exe.updated_at
             FROM algo_exe
-            {}
-            WHERE algo_exe.review_status = ?
+            JOIN blockchain_transaction bt
+            ON bt.entity_id = algo_exe.id
+               AND bt.status = $1
+               AND bt.entity_type = $2
+            WHERE algo_exe.review_status = $3
             "#,
-            Self::JOIN_CONFIRMED_TX
-        );
-
-        let exes = sqlx::query_as::<_, Self>(&query)
-            .bind(TransactionStatus::Confirmed)
-            .bind(EntityType::Execution.as_str())
-            .bind(ReviewStatus::Reviewing)
-            .fetch_all(pool)
-            .await?;
+            TransactionStatus::Confirmed as _,
+            EntityType::Execution as _,
+            ReviewStatus::Reviewing as _
+        )
+        .fetch_all(pool)
+        .await?;
 
         Ok(exes)
     }

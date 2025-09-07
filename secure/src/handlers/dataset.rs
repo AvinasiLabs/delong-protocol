@@ -1,9 +1,10 @@
-use alloy::primitives::Address;
+use alloy::primitives::{Address, U256};
 use avinapi::prelude::{
     data, AppError, JsonResult, PaginatedResult, PaginationQuery, ValidatedJson,
     ValidatedMultipartForm, ValidatedQuery,
 };
 use axum::extract::{Path, State};
+use chrono::Utc;
 use ipfs_api_backend_hyper::IpfsApi;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -13,11 +14,12 @@ use validator::Validate;
 
 use crate::{
     models::{
-        blockchain_transaction::{CreateTransaction, EntityType},
+        blockchain_transaction::{BlockchainTransaction, TransactionStatus},
         dataset::{CreateDatasetRequest, Dataset},
         Create, FindById,
     },
     routes::AppState,
+    workers::chainsync::transaction_monitor::{PendingTransaction, TransactionMonitor},
 };
 
 /// Response for dataset
@@ -33,9 +35,8 @@ pub struct DatasetResponse {
 }
 
 /// Response for dataset creation
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateDatasetResponse {
-    pub id: i64,
     pub tx_hash: String,
 }
 
@@ -165,6 +166,105 @@ pub async fn create_dataset(
         }
     }
 
+    // Check if dataset with same file hash already exists
+    let existing = Dataset::find_by_file_hash_with_status(state.db.pool(), &file_hash).await?;
+
+    if let Some(existing_dataset) = existing {
+        match existing_dataset.tx_status {
+            Some(TransactionStatus::Confirmed) => {
+                // Already confirmed, return existing dataset
+                info!("Dataset with file_hash {} already confirmed", file_hash);
+                return Err(AppError::Conflict(
+                    "Dataset already exists and was confirmed on blockchain.".to_string(),
+                ));
+            }
+            Some(TransactionStatus::Pending) => {
+                // Pending status, tell user to retry later (timeout check handled by background task)
+                return Err(AppError::Conflict(format!(
+                    "Dataset is being processed on blockchain (tx: {}). Please try again later.",
+                    existing_dataset.tx_hash.unwrap_or_default()
+                )));
+            }
+            Some(TransactionStatus::Failed) | None => {
+                // Failed or no transaction, reuse existing dataset and retry submission
+                info!(
+                    "Retrying blockchain submission for existing dataset {}",
+                    existing_dataset.dataset.id
+                );
+
+                // Parse author wallet address
+                let author_address = Address::from_str(&existing_dataset.dataset.author_wallet)
+                    .map_err(|e| AppError::Validation(format!("Invalid wallet address: {}", e)))?;
+
+                // Retry submission to blockchain
+                let tx_hash = match state
+                    .contract_caller
+                    .register_data(
+                        author_address,
+                        existing_dataset.dataset.ipfs_cid.clone(),
+                        U256::from(existing_dataset.dataset.id as u64),
+                        existing_dataset.dataset.name.clone(),
+                    )
+                    .await
+                {
+                    Ok(hash) => hash,
+                    Err(e) => {
+                        // Blockchain submission failed, create failed transaction record
+                        warn!(
+                            "Blockchain submission failed for dataset {}: {}",
+                            existing_dataset.dataset.id, e
+                        );
+                        BlockchainTransaction::create_failed(
+                            state.db.pool(),
+                            existing_dataset.dataset.id,
+                            crate::models::blockchain_transaction::EntityType::Dataset,
+                            &e.to_string(),
+                        )
+                        .await?;
+
+                        return Err(AppError::Internal(format!(
+                            "Failed to register dataset on blockchain: {}",
+                            e
+                        )));
+                    }
+                };
+
+                info!(
+                    "Dataset {} re-registered on blockchain with tx hash: {}",
+                    existing_dataset.dataset.id, tx_hash
+                );
+
+                // Create/update blockchain_transaction record
+                BlockchainTransaction::upsert_for_dataset(
+                    state.db.pool(),
+                    &tx_hash,
+                    existing_dataset.dataset.id,
+                )
+                .await?;
+
+                // Add to Redis monitoring queue for retry
+                let pending_tx = PendingTransaction {
+                    tx_hash: tx_hash.clone(),
+                    entity_id: existing_dataset.dataset.id,
+                    entity_type: "dataset".to_string(),
+                    nonce: 0, // TODO: Get actual nonce from transaction
+                    created_at: Utc::now(),
+                };
+
+                if let Err(e) = TransactionMonitor::add_to_queue(&state.redis, pending_tx).await {
+                    warn!(
+                        "Failed to add retry transaction {} to monitoring queue: {}",
+                        tx_hash, e
+                    );
+                } else {
+                    info!("Retry transaction {} added to monitoring queue", tx_hash);
+                }
+
+                return avinapi::data!(CreateDatasetResponse { tx_hash });
+            }
+        }
+    }
+
     // Create dataset record
     let request = CreateDatasetRequest {
         name: form_data.name.clone(),
@@ -187,40 +287,79 @@ pub async fn create_dataset(
         .map_err(|e| AppError::Validation(format!("Invalid wallet address: {}", e)))?;
 
     // Submit to blockchain
-    let tx_hash = state
+    let tx_hash = match state
         .contract_caller
         .register_data(
             author_address,
             dataset.ipfs_cid.clone(),
+            U256::from(dataset.id as u64),
             dataset.name.clone(),
         )
         .await
-        .map_err(|e| {
-            AppError::Internal(format!("Failed to register dataset on blockchain: {}", e))
-        })?;
+    {
+        Ok(hash) => hash,
+        Err(e) => {
+            // Blockchain submission failed, create failed transaction record
+            warn!(
+                "Blockchain submission failed for dataset {}: {}",
+                dataset.id, e
+            );
+            BlockchainTransaction::create_failed(
+                state.db.pool(),
+                dataset.id,
+                crate::models::blockchain_transaction::EntityType::Dataset,
+                &e.to_string(),
+            )
+            .await?;
+
+            return Err(AppError::Internal(format!(
+                "Failed to register dataset on blockchain: {}",
+                e
+            )));
+        }
+    };
 
     info!("Dataset registered on blockchain with tx hash: {}", tx_hash);
 
-    // Create blockchain transaction record
-    let create_tx = CreateTransaction {
+    // Create blockchain transaction record using conditional insert
+    // This will not overwrite if a confirmed record already exists
+    let was_updated =
+        BlockchainTransaction::upsert_for_dataset(state.db.pool(), &tx_hash, dataset.id).await?;
+
+    if was_updated {
+        info!(
+            "Blockchain transaction record created for dataset {}",
+            dataset.id
+        );
+    } else {
+        info!("Blockchain transaction record already exists and is confirmed, skipped update");
+    }
+
+    // Add to Redis monitoring queue
+    // Get current nonce from contract caller (assuming we track it)
+    // For now, use a placeholder nonce - this should be obtained from the actual transaction
+    let pending_tx = PendingTransaction {
         tx_hash: tx_hash.clone(),
         entity_id: dataset.id,
-        entity_type: EntityType::Dataset,
+        entity_type: "dataset".to_string(),
+        nonce: 0, // TODO: Get actual nonce from transaction
+        created_at: Utc::now(),
     };
 
-    let mut db_tx = state.db.pool().begin().await?;
-
-    CreateTransaction::create(&mut db_tx, create_tx).await?;
-
-    // Commit transaction
-    db_tx.commit().await?;
+    // Add to Redis queue for monitoring
+    if let Err(e) = TransactionMonitor::add_to_queue(&state.redis, pending_tx).await {
+        warn!(
+            "Failed to add transaction {} to monitoring queue: {}",
+            tx_hash, e
+        );
+        // Continue anyway - monitoring is not critical for success
+    } else {
+        info!("Transaction {} added to monitoring queue", tx_hash);
+    }
 
     info!("Dataset {} registered successfully", dataset.id);
 
-    avinapi::data!(CreateDatasetResponse {
-        id: dataset.id,
-        tx_hash
-    })
+    avinapi::data!(CreateDatasetResponse { tx_hash })
 }
 
 /// List datasets with pagination
@@ -231,18 +370,7 @@ pub async fn list_datasets(
     let (datasets, total) =
         Dataset::find_all_confirmed(state.db.pool(), query.page, query.per_page).await?;
 
-    let items: Vec<DatasetResponse> = datasets
-        .into_iter()
-        .map(|d| DatasetResponse {
-            id: d.id as u64,
-            name: d.name,
-            file_hash: d.file_hash,
-            ipfs_cid: d.ipfs_cid,
-            author_wallet: d.author_wallet,
-            created_at: d.created_at,
-            updated_at: d.updated_at,
-        })
-        .collect();
+    let items: Vec<DatasetResponse> = datasets.into_iter().map(|d| d.to_response()).collect();
 
     avinapi::paginated!(items, total, query.page, query.per_page)
 }
@@ -261,36 +389,19 @@ pub async fn update_dataset(
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Dataset {} not found", id)))?;
 
-    // Update dataset
-    let updated = sqlx::query_as!(
-        Dataset,
-        r#"
-        UPDATE dataset
-        SET name = $1, ui_name = $2, "desc" = $3, updated_at = NOW()
-        WHERE id = $4
-        RETURNING *
-        "#,
-        req.name.clone(),
-        req.name,
-        req.desc,
-        id
+    // Update dataset using model method
+    let updated = Dataset::update_metadata(
+        state.db.pool(),
+        id,
+        &req.name, // ui_name
+        &req.name, // name
+        req.desc.as_deref(),
     )
-    .fetch_one(state.db.pool())
     .await?;
 
     info!("Dataset {} updated successfully", id);
 
-    let response = DatasetResponse {
-        id: updated.id as u64,
-        name: updated.name,
-        file_hash: updated.file_hash,
-        ipfs_cid: updated.ipfs_cid,
-        author_wallet: updated.author_wallet,
-        created_at: updated.created_at,
-        updated_at: updated.updated_at,
-    };
-
-    data!(response)
+    data!(updated.to_response())
 }
 
 /// Delete a dataset (requires admin)
@@ -303,14 +414,12 @@ pub async fn delete_dataset(State(state): State<AppState>, Path(id): Path<i64>) 
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Dataset {} not found", id)))?;
 
-    // Delete dataset (this should cascade to related records based on DB constraints)
-    sqlx::query!("DELETE FROM dataset WHERE id = $1", id)
-        .execute(state.db.pool())
-        .await?;
+    // Delete dataset using model method (this should cascade to related records based on DB constraints)
+    Dataset::delete(state.db.pool(), id).await?;
 
     info!("Dataset {} deleted successfully", id);
 
-    avinapi::data!(())
+    avinapi::empty!()
 }
 
 /// Get a specific dataset by ID
@@ -322,15 +431,44 @@ pub async fn get_dataset(
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Dataset {} not found", id)))?;
 
-    let response = DatasetResponse {
-        id: dataset.id as u64,
-        name: dataset.name,
-        file_hash: dataset.file_hash,
-        ipfs_cid: dataset.ipfs_cid,
-        author_wallet: dataset.author_wallet,
-        created_at: dataset.created_at,
-        updated_at: dataset.updated_at,
-    };
+    data!(dataset.to_response())
+}
+
+/// Get dataset status including blockchain transaction status
+pub async fn get_dataset_status(
+    Path(id): Path<i64>,
+    State(state): State<AppState>,
+) -> JsonResult<serde_json::Value> {
+    let dataset = Dataset::find_by_id(state.db.pool(), id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Dataset {} not found", id)))?;
+
+    // Query transaction status
+    let tx_status = sqlx::query!(
+        r#"
+        SELECT status as "status: TransactionStatus", tx_hash, block_number, created_at, updated_at
+        FROM blockchain_transaction
+        WHERE entity_id = $1 AND entity_type = 'dataset'
+        ORDER BY created_at DESC
+        LIMIT 1
+        "#,
+        id
+    )
+    .fetch_optional(state.db.pool())
+    .await?;
+
+    let response = serde_json::json!({
+        "dataset": dataset.to_response(),
+        "blockchain_status": tx_status.map(|t| {
+            serde_json::json!({
+                "status": t.status,
+                "tx_hash": t.tx_hash,
+                "block_number": t.block_number,
+                "created_at": t.created_at,
+                "updated_at": t.updated_at,
+            })
+        }),
+    });
 
     data!(response)
 }
