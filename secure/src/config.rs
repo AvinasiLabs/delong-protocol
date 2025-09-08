@@ -62,8 +62,6 @@ pub struct ExecutorConfig {
     pub working_directory: PathBuf,
     /// Maximum concurrent executions
     pub max_concurrent: usize,
-    /// Dataset base path
-    pub dataset_base_path: PathBuf,
 }
 
 impl Default for ExecutorConfig {
@@ -73,7 +71,6 @@ impl Default for ExecutorConfig {
             execution_timeout: 3600,             // 1 hour
             working_directory: PathBuf::from("/tmp/delong-runtime"),
             max_concurrent: 10,
-            dataset_base_path: PathBuf::from("/tmp/datasets"),
         }
     }
 }
@@ -188,9 +185,6 @@ impl Config {
                     .unwrap_or_else(|_| "10".to_string())
                     .parse()
                     .map_err(|_| "Invalid EXECUTOR_MAX_CONCURRENT_EXECUTIONS")?,
-                dataset_base_path: env::var("EXECUTOR_DATASET_BASE_PATH")
-                    .unwrap_or_else(|_| "/tmp/datasets".to_string())
-                    .into(),
             },
             ipfs: IpfsConfig {
                 api_url: env::var("IPFS_API_URL")
@@ -301,7 +295,6 @@ impl Default for Config {
                 execution_timeout: 3600,
                 working_directory: PathBuf::from("/tmp/delong-runtime"),
                 max_concurrent: 10,
-                dataset_base_path: PathBuf::from("/tmp/datasets"),
             },
             ipfs: IpfsConfig {
                 api_url: "http://localhost:5001".to_string(),

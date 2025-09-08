@@ -528,7 +528,24 @@ impl ChainSyncWorker {
 
         info!("Received event tx={:?}", tx_hash);
 
+        // Get block info for transaction update
+        let block_number = log
+            .block_number
+            .ok_or_else(|| AppError::Internal("Missing block number".to_string()))?;
+
+        // Get block timestamp
+        let block_timestamp = if let Some(timestamp) = log.block_timestamp {
+            let naive = (timestamp as i64).to_naive_datetime()?;
+            Some(chrono::DateTime::from_naive_utc_and_offset(
+                naive,
+                chrono::Utc,
+            ))
+        } else {
+            Some(chrono::Utc::now())
+        };
+
         let exe_id = execution_id.to::<i64>();
+        let tx_hash_str = format!("{:?}", tx_hash);
 
         // Update algorithm execution status
         let status = if approved {
@@ -550,12 +567,44 @@ impl ChainSyncWorker {
         .execute(self.db.pool())
         .await?;
 
-        // Note: In Go version, no entity is created during algo resolution
-        // So we don't create a new transaction record, just push nil result
+        // Create/update blockchain transaction record for the resolution event
+        // This ensures we track the final state of the algorithm execution
+        let tx_status = crate::models::TransactionStatus::Confirmed;
 
-        // Push nil transaction result (matches Go behavior)
-        let tx_hash_str = format!("{:?}", tx_hash);
-        if let Err(e) = self.notifier.push_tx_result(tx_hash_str, &()).await {
+        let was_updated = BlockchainTransaction::upsert_from_event(
+            self.db.pool(),
+            &tx_hash_str,
+            exe_id,
+            crate::models::blockchain_transaction::EntityType::Execution,
+            tx_status,
+            block_number as i64,
+            block_timestamp,
+        )
+        .await?;
+
+        if was_updated {
+            info!(
+                "Updated blockchain transaction for algorithm resolution: tx={}",
+                tx_hash_str
+            );
+        } else {
+            info!(
+                "Created blockchain transaction for algorithm resolution: tx={}",
+                tx_hash_str
+            );
+        }
+
+        // Fetch the updated transaction record
+        let transaction = BlockchainTransaction::find_by_tx_hash(self.db.pool(), &tx_hash_str)
+            .await?
+            .ok_or_else(|| AppError::NotFound("Transaction not found".to_string()))?;
+
+        // Push transaction result
+        if let Err(e) = self
+            .notifier
+            .push_tx_result(tx_hash_str.clone(), &transaction)
+            .await
+        {
             warn!("Failed to send algorithm resolution notification: {}", e);
         }
 
@@ -655,8 +704,8 @@ impl ChainSyncWorker {
         end_time: U256,
     ) -> AppResult<()> {
         info!(
-            "ExecutionSubmitted: execution_id={}, cid={}, start_time={}, end_time={}",
-            execution_id, cid, start_time, end_time
+            "ExecutionSubmitted: execution_id={}, cid={} - will execute immediately (AI audit already passed)",
+            execution_id, cid
         );
 
         // Get transaction hash and block info
@@ -681,23 +730,33 @@ impl ChainSyncWorker {
         // Update transaction status
         let status = crate::models::TransactionStatus::Confirmed;
         let tx_hash_str = format!("{:?}", tx_hash);
+        let exe_id = execution_id.to::<i64>();
 
-        let _transaction = sqlx::query!(
-            r#"
-            UPDATE blockchain_transaction
-            SET status = $2, block_number = $3, block_timestamp = $4, updated_at = NOW()
-            WHERE tx_hash = $1
-            RETURNING id, entity_id, entity_type
-            "#,
-            tx_hash_str.clone(),
-            status as crate::models::TransactionStatus,
+        // Use upsert instead of direct update to handle race conditions
+        // This ensures the transaction record is created if it doesn't exist yet
+        // (in case the event arrives before the handler creates the record)
+        let was_updated = BlockchainTransaction::upsert_from_event(
+            self.db.pool(),
+            &tx_hash_str,
+            exe_id,
+            crate::models::blockchain_transaction::EntityType::Execution,
+            status,
             block_number as i64,
-            block_timestamp
+            block_timestamp,
         )
-        .fetch_optional(self.db.pool())
         .await?;
 
-        let exe_id = execution_id.to::<i64>();
+        if was_updated {
+            info!(
+                "Updated blockchain transaction for execution submission: tx={}",
+                tx_hash_str
+            );
+        } else {
+            info!(
+                "Created blockchain transaction for execution submission: tx={}",
+                tx_hash_str
+            );
+        }
 
         // Convert timestamps to DateTime
         let vote_start_naive = start_time.to_naive_datetime()?;
@@ -709,7 +768,7 @@ impl ChainSyncWorker {
         let vote_end =
             chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(vote_end_naive, chrono::Utc);
 
-        // Update vote duration in algo_exe table
+        // Update vote duration in algo_exe table (kept for backward compatibility, not used in new flow)
         if status == crate::models::TransactionStatus::Confirmed {
             sqlx::query!(
                 r#"
@@ -724,20 +783,16 @@ impl ChainSyncWorker {
             .execute(self.db.pool())
             .await?;
 
-            // Schedule automatic resolution at end time
+            // Directly schedule algorithm execution (no need to wait for voting)
+            // AI audit already passed during submission
             info!(
-                "Scheduling automatic resolution for execution {} (cid: {}) at {}",
-                exe_id, cid, vote_end
+                "Directly scheduling algorithm execution {} (cid: {}) - AI audit already passed",
+                exe_id, cid
             );
-            // Schedule the resolution at voting end time
-            let resolved_at = vote_end;
-            if let Err(e) = self
-                .algo_executor
-                .schedule_resolve(exe_id, cid.clone(), resolved_at)
-                .await
-            {
+
+            if let Err(e) = self.algo_executor.schedule_execution(exe_id).await {
                 error!(
-                    "Failed to schedule resolution for execution {} (cid: {}): {}",
+                    "Failed to schedule algorithm execution for {} (cid: {}): {}",
                     exe_id, cid, e
                 );
             }

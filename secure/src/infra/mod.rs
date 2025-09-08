@@ -4,6 +4,7 @@
 //! for cryptography, database access, blockchain interaction, TEE management,
 //! and WebSocket communication.
 
+pub mod ai_audit;
 pub mod contracts;
 pub mod crypto;
 pub mod db;
@@ -13,6 +14,7 @@ pub mod tee;
 pub mod tee_crypto;
 
 // Re-export commonly used items for convenience
+pub use ai_audit::{AiAuditService, AiAuditServiceBuilder, AuditResult};
 pub use contracts::{ContractAddresses, ContractCaller, ContractError};
 pub use crypto::{decrypt, decrypt_hex_key, encrypt, encrypt_hex_key, CryptoError};
 pub use db::{Database, DatabaseError};

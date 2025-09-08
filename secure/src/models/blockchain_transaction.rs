@@ -246,6 +246,43 @@ impl BlockchainTransaction {
         Ok(result.rows_affected() > 0)
     }
 
+    /// UPSERT a blockchain transaction record for an execution
+    /// This will not overwrite if a confirmed record already exists
+    pub async fn upsert_for_execution(
+        pool: &PgPool,
+        tx_hash: &str,
+        execution_id: i64,
+    ) -> Result<bool> {
+        let result = sqlx::query!(
+            r#"
+            INSERT INTO blockchain_transaction (
+                tx_hash, entity_id, entity_type, status, created_at, updated_at
+            ) VALUES (
+                $1, $2, 'execution', 'pending', NOW(), NOW()
+            )
+            ON CONFLICT (tx_hash) DO UPDATE SET
+                entity_id = CASE
+                    WHEN blockchain_transaction.status = 'confirmed' THEN blockchain_transaction.entity_id
+                    ELSE EXCLUDED.entity_id
+                END,
+                entity_type = CASE
+                    WHEN blockchain_transaction.status = 'confirmed' THEN blockchain_transaction.entity_type
+                    ELSE EXCLUDED.entity_type
+                END,
+                updated_at = CASE
+                    WHEN blockchain_transaction.status = 'confirmed' THEN blockchain_transaction.updated_at
+                    ELSE NOW()
+                END
+            "#,
+            tx_hash,
+            execution_id
+        )
+        .execute(pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
     /// UPSERT a blockchain transaction from a chain event
     /// This is used by chainsync when processing DataRegistered events
     pub async fn upsert_from_event(

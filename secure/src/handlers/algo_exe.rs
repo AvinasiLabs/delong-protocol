@@ -4,10 +4,11 @@
 //! including submission, listing, and retrieval of execution details.
 
 use crate::{
+    infra::ai_audit::AiAuditService,
     models::{
         algo::{Algo, CreateAlgo},
         algo_exe::{AlgoExe, AlgoExeWithAlgo, CreateAlgoExe, ExecutionStatus, ReviewStatus},
-        blockchain_transaction::{CreateTransaction, EntityType},
+        blockchain_transaction::BlockchainTransaction,
         Create, FindById,
     },
     routes::AppState,
@@ -18,6 +19,7 @@ use avinapi::prelude::{
     ValidatedQuery,
 };
 use axum::extract::{Path, State};
+
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use tracing::{info, instrument};
@@ -112,6 +114,23 @@ pub async fn submit_algo_exe(
 
             info!("Algorithm uploaded to IPFS with CID: {}", algo_cid);
 
+            // Perform AI audit on the algorithm
+            let ai_audit_service = AiAuditService::mock();
+            let audit_result = ai_audit_service.audit_algorithm(&algo_cid).await?;
+
+            info!(
+                "AI audit completed for CID {}: approved={}, risk_score={}",
+                algo_cid, audit_result.approved, audit_result.risk_score
+            );
+
+            // Check if audit passed
+            if !audit_result.approved {
+                return Err(AppError::Validation(format!(
+                    "Algorithm failed AI audit: {}",
+                    audit_result.message
+                )));
+            }
+
             // Create an algorithm record
             let create_algo = CreateAlgo {
                 name: repo_name,
@@ -127,12 +146,13 @@ pub async fn submit_algo_exe(
     let mut tx = state.db.pool().begin().await?;
 
     // Create an algorithm execution record
+    // Since AI audit already passed, we can set status directly to approved
     let create_exe = CreateAlgoExe {
         algo_id: algo.id,
         status: ExecutionStatus::Queued,
         used_dataset: req.dataset.clone(),
         scientist_wallet: req.scientist_wallet.clone(),
-        review_status: ReviewStatus::Reviewing,
+        review_status: ReviewStatus::Approved, // AI audit already approved
     };
 
     let algo_exe = AlgoExe::create_with_tx(&mut tx, create_exe).await?;
@@ -154,17 +174,22 @@ pub async fn submit_algo_exe(
         tx_hash
     );
 
-    // Create a blockchain transaction record
-    let create_tx = CreateTransaction {
-        tx_hash: tx_hash.clone(),
-        entity_id: algo_exe.id,
-        entity_type: EntityType::Execution,
-    };
-
-    CreateTransaction::create(&mut tx, create_tx).await?;
-
-    // Commit transaction
+    // Commit transaction first
     tx.commit().await?;
+
+    // Create blockchain transaction record using conditional insert
+    // This will not overwrite if a confirmed record already exists
+    let was_updated =
+        BlockchainTransaction::upsert_for_execution(state.db.pool(), &tx_hash, algo_exe.id).await?;
+
+    if was_updated {
+        info!(
+            "Blockchain transaction record created for execution {}",
+            algo_exe.id
+        );
+    } else {
+        info!("Blockchain transaction record already exists and is confirmed, skipped update");
+    }
 
     info!("Algorithm execution {} submitted", algo_exe.id);
 
@@ -173,7 +198,6 @@ pub async fn submit_algo_exe(
 
 /// List all algorithm executions with pagination
 #[instrument(skip(state))]
-#[axum::debug_handler]
 pub async fn list_algo_exes(
     State(state): State<AppState>,
     ValidatedQuery(params): ValidatedQuery<PaginationQuery>,

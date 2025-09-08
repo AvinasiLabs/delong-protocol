@@ -831,36 +831,26 @@ impl ContractCaller {
 
             // DataUsed event
             if event_sig == &DataContribution::DataUsed::SIGNATURE_HASH {
-                // For indexed string (cid), we only have the hash in topics[2]
+                // Use the generated event struct to decode
+                let decoded_event =
+                    DataContribution::DataUsed::decode_log(&log.inner).map_err(|e| {
+                        ContractError::ParseError(format!("Failed to decode DataUsed event: {}", e))
+                    })?;
+
+                // For indexed string (cid), we only have the hash in topics
+                // So we'll use the hash representation
                 let cid = if log.topics().len() > 2 {
                     format!("0x{}", hex::encode(&log.topics()[2]))
                 } else {
                     return Err(ContractError::ParseError("Missing cid topic".to_string()));
                 };
 
-                // Extract dataset_id from topics[3]
-                let dataset_id = if log.topics().len() > 3 {
-                    U256::from_be_bytes(log.topics()[3].into())
-                } else {
-                    return Err(ContractError::ParseError(
-                        "Missing dataset_id topic".to_string(),
-                    ));
-                };
-
-                // Decode the data field to get non-indexed parameters (dataset, when)
-                let (dataset, when): (String, U256) =
-                    <(String, U256)>::abi_decode(&log.data().data).map_err(|e| {
-                        ContractError::ParseError(format!("Failed to decode data: {}", e))
-                    })?;
-
-                let scientist = Address::from_slice(&log.topics()[1][12..]);
-
                 return Ok(ParsedEvent::DataUsed {
-                    scientist,
+                    scientist: decoded_event.scientist,
                     cid,
-                    dataset_id,
-                    dataset,
-                    when,
+                    dataset_id: decoded_event.datasetId,
+                    dataset: decoded_event.data.dataset,
+                    when: decoded_event.data.when,
                 });
             }
         }
@@ -900,20 +890,21 @@ impl ContractCaller {
 
             // ExecutionSubmitted event
             if event_sig == &AlgorithmReview::ExecutionSubmitted::SIGNATURE_HASH {
-                // Decode the data field (cid, startTime, endTime)
-                let (cid, start_time, end_time): (String, U256, U256) =
-                    <(String, U256, U256)>::abi_decode(&log.data().data).map_err(|e| {
-                        ContractError::ParseError(format!("Failed to decode data: {}", e))
+                // Use Alloy's generated event struct to decode
+                // Need to use the inner log for the primitive type
+                let decoded_event = AlgorithmReview::ExecutionSubmitted::decode_log(&log.inner)
+                    .map_err(|e| {
+                        ContractError::ParseError(format!(
+                            "Failed to decode ExecutionSubmitted event: {}",
+                            e
+                        ))
                     })?;
 
-                // Extract execution_id from topics[1]
-                let execution_id = U256::from_be_bytes(log.topics()[1].into());
-
                 return Ok(ParsedEvent::ExecutionSubmitted {
-                    execution_id,
-                    cid,
-                    start_time,
-                    end_time,
+                    execution_id: decoded_event.data.executionId,
+                    cid: decoded_event.data.cid,
+                    start_time: decoded_event.data.startTime,
+                    end_time: decoded_event.data.endTime,
                 });
             }
 
@@ -1026,6 +1017,143 @@ impl From<ContractError> for crate::AppError {
             ContractError::InvalidConfig(msg) => crate::AppError::Validation(msg),
             ContractError::NotFound(msg) => crate::AppError::NotFound(msg),
             _ => crate::AppError::Internal(err.to_string()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::primitives::{hex, LogData, B256};
+    use alloy::rpc::types::Log;
+    use alloy::sol_types::SolEvent;
+
+    #[test]
+    fn test_execution_submitted_event_decoding() {
+        // Create test data from the actual failing log
+        let event_sig = B256::from(hex!(
+            "63ef969e1ddfb70ebfc0b7094e9d170057766c20457c8e1a9a8abc310f7871a1"
+        ));
+        let execution_id_topic = B256::from(hex!(
+            "0000000000000000000000000000000000000000000000000000000000000341"
+        ));
+
+        let data_bytes = hex!(
+            "00000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000068bec6970000000000000000000000000000000000000000000000000000000068c2bb17000000000000000000000000000000000000000000000000000000000000002e516d517a36677747377566524151396f557a517144367079356a50576f3338707535785541466d4d775277565941000000000000000000000000000000000000"
+        );
+
+        // Create the log
+        let inner_log = alloy::primitives::Log {
+            address: Address::from(hex!("d7b31efc44f0ee162a57fe8e236d2ea04c5926e3")),
+            data: LogData::new(vec![event_sig, execution_id_topic], data_bytes.into()).unwrap(),
+        };
+
+        let log = Log {
+            inner: inner_log,
+            block_hash: Some(B256::from(hex!(
+                "0861c607802b26ebf48f8dd09f3b2d6663100b22ff0ff99fe9cf93a3c7452dc9"
+            ))),
+            block_number: Some(39),
+            block_timestamp: Some(1757342554),
+            transaction_hash: Some(B256::from(hex!(
+                "645d0d2d2bf704d2ee56ef1a5079baa9f8307ffbbf43aa19caf450269b308e0f"
+            ))),
+            transaction_index: Some(0),
+            log_index: Some(0),
+            removed: false,
+        };
+
+        // Create a mock contract caller to test the parsing
+        // Since we can't easily create a full ContractCaller, let's test the decoding directly
+        let decoded_event = AlgorithmReview::ExecutionSubmitted::decode_log(&log.inner);
+
+        match decoded_event {
+            Ok(event) => {
+                assert_eq!(event.data.executionId, U256::from(0x341u64));
+                assert_eq!(
+                    event.data.cid,
+                    "QmQz6gwG7ufRAQ9oUzQqD6py5jPWo38pu5xUAFmMwRwVYA"
+                );
+                assert_eq!(event.data.startTime, U256::from(0x68bec697u64));
+                assert_eq!(event.data.endTime, U256::from(0x68c2bb17u64));
+                println!("✅ Event decoded successfully!");
+                println!("  Execution ID: {}", event.data.executionId);
+                println!("  CID: {}", event.data.cid);
+                println!("  Start Time: {}", event.data.startTime);
+                println!("  End Time: {}", event.data.endTime);
+            }
+            Err(e) => {
+                panic!("❌ Failed to decode event: {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn test_data_used_event_decoding() {
+        // Create test data from the actual failing log
+        let event_sig = B256::from(hex!(
+            "5fa38739fbd55c8f41fa2447103836589a7459df3188f560b085035d88702f0b"
+        ));
+        let scientist_topic = B256::from(hex!(
+            "0000000000000000000000007c04cee8a78e736e1a4f2bc43e7ccbcb8e3a9114"
+        ));
+        let cid_topic = B256::from(hex!(
+            "f94584b20aff590225ecda85b967b4fc7c54ae57ca066b649ec15b099cc71f2d"
+        ));
+        let dataset_id_topic = B256::from(hex!(
+            "00000000000000000000000000000000000000000000000000000000000000a4"
+        ));
+
+        let data_bytes = hex!(
+            "00000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000068bf287d0000000000000000000000000000000000000000000000000000000000000018677074345f68756d616e5f646e616d5f6d657461646174610000000000000000"
+        );
+
+        // Create the log
+        let inner_log = alloy::primitives::Log {
+            address: Address::from(hex!("b97325d9e210628e096430690ea123c910c097e7")),
+            data: LogData::new(
+                vec![event_sig, scientist_topic, cid_topic, dataset_id_topic],
+                data_bytes.into(),
+            )
+            .unwrap(),
+        };
+
+        let log = Log {
+            inner: inner_log,
+            block_hash: Some(B256::from(hex!(
+                "4ecdaba5fc7516d2ffac0e31dd1188d6379710070d9aac462fd87ec1054dbe78"
+            ))),
+            block_number: Some(67),
+            block_timestamp: Some(1757358205),
+            transaction_hash: Some(B256::from(hex!(
+                "c02632ae3c7caf6c2db96d3350700f57c3675fe3d6934dbe26427b39453f8395"
+            ))),
+            transaction_index: Some(0),
+            log_index: Some(0),
+            removed: false,
+        };
+
+        // Test the decoding directly
+        let decoded_event = DataContribution::DataUsed::decode_log(&log.inner);
+
+        match decoded_event {
+            Ok(event) => {
+                assert_eq!(
+                    event.scientist,
+                    Address::from(hex!("7c04cee8a78e736e1a4f2bc43e7ccbcb8e3a9114"))
+                );
+                assert_eq!(event.datasetId, U256::from(0xa4u64));
+                assert_eq!(event.data.dataset, "gpt4_human_dnam_metadata");
+                assert_eq!(event.data.when, U256::from(0x68bf287du64));
+                println!("✅ DataUsed event decoded successfully!");
+                println!("  Scientist: {:?}", event.scientist);
+                println!("  Dataset ID: {}", event.datasetId);
+                println!("  Dataset: {}", event.data.dataset);
+                println!("  When: {}", event.data.when);
+            }
+            Err(e) => {
+                panic!("❌ Failed to decode DataUsed event: {}", e);
+            }
         }
     }
 }

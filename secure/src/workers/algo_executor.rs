@@ -6,7 +6,7 @@
 
 use crate::{
     config::ExecutorConfig,
-    infra::{contracts::ContractCaller, db::Database},
+    infra::{contracts::ContractCaller, db::Database, TeeCryptoService},
     models::{
         algo::Algo,
         algo_exe::{AlgoExe, ExecutionStatus},
@@ -59,6 +59,9 @@ pub enum ExecutorError {
     #[error("Build size limit exceeded: {size} > {limit}")]
     BuildSizeTooLarge { size: u64, limit: u64 },
 
+    #[error("Internal error: {0}")]
+    Internal(String),
+
     #[error("Execution timeout")]
     Timeout,
 
@@ -90,6 +93,7 @@ pub struct AlgoExecutor {
     docker: Docker,
     ipfs_client: Arc<ipfs_api_backend_hyper::IpfsClient>,
     contract_caller: Arc<ContractCaller>,
+    tee_crypto: Arc<TeeCryptoService>,
     config: ExecutorConfig,
     event_tx: mpsc::Sender<ExecutionEvent>,
     event_rx: Arc<RwLock<mpsc::Receiver<ExecutionEvent>>>,
@@ -102,6 +106,7 @@ impl AlgoExecutor {
         db: Arc<Database>,
         ipfs_client: Arc<ipfs_api_backend_hyper::IpfsClient>,
         contract_caller: Arc<ContractCaller>,
+        tee_crypto: Arc<TeeCryptoService>,
         config: ExecutorConfig,
     ) -> Result<Self> {
         let docker = Docker::connect_with_local_defaults()?;
@@ -112,6 +117,7 @@ impl AlgoExecutor {
             docker,
             ipfs_client,
             contract_caller,
+            tee_crypto,
             config,
             event_tx,
             event_rx: Arc::new(RwLock::new(event_rx)),
@@ -125,7 +131,6 @@ impl AlgoExecutor {
 
         // Ensure working directory exists
         fs::create_dir_all(&self.config.working_directory).await?;
-        fs::create_dir_all(&self.config.dataset_base_path).await?;
 
         // Start event processing loop
         let mut rx = self.event_rx.write().await;
@@ -235,6 +240,10 @@ impl AlgoExecutor {
             }
             Err(e) => {
                 error!("Execution {} failed: {:?}", exe_id, e);
+                // Try to get more details about the error
+                if let ExecutorError::Docker(ref docker_err) = e {
+                    error!("Docker error details: {}", docker_err);
+                }
                 self.handle_error(exe_id, e).await;
             }
         }
@@ -259,11 +268,26 @@ impl AlgoExecutor {
 
         // Verify Dockerfile exists
         let dockerfile_path = work_dir.join("Dockerfile");
+        info!("Looking for Dockerfile at: {:?}", dockerfile_path);
+
         if !dockerfile_path.exists() {
+            error!("Dockerfile not found at {:?}", dockerfile_path);
+
+            // Try to list what files are actually present for debugging
+            if let Ok(mut entries) = fs::read_dir(&work_dir).await {
+                error!("Files in work directory:");
+                while let Some(entry) = entries.next_entry().await.ok().flatten() {
+                    let path = entry.path();
+                    error!("  - {:?}", path.file_name().unwrap_or_default());
+                }
+            }
+
             return Err(ExecutorError::ContainerFailed(
                 "Dockerfile not found in algorithm package".into(),
             ));
         }
+
+        info!("Found Dockerfile, proceeding with build");
 
         // Build Docker image
         let image_name = format!("delong-algo-{}", exe_id);
@@ -277,9 +301,19 @@ impl AlgoExecutor {
             .run_container(&image_name, exe_id, dataset_path)
             .await?;
 
-        // Cleanup work directory
-        if let Err(e) = fs::remove_dir_all(&work_dir).await {
-            warn!("Failed to cleanup work directory: {:?}", e);
+        // Cleanup work directory - need to clean the entire temp structure
+        // work_dir points to the extracted content, but we need to clean the parent temp directory
+        if let Some(parent) = work_dir.parent() {
+            if parent.to_string_lossy().contains("delong-algo-") {
+                if let Err(e) = fs::remove_dir_all(parent).await {
+                    warn!("Failed to cleanup temp directory: {:?}", e);
+                }
+            }
+        } else {
+            // Fallback to cleaning just the work_dir
+            if let Err(e) = fs::remove_dir_all(&work_dir).await {
+                warn!("Failed to cleanup work directory: {:?}", e);
+            }
         }
 
         Ok((output, error, success))
@@ -289,11 +323,21 @@ impl AlgoExecutor {
     async fn download_and_extract(&self, cid: &str) -> Result<PathBuf> {
         info!("Downloading algorithm from IPFS: {}", cid);
 
-        // Create temporary directory
-        let temp_dir = tempfile::tempdir()?;
-        let tar_gz_path = temp_dir.path().join("algorithm.tar.gz");
-        let extract_dir = temp_dir.path().join("extracted");
-        fs::create_dir_all(&extract_dir).await?;
+        // Create a unique temporary directory using timestamp and CID
+        let timestamp = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        let safe_cid = cid.chars().take(8).collect::<String>();
+        let temp_base = format!("/tmp/delong-algo-{}-{}", timestamp, safe_cid);
+        let temp_path = PathBuf::from(&temp_base);
+
+        // Ensure the directory is clean
+        if temp_path.exists() {
+            fs::remove_dir_all(&temp_path).await?;
+        }
+        fs::create_dir_all(&temp_path).await?;
+
+        let tar_gz_path = temp_path.join("algorithm.tar.gz");
+        let extract_dir = temp_path.join("extracted");
+        // Don't create extract_dir here, will be created before unpacking
 
         // Download from IPFS
         let data = self
@@ -306,6 +350,8 @@ impl AlgoExecutor {
             })
             .await
             .map_err(|e| ExecutorError::Ipfs(e.to_string()))?;
+
+        info!("Downloaded {} bytes from IPFS", data.len());
 
         // Check size limit
         if data.len() as u64 > self.config.build_size_limit {
@@ -322,15 +368,66 @@ impl AlgoExecutor {
         drop(file);
 
         // Extract tar.gz
+        // Ensure extract directory is clean before unpacking
+        if extract_dir.exists() {
+            std::fs::remove_dir_all(&extract_dir)?;
+        }
+        std::fs::create_dir_all(&extract_dir)?;
+
         let tar_gz_file = std::fs::File::open(&tar_gz_path)?;
         let tar = GzDecoder::new(tar_gz_file);
         let mut archive = Archive::new(tar);
         archive.unpack(&extract_dir)?;
 
-        // Keep temp_dir alive (will be cleaned up manually)
-        let _ = temp_dir.keep();
+        info!("Extracted archive to: {:?}", extract_dir);
 
-        Ok(extract_dir)
+        // GitHub archives create a top-level directory like "repo-name-commit-hash"
+        // We need to find the actual project directory inside extract_dir
+        let mut entries = fs::read_dir(&extract_dir).await?;
+        let mut actual_dir = extract_dir.clone();
+
+        // Check if there's a single top-level directory (typical for GitHub archives)
+        let mut dir_count = 0;
+        let mut first_dir = None;
+
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            if path.is_dir() {
+                dir_count += 1;
+                if first_dir.is_none() {
+                    first_dir = Some(path);
+                }
+            }
+        }
+
+        // If there's exactly one directory, use it as the actual project root
+        if dir_count == 1 && first_dir.is_some() {
+            actual_dir = first_dir.unwrap();
+            info!("Found project directory inside archive: {:?}", actual_dir);
+        } else {
+            info!(
+                "Using extract directory as is (found {} directories)",
+                dir_count
+            );
+        }
+
+        // List contents of the actual directory for debugging
+        let mut entries = fs::read_dir(&actual_dir).await?;
+        info!("Contents of algorithm directory:");
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            let file_name = path.file_name().unwrap_or_default().to_string_lossy();
+            let is_dir = path.is_dir();
+            info!(
+                "  {} {}",
+                if is_dir { "[DIR]" } else { "[FILE]" },
+                file_name
+            );
+        }
+
+        // Return the actual directory path
+        // The temporary directory will be cleaned up in execute_algorithm
+        Ok(actual_dir)
     }
 
     /// Build Docker image from directory
@@ -380,30 +477,85 @@ impl AlgoExecutor {
         Ok(tar_data)
     }
 
-    /// Prepare dataset for execution
+    /// Prepare dataset for execution by downloading from IPFS to local directory
     async fn prepare_dataset(&self, dataset_name: &str) -> Result<PathBuf> {
-        let dataset_path = self.config.dataset_base_path.join(dataset_name);
+        // Find dataset in database
+        let dataset = crate::models::dataset::Dataset::find_by_name(&self.db.pool, dataset_name)
+            .await?
+            .ok_or_else(|| {
+                ExecutorError::NotFound(format!("Dataset {} not found in database", dataset_name))
+            })?;
 
-        if !dataset_path.exists() {
-            // Try to find in database
-            let dataset =
-                crate::models::dataset::Dataset::find_by_name(&self.db.pool, dataset_name)
-                    .await?
-                    .ok_or_else(|| {
-                        ExecutorError::NotFound(format!("Dataset {} not found", dataset_name))
-                    })?;
+        // Create a directory for datasets if it doesn't exist
+        let dataset_dir = PathBuf::from("/tmp/delong-datasets");
+        fs::create_dir_all(&dataset_dir).await?;
 
-            if let Some(file_path) = dataset.file_path {
-                return Ok(PathBuf::from(file_path));
-            }
+        // Create a directory for this dataset
+        let safe_dirname = dataset_name.replace('/', "-");
+        let dataset_folder = dataset_dir.join(&safe_dirname);
 
-            return Err(ExecutorError::NotFound(format!(
-                "Dataset {} file not found",
-                dataset_name
-            )));
+        // Check if the path exists as a file (from old code version)
+        // If it's a file, we need to remove it and create a directory instead
+        if dataset_folder.exists() && dataset_folder.is_file() {
+            warn!(
+                "Found dataset as file instead of directory (legacy format), removing: {:?}",
+                dataset_folder
+            );
+            fs::remove_file(&dataset_folder).await.map_err(|e| {
+                error!(
+                    "Failed to remove legacy dataset file: {:?}, error: {}",
+                    dataset_folder, e
+                );
+                e
+            })?;
         }
 
-        Ok(dataset_path)
+        // Define the CSV file path within the directory
+        let dataset_file = dataset_folder.join(format!("{}.csv", safe_dirname));
+
+        // Check if dataset file already exists locally
+        if dataset_file.exists() {
+            info!("Dataset already exists at: {:?}", dataset_file);
+            return Ok(dataset_folder); // Return the folder, not the file
+        }
+
+        // Create the dataset-specific directory only if we need to download
+        if !dataset_folder.exists() {
+            fs::create_dir_all(&dataset_folder).await?;
+        }
+
+        // Download from IPFS using the IPFS client
+        info!(
+            "Downloading dataset {} from IPFS CID {}",
+            dataset_name, dataset.ipfs_cid
+        );
+
+        use futures::TryStreamExt;
+        let encrypted_data = self
+            .ipfs_client
+            .cat(&dataset.ipfs_cid)
+            .map_ok(|chunk| chunk.to_vec())
+            .try_concat()
+            .await
+            .map_err(|e| ExecutorError::Ipfs(format!("Failed to download from IPFS: {}", e)))?;
+
+        // Decrypt the dataset using the author's key
+        info!("Decrypting dataset for author: {}", dataset.author_wallet);
+        let decrypted_data = self
+            .tee_crypto
+            .decrypt_dataset(&encrypted_data, &dataset.author_wallet)
+            .await
+            .map_err(|e| ExecutorError::Internal(format!("Failed to decrypt dataset: {}", e)))?;
+
+        // Write decrypted data to the CSV file within the directory
+        fs::write(&dataset_file, &decrypted_data).await?;
+        info!(
+            "Successfully downloaded and decrypted dataset to: {:?} ({} bytes)",
+            dataset_file,
+            decrypted_data.len()
+        );
+
+        Ok(dataset_folder) // Return the folder path for mounting
     }
 
     /// Run Docker container
@@ -414,6 +566,10 @@ impl AlgoExecutor {
         dataset_path: PathBuf,
     ) -> Result<(Vec<u8>, Vec<u8>, bool)> {
         info!("Running container for execution {}", exe_id);
+        info!(
+            "Mounting dataset directory from: {:?} to /data",
+            dataset_path
+        );
 
         // Container configuration
         let container_config = ContainerConfig {
@@ -429,6 +585,8 @@ impl AlgoExecutor {
                 security_opt: Some(vec!["no-new-privileges".to_string()]),
                 ..Default::default()
             }),
+            attach_stdout: Some(true),
+            attach_stderr: Some(true),
             ..Default::default()
         };
 
@@ -511,6 +669,29 @@ impl AlgoExecutor {
                 Ok(_) => {}
                 Err(e) => warn!("Error reading logs: {}", e),
             }
+        }
+
+        // Log container output for debugging
+        if !stdout.is_empty() {
+            info!(
+                "Container stdout: {}",
+                String::from_utf8_lossy(&stdout).trim()
+            );
+        }
+        if !stderr.is_empty() {
+            warn!(
+                "Container stderr: {}",
+                String::from_utf8_lossy(&stderr).trim()
+            );
+        }
+
+        if exit_code != 0 {
+            error!(
+                "Container exited with code {}: stdout='{}', stderr='{}'",
+                exit_code,
+                String::from_utf8_lossy(&stdout).trim(),
+                String::from_utf8_lossy(&stderr).trim()
+            );
         }
 
         Ok((stdout, stderr, exit_code))
@@ -700,9 +881,16 @@ pub async fn create_executor_service(
     db: Arc<Database>,
     ipfs_client: Arc<ipfs_api_backend_hyper::IpfsClient>,
     contract_caller: Arc<ContractCaller>,
+    tee_crypto: Arc<TeeCryptoService>,
     config: ExecutorConfig,
 ) -> Result<Arc<AlgoExecutor>> {
-    let executor = Arc::new(AlgoExecutor::new(db, ipfs_client, contract_caller, config)?);
+    let executor = Arc::new(AlgoExecutor::new(
+        db,
+        ipfs_client,
+        contract_caller,
+        tee_crypto,
+        config,
+    )?);
 
     // Start the executor in background
     let executor_clone = executor.clone();

@@ -99,10 +99,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize algorithm executor - use config from environment
     let executor_config = config.executor.clone();
 
+    // Initialize TEE crypto service for dataset encryption/decryption
+    let tee_crypto = Arc::new(secure::infra::TeeCryptoService::new(tee_client.clone()));
+
     let algo_executor = secure::workers::algo_executor::create_executor_service(
         Arc::new(db.clone()),
         ipfs_client.clone(),
         contract_caller.clone(),
+        tee_crypto.clone(),
         executor_config,
     )
     .await
