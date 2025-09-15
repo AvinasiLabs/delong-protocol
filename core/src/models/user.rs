@@ -121,17 +121,18 @@ pub struct User {
     pub role: String,
     pub status: String,
     pub wallet_address: Option<String>,
+    pub wallet_connected_at: Option<DateTime<Utc>>,
     pub google_id: Option<String>,
     pub avatar_url: Option<String>,
     pub provider: String,
-    pub provider_data: serde_json::Value,
+    pub provider_data: Option<sqlx::types::JsonValue>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub last_login: Option<DateTime<Utc>>,
     pub last_provider_sync: Option<DateTime<Utc>>,
-    pub email_verified: Option<bool>,
-    pub two_factor_enabled: Option<bool>,
-    pub profile_data: serde_json::Value,
+    pub email_verified: bool,
+    pub two_factor_enabled: bool,
+    pub profile_data: Option<sqlx::types::JsonValue>,
 }
 
 /// Query parameters for user list endpoints
@@ -186,7 +187,7 @@ impl User {
             INSERT INTO users (username, email, password_hash, role, wallet_address)
             VALUES ($1, $2, $3, $4, $5)
             RETURNING id, username, email, password_hash, role, status, wallet_address,
-                      google_id, avatar_url, provider, provider_data, created_at,
+                      wallet_connected_at, google_id, avatar_url, provider, provider_data, created_at,
                       updated_at, last_login, last_provider_sync, email_verified,
                       two_factor_enabled, profile_data
             "#,
@@ -207,7 +208,7 @@ impl User {
         let user = sqlx::query_as::<_, User>(
             r#"
             SELECT id, username, email, password_hash, role, status, wallet_address,
-                   google_id, avatar_url, provider, provider_data, created_at,
+                   wallet_connected_at, google_id, avatar_url, provider, provider_data, created_at,
                    updated_at, last_login, last_provider_sync, email_verified,
                    two_factor_enabled, profile_data
             FROM users
@@ -226,7 +227,7 @@ impl User {
         let user = sqlx::query_as::<_, User>(
             r#"
             SELECT id, username, email, password_hash, role, status, wallet_address,
-                   google_id, avatar_url, provider, provider_data, created_at,
+                   wallet_connected_at, google_id, avatar_url, provider, provider_data, created_at,
                    updated_at, last_login, last_provider_sync, email_verified,
                    two_factor_enabled, profile_data
             FROM users
@@ -245,7 +246,7 @@ impl User {
         let user = sqlx::query_as::<_, User>(
             r#"
             SELECT id, username, email, password_hash, role, status, wallet_address,
-                   google_id, avatar_url, provider, provider_data, created_at,
+                   wallet_connected_at, google_id, avatar_url, provider, provider_data, created_at,
                    updated_at, last_login, last_provider_sync, email_verified,
                    two_factor_enabled, profile_data
             FROM users
@@ -276,7 +277,7 @@ impl User {
             )
             VALUES ($1, $2, NULL, $3, $4, NULL, $5, $6, $7, $8, $9)
             RETURNING id, username, email, password_hash, role, status, wallet_address,
-                      google_id, avatar_url, provider, provider_data, created_at,
+                      wallet_connected_at, google_id, avatar_url, provider, provider_data, created_at,
                       updated_at, last_login, last_provider_sync, email_verified,
                       two_factor_enabled, profile_data
             "#,
@@ -368,7 +369,7 @@ impl User {
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = $8
             RETURNING id, username, email, password_hash, role, status, wallet_address,
-                      google_id, avatar_url, provider, provider_data, created_at,
+                      wallet_connected_at, google_id, avatar_url, provider, provider_data, created_at,
                       updated_at, last_login, last_provider_sync, email_verified,
                       two_factor_enabled, profile_data
             "#,
@@ -401,17 +402,56 @@ impl User {
     pub async fn update_wallet_address(
         pool: &PgPool,
         id: i32,
-        wallet_address: Option<String>,
-    ) -> Result<(), AppError> {
-        sqlx::query(
-            "UPDATE users SET wallet_address = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
+        wallet_address: Option<&str>,
+    ) -> Result<Self, AppError> {
+        let wallet_connected_at = if wallet_address.is_some() {
+            Some(Utc::now())
+        } else {
+            None
+        };
+
+        let user = sqlx::query_as::<_, User>(
+            r#"
+            UPDATE users
+            SET wallet_address = $1,
+                wallet_connected_at = $2,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = $3
+            RETURNING id, username, email, password_hash, role, status, wallet_address,
+                      wallet_connected_at, google_id, avatar_url, provider, provider_data, created_at,
+                      updated_at, last_login, last_provider_sync, email_verified,
+                      two_factor_enabled, profile_data
+            "#,
         )
         .bind(wallet_address)
+        .bind(wallet_connected_at)
         .bind(id)
-        .execute(pool)
+        .fetch_one(pool)
         .await?;
 
-        Ok(())
+        Ok(user)
+    }
+
+    /// Find user by wallet address
+    pub async fn find_by_wallet(
+        pool: &PgPool,
+        wallet_address: &str,
+    ) -> Result<Option<Self>, AppError> {
+        let user = sqlx::query_as::<_, User>(
+            r#"
+            SELECT id, username, email, password_hash, role, status, wallet_address,
+                   wallet_connected_at, google_id, avatar_url, provider, provider_data, created_at,
+                   updated_at, last_login, last_provider_sync, email_verified,
+                   two_factor_enabled, profile_data
+            FROM users
+            WHERE wallet_address = $1
+            "#,
+        )
+        .bind(wallet_address)
+        .fetch_optional(pool)
+        .await?;
+
+        Ok(user)
     }
 
     /// Create user from Google OAuth data
@@ -425,7 +465,7 @@ impl User {
                              provider_data, email_verified)
             VALUES ($1, $2, $3, $4, 'google', $5, $6)
             RETURNING id, username, email, password_hash, role, status, wallet_address,
-                      google_id, avatar_url, provider, provider_data, created_at,
+                      wallet_connected_at, google_id, avatar_url, provider, provider_data, created_at,
                       updated_at, last_login, last_provider_sync, email_verified,
                       two_factor_enabled, profile_data
             "#,
@@ -482,7 +522,7 @@ impl User {
         let mut query = String::from(
             r#"
             SELECT id, username, email, password_hash, role, status, wallet_address,
-                   google_id, avatar_url, provider, provider_data, created_at,
+                   wallet_connected_at, google_id, avatar_url, provider, provider_data, created_at,
                    updated_at, last_login, last_provider_sync, email_verified,
                    two_factor_enabled, profile_data
             FROM users
@@ -568,7 +608,7 @@ impl User {
 
     /// Check if user email is verified
     pub fn is_email_verified(&self) -> bool {
-        self.email_verified.unwrap_or(false)
+        self.email_verified
     }
 }
 
@@ -657,17 +697,18 @@ mod tests {
             role: "scientist".to_string(),
             status: "active".to_string(),
             wallet_address: Some("0x123...".to_string()),
+            wallet_connected_at: None,
             google_id: None,
             avatar_url: None,
             provider: "local".to_string(),
-            provider_data: serde_json::Value::Null,
+            provider_data: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
             last_login: None,
             last_provider_sync: None,
-            email_verified: Some(true),
-            two_factor_enabled: Some(false),
-            profile_data: serde_json::Value::Null,
+            email_verified: true,
+            two_factor_enabled: false,
+            profile_data: None,
         };
 
         let response = UserResponse::from(user.clone());

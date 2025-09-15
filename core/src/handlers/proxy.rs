@@ -92,7 +92,7 @@ pub async fn proxy_handler(
             AuthMethod::ApiKey => "api_key".to_string(),
         },
         tenant_id: None,
-        scopes: if auth_user.user.email_verified.unwrap_or(false) {
+        scopes: if auth_user.user.email_verified {
             vec!["read".to_string(), "write".to_string()]
         } else {
             vec!["read".to_string()]

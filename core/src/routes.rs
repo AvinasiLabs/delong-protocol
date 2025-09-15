@@ -80,11 +80,17 @@ impl AppState {
 pub fn create_router(state: AppState) -> Router {
     // Protected user routes
     let user_routes = Router::new()
-        .route(
-            "/update-wallet",
-            post(handlers::auth::update_wallet_address),
-        ) // Protected auth route - requires authentication
         .route("/me", get(handlers::auth::get_current_user))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::middleware::auth::cookie_auth_middleware,
+        ));
+
+    // Protected wallet routes (require authentication)
+    let wallet_protected_routes = Router::new()
+        .route("/link-wallet", post(handlers::siwe::link_wallet))
+        .route("/unlink-wallet", post(handlers::siwe::unlink_wallet))
+        .route("/wallet-status", get(handlers::siwe::get_wallet_status))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             crate::middleware::auth::cookie_auth_middleware,
@@ -205,6 +211,9 @@ pub fn create_router(state: AppState) -> Router {
             "/auth/google/callback",
             get(handlers::auth::google_auth_callback),
         )
+        // Public SIWE routes (no authentication required)
+        .route("/auth/siwe/nonce", get(handlers::siwe::get_siwe_nonce))
+        .route("/auth/siwe/verify", post(handlers::siwe::verify_signature))
         // Public API key validation
         // API Documentation routes
         .route(
@@ -213,6 +222,7 @@ pub fn create_router(state: AppState) -> Router {
         )
         // Protected routes
         .nest("/api/user", user_routes)
+        .nest("/api/wallet", wallet_protected_routes)
         .nest("/api/ai-audit", ai_audit_routes)
         .nest("/api/api-keys", api_key_routes)
         .nest("/api", secure_proxy_routes)

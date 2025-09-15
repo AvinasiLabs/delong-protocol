@@ -48,7 +48,6 @@ use utoipa_scalar::Scalar;
         crate::handlers::auth::send_verification_code,
         crate::handlers::auth::google_auth_url,
         crate::handlers::auth::google_auth_callback,
-        crate::handlers::auth::update_wallet_address,
         crate::handlers::auth::get_current_user,
 
         // API Key endpoints
@@ -89,7 +88,6 @@ use utoipa_scalar::Scalar;
             crate::handlers::auth::GoogleAuthQuery,
             crate::handlers::auth::GoogleCallbackQuery,
             crate::handlers::auth::GoogleAuthUrlResponse,
-            crate::handlers::auth::UpdateWalletRequest,
 
             // API Key schemas
             crate::handlers::api_key::CreateApiKeyRequest,

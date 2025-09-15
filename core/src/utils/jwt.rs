@@ -16,8 +16,9 @@ pub struct Claims {
     pub sub: String, // User ID
     pub email: String,
     pub username: String,
-    pub iat: i64, // Issued at
-    pub exp: i64, // Expiration time
+    pub wallet_address: Option<String>, // User's verified wallet address
+    pub iat: i64,                       // Issued at
+    pub exp: i64,                       // Expiration time
     pub roles: Vec<String>,
     pub permissions: Vec<String>,
 }
@@ -80,6 +81,7 @@ pub fn generate_token(user: &User, config: &JwtConfig) -> AppResult<String> {
         sub: user.id.to_string(),
         email: user.email.clone(),
         username: user.username.clone(),
+        wallet_address: user.wallet_address.clone(),
         iat: now.timestamp(),
         exp: exp.timestamp(),
         roles: vec![user.role.clone()],
@@ -103,6 +105,7 @@ pub fn generate_refresh_token(user: &User, config: &JwtConfig) -> AppResult<Stri
         sub: user.id.to_string(),
         email: user.email.clone(),
         username: user.username.clone(),
+        wallet_address: user.wallet_address.clone(),
         iat: now.timestamp(),
         exp: exp.timestamp(),
         roles: vec![user.role.clone()],
@@ -208,6 +211,7 @@ pub fn refresh_token(refresh_token_str: &str, config: &JwtConfig) -> AppResult<S
         sub: claims.sub,
         email: claims.email,
         username: claims.username,
+        wallet_address: claims.wallet_address,
         iat: now.timestamp(),
         exp: exp.timestamp(),
         roles: claims.roles,
@@ -247,17 +251,18 @@ mod tests {
             role: "scientist".to_string(),
             status: "active".to_string(),
             wallet_address: None,
+            wallet_connected_at: None,
             google_id: None,
             avatar_url: None,
             provider: "email".to_string(),
-            provider_data: serde_json::json!({}),
+            provider_data: Some(serde_json::json!({})),
             created_at: Utc::now(),
             updated_at: Utc::now(),
             last_login: None,
             last_provider_sync: None,
-            email_verified: Some(true),
-            two_factor_enabled: Some(false),
-            profile_data: serde_json::json!({}),
+            email_verified: true,
+            two_factor_enabled: false,
+            profile_data: Some(serde_json::json!({})),
         }
     }
 

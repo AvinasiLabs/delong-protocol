@@ -11,6 +11,7 @@ pub mod api_key;
 pub mod auth;
 pub mod health;
 pub mod proxy;
+pub mod siwe;
 
 // Re-export commonly used handlers for easier access
 pub use admin::{
@@ -24,10 +25,11 @@ pub use api_key::{
 };
 pub use auth::{
     get_current_user, google_auth_callback, google_auth_url, login_user, register_user,
-    send_verification_code, update_wallet_address,
+    send_verification_code,
 };
 pub use health::health;
 pub use proxy::{extract_auth_method, proxy_handler, proxy_routes, secure_health_check};
+pub use siwe::{get_siwe_nonce, get_wallet_status, link_wallet, unlink_wallet, verify_signature};
 
 // Import avinapi prelude for response macros and types
 pub use avinapi::prelude::*;

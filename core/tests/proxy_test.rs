@@ -273,7 +273,7 @@ mod proxy_tests {
         use delong_core::infra::proxy::AuthContext;
 
         let mut scopes = vec!["read".to_string()];
-        if user.email_verified.unwrap_or(false) {
+        if user.email_verified {
             scopes.push("write".to_string());
         }
 

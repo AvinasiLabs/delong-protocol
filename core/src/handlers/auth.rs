@@ -73,22 +73,8 @@ pub struct SendVerificationCodeRequest {
     pub language: Option<String>,
 }
 
-/// Update wallet address request
-#[derive(Debug, Clone, Serialize, Deserialize, Validate, ToSchema)]
-pub struct UpdateWalletRequest {
-    #[validate(
-        length(
-            min = 42,
-            max = 42,
-            message = "Wallet address must be exactly 42 characters"
-        ),
-        regex(
-            path = "crate::handlers::auth::WALLET_ADDRESS_REGEX",
-            message = "Invalid wallet address format (must be 0x followed by 40 hex characters)"
-        )
-    )]
-    pub wallet_address: String,
-}
+// UpdateWalletRequest removed - use SIWE link-wallet instead
+// SIWE provides cryptographic proof of wallet ownership
 
 /// Google OAuth login request
 #[derive(Debug, Clone, Serialize, Deserialize, Validate, ToSchema)]
@@ -641,9 +627,11 @@ pub async fn google_auth_callback(
                     existing_user.google_id = Some(google_user_info.id.clone());
                     existing_user.provider = "google".to_string();
                     existing_user.avatar_url = google_user_info.picture.clone();
-                    existing_user.provider_data = serde_json::to_value(&google_user_info)
-                        .unwrap_or_else(|_| serde_json::json!({}));
-                    existing_user.email_verified = Some(google_user_info.verified_email);
+                    existing_user.provider_data = Some(
+                        serde_json::to_value(&google_user_info)
+                            .unwrap_or_else(|_| serde_json::json!({})),
+                    );
+                    existing_user.email_verified = google_user_info.verified_email;
                     match existing_user.update(&state.db).await {
                         Ok(_) => existing_user,
                         Err(e) => return (jar, Err(e)),
@@ -722,59 +710,8 @@ pub async fn google_auth_callback(
 /// Update wallet address handler
 /// POST /api/user/update-wallet
 /// Update wallet address
-#[utoipa::path(
-    post,
-    path = "/api/user/update-wallet",
-    tag = "User",
-    request_body = UpdateWalletRequest,
-    responses(
-        (status = 200, description = "Wallet update result", body = UserResponse)
-    ),
-    security(
-        ("bearer_auth" = [])
-    )
-)]
-pub async fn update_wallet_address(
-    State(state): State<AppState>,
-    auth_user: AuthUser,
-    ValidatedJson(payload): ValidatedJson<UpdateWalletRequest>,
-) -> JsonResult<UserResponse> {
-    info!("Update wallet address request");
-
-    // Validate wallet address format
-    let wallet_regex = regex::Regex::new(r"^0x[a-fA-F0-9]{40}$").unwrap();
-    if !wallet_regex.is_match(&payload.wallet_address) {
-        return Err(AppError::Validation(
-            "Invalid wallet address format".to_string(),
-        ));
-    }
-
-    let user_id = auth_user.user_id();
-
-    // Update wallet address
-    if let Err(e) =
-        User::update_wallet_address(&state.db, user_id, Some(payload.wallet_address)).await
-    {
-        error!("Failed to update wallet address: {:?}", e);
-        return Err(e);
-    }
-
-    // Get updated user
-    let user = match User::find_by_id(&state.db, user_id).await {
-        Ok(Some(user)) => user,
-        Ok(None) => {
-            warn!("User not found after wallet update");
-            return Err(AppError::NotFound("User not found".to_string()));
-        }
-        Err(e) => {
-            error!("Database error retrieving updated user: {:?}", e);
-            return Err(e);
-        }
-    };
-
-    info!("Wallet address updated successfully");
-    data!(UserResponse::from(user))
-}
+// update_wallet_address function removed - use SIWE link-wallet instead
+// SIWE provides cryptographic proof of wallet ownership
 
 /// Get current authenticated user
 /// GET /api/user/me
