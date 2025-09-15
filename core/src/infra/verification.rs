@@ -105,7 +105,7 @@ impl VerificationStore {
 
         // Store in Redis with expiration
         let key = Self::verification_key(email);
-        println!("DEBUG: Storing to Redis key: {}", key);
+        debug!("Storing to Redis key: {}", key);
         use deadpool_redis::redis::AsyncCommands;
 
         let expiration = self.config.expiration_minutes * 60;
@@ -117,8 +117,8 @@ impl VerificationStore {
                 AppError::Internal("Failed to store verification code".to_string())
             })?;
 
-        println!(
-            "DEBUG: Successfully stored verification code for {}: {} (expires in {} seconds, entry: {})",
+        debug!(
+            "Successfully stored verification code for {}: {} (expires in {} seconds, entry: {})",
             email, code, expiration, entry_json
         );
         debug!(

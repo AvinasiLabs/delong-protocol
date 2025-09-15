@@ -185,7 +185,7 @@ pub async fn login_user(
             warn!("Login failed: User not found for email: {}", payload.email);
             return (
                 jar,
-                Err(AppError::Authentication("Invalid credentials".to_string())),
+                Err(AppError::Authentication("User not registered".to_string())),
             );
         }
         Err(e) => {
@@ -277,7 +277,7 @@ pub async fn login_user(
         (status = 200, description = "Registration result", body = AuthResponse)
     )
 )]
-#[instrument(skip(state, payload))]
+#[instrument(skip(state, payload, jar))]
 pub async fn register_user(
     State(state): State<AppState>,
     jar: CookieJar,
