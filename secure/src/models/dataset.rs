@@ -23,6 +23,15 @@ pub struct Dataset {
     pub author_wallet: String,
     pub sample_url: Option<String>,
     pub file_path: Option<String>,
+    // New fields from migration
+    pub author_id: Option<i64>,
+    pub is_encrypted: bool,
+    pub slug: Option<String>,
+    pub license: Option<String>,
+    pub thumbnail_url: Option<String>,
+    pub version: Option<String>,
+    pub detailed_desc: Option<String>,
+    pub views_count: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -51,6 +60,14 @@ pub struct CreateDatasetRequest {
     pub author_wallet: String,
     pub sample_url: Option<String>,
     pub file_path: Option<String>,
+    // New fields from migration
+    pub author_id: Option<i64>,
+    pub is_encrypted: Option<bool>,
+    pub slug: Option<String>,
+    pub license: Option<String>,
+    pub thumbnail_url: Option<String>,
+    pub version: Option<String>,
+    pub detailed_desc: Option<String>,
 }
 
 impl Dataset {
@@ -84,6 +101,10 @@ impl Dataset {
                    dataset.file_hash, dataset.ipfs_cid, dataset.file_size,
                    dataset.file_format, dataset.author, dataset.author_wallet,
                    dataset.sample_url, dataset.file_path,
+                   dataset.author_id, dataset.is_encrypted, dataset.slug,
+                   dataset.license, dataset.thumbnail_url,
+                   dataset.version, dataset.detailed_desc,
+                   COALESCE(dataset.views_count, 0) as "views_count!",
                    dataset.created_at, dataset.updated_at
             FROM dataset
             JOIN blockchain_transaction bt
@@ -111,6 +132,9 @@ impl Dataset {
             r#"
             SELECT id, name, ui_name, "desc", file_hash, ipfs_cid, file_size,
                    file_format, author, author_wallet, sample_url, file_path,
+                   author_id, is_encrypted, slug, license,
+                   thumbnail_url, version, detailed_desc,
+                   COALESCE(views_count, 0) as "views_count!",
                    created_at, updated_at
             FROM dataset
             WHERE file_hash = $1
@@ -130,6 +154,9 @@ impl Dataset {
             r#"
             SELECT id, name, ui_name, "desc", file_hash, ipfs_cid, file_size,
                    file_format, author, author_wallet, sample_url, file_path,
+                   author_id, is_encrypted, slug, license,
+                   thumbnail_url, version, detailed_desc,
+                   COALESCE(views_count, 0) as "views_count!",
                    created_at, updated_at
             FROM dataset
             WHERE name = $1
@@ -151,6 +178,10 @@ impl Dataset {
                    dataset.file_hash, dataset.ipfs_cid, dataset.file_size,
                    dataset.file_format, dataset.author, dataset.author_wallet,
                    dataset.sample_url, dataset.file_path,
+                   dataset.author_id, dataset.is_encrypted, dataset.slug,
+                   dataset.license, dataset.thumbnail_url,
+                   dataset.version, dataset.detailed_desc,
+                   COALESCE(dataset.views_count, 0) as "views_count!",
                    dataset.created_at, dataset.updated_at
             FROM dataset
             JOIN blockchain_transaction bt
@@ -185,6 +216,9 @@ impl Dataset {
             WHERE id = $4
             RETURNING id, name, ui_name, "desc", file_hash, ipfs_cid, file_size,
                       file_format, author, author_wallet, sample_url, file_path,
+                      author_id, is_encrypted, slug, license,
+                      thumbnail_url, version, detailed_desc,
+                      COALESCE(views_count, 0) as "views_count!",
                       created_at, updated_at
             "#,
             ui_name,
@@ -214,17 +248,41 @@ impl Dataset {
         Ok(())
     }
 
-    /// Convert to response format
-    pub fn to_response(&self) -> crate::handlers::dataset::DatasetResponse {
-        crate::handlers::dataset::DatasetResponse {
+    /// Convert to response format with tags
+    pub async fn to_response(
+        &self,
+        pool: &PgPool,
+    ) -> Result<crate::handlers::dataset::DatasetResponse> {
+        use crate::models::DatasetTag;
+
+        let tags = DatasetTag::get_dataset_tags(pool, self.id).await?;
+
+        Ok(crate::handlers::dataset::DatasetResponse {
             id: self.id as u64,
             name: self.name.clone(),
+            ui_name: self.ui_name.clone(),
+            desc: self.desc.clone(),
             file_hash: self.file_hash.clone(),
             ipfs_cid: self.ipfs_cid.clone(),
+            file_size: self.file_size as u64,
+            file_format: self.file_format.clone(),
+            author: self.author.clone(),
             author_wallet: self.author_wallet.clone(),
+            sample_url: self.sample_url.clone(),
+            file_path: self.file_path.clone(),
+            author_id: self.author_id.map(|id| id as u64),
+            is_encrypted: self.is_encrypted,
+            slug: self.slug.clone(),
+            license: self.license.clone(),
+            thumbnail_url: self.thumbnail_url.clone(),
+            version: self.version.clone(),
+            detailed_desc: self.detailed_desc.clone(),
+            views_count: self.views_count as u64,
+            tags,
+            author_avatar: None, // Will be populated from user data if available
             created_at: self.created_at,
             updated_at: self.updated_at,
-        }
+        })
     }
 
     /// Find dataset by file hash with transaction status
@@ -237,7 +295,10 @@ impl Dataset {
             SELECT
                 d.id, d.name, d.ui_name, d."desc", d.file_hash, d.ipfs_cid,
                 d.file_size, d.file_format, d.author, d.author_wallet,
-                d.sample_url, d.file_path, d.created_at, d.updated_at,
+                d.sample_url, d.file_path, d.author_id, d.is_encrypted,
+                d.slug, d.license, d.thumbnail_url,
+                d.version, d.detailed_desc, COALESCE(d.views_count, 0) as "views_count!",
+                d.created_at, d.updated_at,
                 bt.status as "tx_status?: TransactionStatus",
                 bt.tx_hash as "tx_hash?",
                 bt.block_number as "block_number?",
@@ -268,6 +329,14 @@ impl Dataset {
                 author_wallet: r.author_wallet,
                 sample_url: r.sample_url,
                 file_path: r.file_path,
+                author_id: r.author_id,
+                is_encrypted: r.is_encrypted,
+                slug: r.slug,
+                license: r.license,
+                thumbnail_url: r.thumbnail_url,
+                version: r.version,
+                detailed_desc: r.detailed_desc,
+                views_count: r.views_count,
                 created_at: r.created_at,
                 updated_at: r.updated_at,
             },
@@ -326,11 +395,16 @@ impl Create for Dataset {
             r#"
             INSERT INTO dataset (
                 name, ui_name, "desc", file_hash, ipfs_cid, file_size,
-                file_format, author, author_wallet, sample_url, file_path
+                file_format, author, author_wallet, sample_url, file_path,
+                author_id, is_encrypted, slug, license,
+                thumbnail_url, version, detailed_desc
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
             RETURNING id, name, ui_name, "desc", file_hash, ipfs_cid, file_size,
                       file_format, author, author_wallet, sample_url, file_path,
+                      author_id, is_encrypted, slug, license,
+                      thumbnail_url, version, detailed_desc,
+                      COALESCE(views_count, 0) as "views_count!",
                       created_at, updated_at
             "#,
             &request.name,
@@ -343,7 +417,14 @@ impl Create for Dataset {
             request.author.as_deref(),
             &request.author_wallet,
             request.sample_url.as_deref(),
-            request.file_path.as_deref()
+            request.file_path.as_deref(),
+            request.author_id,
+            request.is_encrypted.unwrap_or(false),
+            request.slug.as_deref(),
+            request.license.as_deref().or(Some("Custom")),
+            request.thumbnail_url.as_deref(),
+            request.version.as_deref().or(Some("v1.0")),
+            request.detailed_desc.as_deref()
         )
         .fetch_one(pool)
         .await;
@@ -391,6 +472,9 @@ impl FindById for Dataset {
             r#"
             SELECT id, name, ui_name, "desc", file_hash, ipfs_cid, file_size,
                    file_format, author, author_wallet, sample_url, file_path,
+                   author_id, is_encrypted, slug, license,
+                   thumbnail_url, version, detailed_desc,
+                   COALESCE(views_count, 0) as "views_count!",
                    created_at, updated_at
             FROM dataset
             WHERE id = $1
@@ -404,6 +488,164 @@ impl FindById for Dataset {
     }
 }
 
+impl Dataset {
+    /// Find dataset by slug
+    pub async fn find_by_slug(pool: &PgPool, slug: &str) -> Result<Option<Self>> {
+        let dataset = sqlx::query_as!(
+            Dataset,
+            r#"
+            SELECT id, name, ui_name, "desc", file_hash, ipfs_cid, file_size,
+                   file_format, author, author_wallet, sample_url, file_path,
+                   author_id, is_encrypted, slug, license,
+                   thumbnail_url, version, detailed_desc,
+                   COALESCE(views_count, 0) as "views_count!",
+                   created_at, updated_at
+            FROM dataset
+            WHERE slug = $1
+            "#,
+            slug
+        )
+        .fetch_optional(pool)
+        .await?;
+
+        Ok(dataset)
+    }
+
+    /// Get featured datasets (based on usage in last 30 days)
+    pub async fn get_featured(pool: &PgPool, limit: i32) -> Result<Vec<Self>> {
+        let datasets = sqlx::query_as!(
+            Dataset,
+            r#"
+            WITH usage_stats AS (
+                SELECT
+                    d.id,
+                    COUNT(DISTINCT du.id) as usage_count
+                FROM dataset d
+                LEFT JOIN data_usage du ON du.dataset = d.name
+                WHERE du.execution_status = 'completed'
+                    AND du.used_at > NOW() - INTERVAL '30 days'
+                GROUP BY d.id
+            )
+            SELECT d.id, d.name, d.ui_name, d."desc", d.file_hash, d.ipfs_cid,
+                   d.file_size, d.file_format, d.author, d.author_wallet,
+                   d.sample_url, d.file_path, d.author_id, d.is_encrypted,
+                   d.slug, d.license, d.thumbnail_url,
+                   d.version, d.detailed_desc, COALESCE(d.views_count, 0) as "views_count!",
+                   d.created_at, d.updated_at
+            FROM dataset d
+            LEFT JOIN usage_stats us ON us.id = d.id
+            ORDER BY COALESCE(us.usage_count, 0) DESC
+            LIMIT $1
+            "#,
+            limit as i64
+        )
+        .fetch_all(pool)
+        .await?;
+
+        Ok(datasets)
+    }
+
+    /// Get trending datasets (based on views in last 7 days)
+    pub async fn get_trending(pool: &PgPool, limit: i32) -> Result<Vec<Self>> {
+        let datasets = sqlx::query_as!(
+            Dataset,
+            r#"
+            SELECT id, name, ui_name, "desc", file_hash, ipfs_cid, file_size,
+                   file_format, author, author_wallet, sample_url, file_path,
+                   author_id, is_encrypted, slug, license,
+                   thumbnail_url, version, detailed_desc,
+                   COALESCE(views_count, 0) as "views_count!",
+                   created_at, updated_at
+            FROM dataset
+            WHERE views_count > 0
+                AND created_at > NOW() - INTERVAL '7 days'
+            ORDER BY views_count DESC
+            LIMIT $1
+            "#,
+            limit as i64
+        )
+        .fetch_all(pool)
+        .await?;
+
+        Ok(datasets)
+    }
+
+    /// Increment view count for a dataset
+    pub async fn increment_views(pool: &PgPool, id: i64) -> Result<()> {
+        sqlx::query!(
+            r#"
+            UPDATE dataset
+            SET views_count = views_count + 1
+            WHERE id = $1
+            "#,
+            id
+        )
+        .execute(pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Search datasets by keyword
+    pub async fn search(
+        pool: &PgPool,
+        keyword: &str,
+        page: u32,
+        per_page: u32,
+    ) -> Result<(Vec<Self>, u64)> {
+        let search_pattern = format!("%{}%", keyword);
+
+        // Get total count
+        let total = sqlx::query_scalar!(
+            r#"
+            SELECT COUNT(*) as "count!"
+            FROM dataset
+            WHERE name ILIKE $1
+                OR ui_name ILIKE $1
+                OR "desc" ILIKE $1
+                OR detailed_desc ILIKE $1
+            "#,
+            &search_pattern
+        )
+        .fetch_one(pool)
+        .await?;
+
+        // Get paginated results
+        let datasets = sqlx::query_as!(
+            Dataset,
+            r#"
+            SELECT id, name, ui_name, "desc", file_hash, ipfs_cid, file_size,
+                   file_format, author, author_wallet, sample_url, file_path,
+                   author_id, is_encrypted, slug, license,
+                   thumbnail_url, version, detailed_desc,
+                   COALESCE(views_count, 0) as "views_count!",
+                   created_at, updated_at
+            FROM dataset
+            WHERE name ILIKE $1
+                OR ui_name ILIKE $1
+                OR "desc" ILIKE $1
+                OR detailed_desc ILIKE $1
+            ORDER BY
+                CASE
+                    WHEN name ILIKE $1 THEN 1
+                    WHEN ui_name ILIKE $1 THEN 2
+                    ELSE 3
+                END,
+                views_count DESC,
+                created_at DESC
+            LIMIT $2 OFFSET $3
+            "#,
+            &search_pattern,
+            per_page as i64,
+            ((page - 1) * per_page) as i64
+        )
+        .fetch_all(pool)
+        .await?;
+
+        Ok((datasets, total as u64))
+    }
+}
+
 /// Dataset with blockchain transaction status
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatasetWithStatus {
@@ -413,4 +655,69 @@ pub struct DatasetWithStatus {
     pub tx_hash: Option<String>,
     pub block_number: Option<u64>,
     pub tx_created_at: Option<DateTime<Utc>>,
+}
+
+impl Dataset {
+    /// Find datasets that have ANY of the specified tags
+    pub async fn find_by_any_tags(pool: &PgPool, tags: &[String]) -> Result<Vec<Self>> {
+        if tags.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let datasets = sqlx::query_as!(
+            Dataset,
+            r#"
+            SELECT DISTINCT ON (d.id) d.id, d.name, d.ui_name, d."desc", d.file_hash, d.ipfs_cid,
+                   d.file_size, d.file_format, d.author, d.author_wallet, d.sample_url,
+                   d.file_path, d.author_id, d.is_encrypted, d.slug, d.license,
+                   d.thumbnail_url, d.version, d.detailed_desc,
+                   COALESCE(d.views_count, 0) as "views_count!",
+                   d.created_at, d.updated_at
+            FROM dataset d
+            JOIN dataset_tags dt ON d.id = dt.dataset_id
+            WHERE dt.tag = ANY($1)
+            ORDER BY d.id, d.views_count DESC, d.created_at DESC
+            "#,
+            tags
+        )
+        .fetch_all(pool)
+        .await?;
+
+        Ok(datasets)
+    }
+
+    /// Find datasets that have ALL of the specified tags
+    pub async fn find_by_all_tags(pool: &PgPool, tags: &[String]) -> Result<Vec<Self>> {
+        if tags.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let tag_count = tags.len() as i64;
+        let datasets = sqlx::query_as!(
+            Dataset,
+            r#"
+            SELECT d.id, d.name, d.ui_name, d."desc", d.file_hash, d.ipfs_cid,
+                   d.file_size, d.file_format, d.author, d.author_wallet, d.sample_url,
+                   d.file_path, d.author_id, d.is_encrypted, d.slug, d.license,
+                   d.thumbnail_url, d.version, d.detailed_desc,
+                   COALESCE(d.views_count, 0) as "views_count!",
+                   d.created_at, d.updated_at
+            FROM dataset d
+            WHERE d.id IN (
+                SELECT dataset_id
+                FROM dataset_tags
+                WHERE tag = ANY($1)
+                GROUP BY dataset_id
+                HAVING COUNT(DISTINCT tag) = $2
+            )
+            ORDER BY d.views_count DESC, d.created_at DESC
+            "#,
+            tags,
+            tag_count
+        )
+        .fetch_all(pool)
+        .await?;
+
+        Ok(datasets)
+    }
 }

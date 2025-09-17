@@ -3,7 +3,7 @@ use avinapi::prelude::{
     data, AppError, JsonResult, PaginatedResult, PaginationQuery, ValidatedJson,
     ValidatedMultipartForm, ValidatedQuery,
 };
-use axum::extract::{Path, State};
+use axum::extract::{Extension, Path, Query, State};
 use chrono::Utc;
 use ipfs_api_backend_hyper::IpfsApi;
 use serde::{Deserialize, Serialize};
@@ -13,9 +13,11 @@ use tracing::{info, warn};
 use validator::Validate;
 
 use crate::{
+    middleware::AuthenticatedUser,
     models::{
         blockchain_transaction::{BlockchainTransaction, TransactionStatus},
         dataset::{CreateDatasetRequest, Dataset},
+        dataset_tags::DatasetTag,
         Create, FindById,
     },
     routes::AppState,
@@ -27,9 +29,27 @@ use crate::{
 pub struct DatasetResponse {
     pub id: u64,
     pub name: String,
+    pub ui_name: String,
+    pub desc: Option<String>,
     pub file_hash: String,
     pub ipfs_cid: String,
+    pub file_size: u64,
+    pub file_format: String,
+    pub author: Option<String>,
     pub author_wallet: String,
+    pub author_avatar: Option<String>, // ADD avatar URL
+    pub sample_url: Option<String>,
+    pub file_path: Option<String>,
+    // New fields from migration
+    pub author_id: Option<u64>,
+    pub is_encrypted: bool,
+    pub slug: Option<String>,
+    pub license: Option<String>,
+    pub thumbnail_url: Option<String>,
+    pub version: Option<String>,
+    pub detailed_desc: Option<String>,
+    pub views_count: u64,
+    pub tags: Vec<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
@@ -49,7 +69,24 @@ pub struct UpdateDatasetRequest {
         message = "Name must be between 1 and 100 characters"
     ))]
     pub name: String,
+    pub ui_name: Option<String>,
     pub desc: Option<String>,
+    pub detailed_desc: Option<String>,
+    pub category: Option<String>,
+    pub license: Option<String>,
+    pub thumbnail_url: Option<String>,
+    pub version: Option<String>,
+    pub tags: Option<Vec<String>>,
+}
+
+/// Query parameters for searching datasets
+#[derive(Debug, Deserialize, Validate)]
+pub struct SearchDatasetQuery {
+    pub q: Option<String>,
+    pub category: Option<String>,
+    pub tags: Option<Vec<String>>,
+    #[serde(flatten)]
+    pub pagination: PaginationQuery,
 }
 
 /// Form data for creating dataset with file handling
@@ -71,16 +108,31 @@ pub struct CreateDatasetForm {
     pub desc: Option<String>,
     pub file_format: String,
     pub author: Option<String>,
+    // New fields from migration
+    pub author_id: Option<i64>,
+    pub is_encrypted: Option<bool>,
+    pub slug: Option<String>,
+    pub license: Option<String>,
+    pub thumbnail_url: Option<String>,
+    pub version: Option<String>,
+    pub detailed_desc: Option<String>,
+    pub tags: Option<String>, // JSON array of tags as string
 }
 
 /// Create a new dataset with file upload
+use crate::models::{
+    AddTagsRequest, DatasetSchema, RemoveTagsRequest, SetDatasetSchemaRequest, TagWithCount,
+};
+
 pub async fn create_dataset(
     State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>, // Extract user from JWT
     ValidatedMultipartForm {
-        form: form_data,
+        form: mut form_data,
         files,
     }: ValidatedMultipartForm<CreateDatasetForm>,
-) -> JsonResult<CreateDatasetResponse> {
+) -> JsonResult<DatasetResponse> {
+    // Return full response
     // Extract file data from the files HashMap
     let file_data = files
         .get("file")
@@ -106,17 +158,25 @@ pub async fn create_dataset(
         ));
     }
 
-    // Get the author for key derivation (use author field if provided, otherwise use wallet address)
-    let key_author = form_data
-        .author
-        .as_ref()
-        .unwrap_or(&form_data.author_wallet);
+    // Parse user_id from string
+    let user_id: i64 = auth
+        .user_id
+        .parse()
+        .map_err(|_| AppError::Validation("Invalid user ID".to_string()))?;
+
+    // Update form data with user information
+    form_data.author_id = Some(user_id);
+    form_data.author = Some(auth.username.clone());
+
+    // Use a universal identifier for dataset encryption
+    // All datasets use the same TEE-derived key so any authorized user can decrypt
+    let dataset_key_id = "UNIVERSAL_DATASET_KEY";
 
     // Encrypt the file data using TEE-derived key
-    info!("Encrypting dataset for author: {}", key_author);
+    info!("Encrypting dataset with universal TEE key");
     let encrypted_data = state
         .tee_crypto
-        .encrypt_dataset(file_bytes, key_author)
+        .encrypt_dataset(file_bytes, dataset_key_id)
         .await
         .map_err(|e| AppError::Internal(format!("Failed to encrypt dataset: {}", e)))?;
 
@@ -260,7 +320,36 @@ pub async fn create_dataset(
                     info!("Retry transaction {} added to monitoring queue", tx_hash);
                 }
 
-                return avinapi::data!(CreateDatasetResponse { tx_hash });
+                // For existing datasets, we should return the full dataset response
+                // but we need to fetch it first
+                let existing_data = existing_dataset.dataset;
+                let dataset_response = DatasetResponse {
+                    id: existing_data.id as u64,
+                    name: existing_data.name,
+                    ui_name: existing_data.ui_name,
+                    desc: existing_data.desc,
+                    file_hash: existing_data.file_hash,
+                    ipfs_cid: existing_data.ipfs_cid,
+                    file_size: existing_data.file_size as u64,
+                    file_format: existing_data.file_format,
+                    author: existing_data.author,
+                    author_wallet: existing_data.author_wallet,
+                    sample_url: existing_data.sample_url,
+                    file_path: existing_data.file_path,
+                    author_id: existing_data.author_id.map(|id| id as u64),
+                    is_encrypted: existing_data.is_encrypted,
+                    slug: existing_data.slug,
+                    license: existing_data.license,
+                    thumbnail_url: existing_data.thumbnail_url,
+                    version: existing_data.version,
+                    detailed_desc: existing_data.detailed_desc,
+                    views_count: existing_data.views_count as u64,
+                    tags: vec![],
+                    author_avatar: auth.avatar_url.clone(),
+                    created_at: existing_data.created_at,
+                    updated_at: existing_data.updated_at,
+                };
+                return avinapi::data!(dataset_response);
             }
         }
     }
@@ -274,13 +363,33 @@ pub async fn create_dataset(
         ipfs_cid: ipfs_cid.clone(),
         file_size: file_bytes.len() as i64,
         file_format: form_data.file_format,
-        author: form_data.author,
+        author: Some(auth.username.clone()),  // Use username from auth context
         author_wallet: form_data.author_wallet.clone(),
         sample_url,
         file_path,
+        // New fields from migration
+        author_id: auth.user_id.parse::<i64>().ok(),  // Parse user_id from auth context
+        is_encrypted: form_data.is_encrypted,
+        slug: form_data.slug,
+        license: form_data.license,
+        thumbnail_url: form_data.thumbnail_url,
+        version: form_data.version,
+        detailed_desc: form_data.detailed_desc,
     };
 
     let dataset = Dataset::create(state.db.pool(), request).await?;
+
+    // Process tags if provided
+    let mut tags = Vec::new();
+    if let Some(tags_json) = &form_data.tags {
+        if let Ok(parsed_tags) = serde_json::from_str::<Vec<String>>(tags_json) {
+            use crate::models::DatasetTag;
+            for tag in &parsed_tags {
+                DatasetTag::add_tag(state.db.pool(), dataset.id as i64, &tag).await?;
+            }
+            tags = parsed_tags;
+        }
+    }
 
     // Parse author wallet address
     let author_address = Address::from_str(&dataset.author_wallet)
@@ -359,7 +468,33 @@ pub async fn create_dataset(
 
     info!("Dataset {} registered successfully", dataset.id);
 
-    avinapi::data!(CreateDatasetResponse { tx_hash })
+    // Return complete dataset response with user information
+    avinapi::data!(DatasetResponse {
+        id: dataset.id as u64,
+        name: dataset.name,
+        ui_name: dataset.ui_name,
+        desc: dataset.desc,
+        file_hash: dataset.file_hash,
+        ipfs_cid: dataset.ipfs_cid,
+        file_size: dataset.file_size as u64,
+        file_format: dataset.file_format,
+        author: dataset.author,
+        author_wallet: dataset.author_wallet,
+        author_avatar: auth.avatar_url.clone(),
+        sample_url: dataset.sample_url,
+        file_path: dataset.file_path,
+        author_id: dataset.author_id.map(|id| id as u64),
+        is_encrypted: dataset.is_encrypted,
+        slug: dataset.slug,
+        license: dataset.license,
+        thumbnail_url: dataset.thumbnail_url,
+        version: dataset.version,
+        detailed_desc: dataset.detailed_desc,
+        views_count: dataset.views_count as u64,
+        tags,
+        created_at: dataset.created_at,
+        updated_at: dataset.updated_at,
+    })
 }
 
 /// List datasets with pagination
@@ -370,7 +505,10 @@ pub async fn list_datasets(
     let (datasets, total) =
         Dataset::find_all_confirmed(state.db.pool(), query.page, query.per_page).await?;
 
-    let items: Vec<DatasetResponse> = datasets.into_iter().map(|d| d.to_response()).collect();
+    let mut items = Vec::new();
+    for dataset in datasets {
+        items.push(dataset.to_response(state.db.pool()).await?);
+    }
 
     avinapi::paginated!(items, total, query.page, query.per_page)
 }
@@ -378,11 +516,13 @@ pub async fn list_datasets(
 /// Update an existing dataset (requires admin)
 pub async fn update_dataset(
     State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
     Path(id): Path<i64>,
     ValidatedJson(req): ValidatedJson<UpdateDatasetRequest>,
 ) -> JsonResult<DatasetResponse> {
-    // TODO: Check admin permission from request headers
-    // For now, we'll skip this check in development
+    // Check if user owns the dataset or is admin
+    // For now, we'll just log the user making the update
+    info!("User {} updating dataset {}", auth.username, id);
 
     // Find existing dataset
     let _dataset = Dataset::find_by_id(state.db.pool(), id)
@@ -390,22 +530,28 @@ pub async fn update_dataset(
         .ok_or_else(|| AppError::NotFound(format!("Dataset {} not found", id)))?;
 
     // Update dataset using model method
-    let updated = Dataset::update_metadata(
-        state.db.pool(),
-        id,
-        &req.name, // ui_name
-        &req.name, // name
-        req.desc.as_deref(),
-    )
-    .await?;
+    let ui_name = req.ui_name.as_deref().unwrap_or(&req.name);
+    let updated =
+        Dataset::update_metadata(state.db.pool(), id, ui_name, &req.name, req.desc.as_deref())
+            .await?;
+
+    // Update tags if provided
+    if let Some(tags) = req.tags {
+        DatasetTag::update_dataset_tags(state.db.pool(), id, &tags).await?;
+    }
 
     info!("Dataset {} updated successfully", id);
 
-    data!(updated.to_response())
+    data!(updated.to_response(state.db.pool()).await?)
 }
 
 /// Delete a dataset (requires admin)
-pub async fn delete_dataset(State(state): State<AppState>, Path(id): Path<i64>) -> JsonResult<()> {
+pub async fn delete_dataset(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Path(id): Path<i64>,
+) -> JsonResult<()> {
+    info!("User {} deleting dataset {}", auth.username, id);
     // TODO: Check admin permission from request headers
     // For now, we'll skip this check in development
 
@@ -431,7 +577,10 @@ pub async fn get_dataset(
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Dataset {} not found", id)))?;
 
-    data!(dataset.to_response())
+    // Increment view count
+    Dataset::increment_views(state.db.pool(), id).await?;
+
+    data!(dataset.to_response(state.db.pool()).await?)
 }
 
 /// Get dataset status including blockchain transaction status
@@ -457,8 +606,9 @@ pub async fn get_dataset_status(
     .fetch_optional(state.db.pool())
     .await?;
 
+    let dataset_response = dataset.to_response(state.db.pool()).await?;
     let response = serde_json::json!({
-        "dataset": dataset.to_response(),
+        "dataset": dataset_response,
         "blockchain_status": tx_status.map(|t| {
             serde_json::json!({
                 "status": t.status,
@@ -471,4 +621,331 @@ pub async fn get_dataset_status(
     });
 
     data!(response)
+}
+
+/// Get dataset by slug
+pub async fn get_dataset_by_slug(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+) -> JsonResult<DatasetResponse> {
+    let dataset = Dataset::find_by_slug(state.db.pool(), &slug)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Dataset with slug '{}' not found", slug)))?;
+
+    // Increment view count
+    Dataset::increment_views(state.db.pool(), dataset.id).await?;
+
+    data!(dataset.to_response(state.db.pool()).await?)
+}
+
+/// Get featured datasets (based on usage)
+pub async fn get_featured_datasets(
+    State(state): State<AppState>,
+) -> JsonResult<Vec<DatasetResponse>> {
+    let datasets = Dataset::get_featured(state.db.pool(), 6).await?;
+
+    let mut items = Vec::new();
+    for dataset in datasets {
+        items.push(dataset.to_response(state.db.pool()).await?);
+    }
+
+    data!(items)
+}
+
+/// Get trending datasets (based on recent views)
+pub async fn get_trending_datasets(
+    State(state): State<AppState>,
+) -> JsonResult<Vec<DatasetResponse>> {
+    let datasets = Dataset::get_trending(state.db.pool(), 6).await?;
+
+    let mut items = Vec::new();
+    for dataset in datasets {
+        items.push(dataset.to_response(state.db.pool()).await?);
+    }
+
+    data!(items)
+}
+
+/// Search datasets
+pub async fn search_datasets(
+    State(state): State<AppState>,
+    ValidatedQuery(query): ValidatedQuery<SearchDatasetQuery>,
+) -> PaginatedResult<DatasetResponse> {
+    let (datasets, total) = if let Some(keyword) = &query.q {
+        Dataset::search(
+            state.db.pool(),
+            keyword,
+            query.pagination.page,
+            query.pagination.per_page,
+        )
+        .await?
+    } else if let Some(_category) = &query.category {
+        // Category field is deprecated, return empty result
+        (vec![], 0)
+    } else if let Some(tags) = &query.tags {
+        // Find datasets by tags
+        let (dataset_ids, count) = DatasetTag::find_datasets_by_tags_all(
+            state.db.pool(),
+            tags,
+            query.pagination.page,
+            query.pagination.per_page,
+        )
+        .await?;
+
+        let mut datasets = Vec::new();
+        for id in dataset_ids {
+            if let Some(dataset) = Dataset::find_by_id(state.db.pool(), id).await? {
+                datasets.push(dataset);
+            }
+        }
+        (datasets, count)
+    } else {
+        Dataset::find_all_confirmed(
+            state.db.pool(),
+            query.pagination.page,
+            query.pagination.per_page,
+        )
+        .await?
+    };
+
+    let mut items = Vec::new();
+    for dataset in datasets {
+        items.push(dataset.to_response(state.db.pool()).await?);
+    }
+
+    avinapi::paginated!(
+        items,
+        total,
+        query.pagination.page,
+        query.pagination.per_page
+    )
+}
+
+/// Get datasets by category
+// Category-based filtering is deprecated - use tags instead
+// Keeping this function for backward compatibility but returning empty results
+pub async fn get_datasets_by_category(
+    State(_state): State<AppState>,
+    Path(_category): Path<String>,
+    ValidatedQuery(query): ValidatedQuery<PaginationQuery>,
+) -> PaginatedResult<DatasetResponse> {
+    // Return empty result - category field is deprecated
+    avinapi::paginated!(Vec::<DatasetResponse>::new(), 0, query.page, query.per_page)
+}
+
+/// Add tags to a dataset
+pub async fn add_dataset_tags(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Path(id): Path<i64>,
+    ValidatedJson(req): ValidatedJson<AddTagsRequest>,
+) -> JsonResult<Vec<String>> {
+    info!("User {} adding tags to dataset {}", auth.username, id);
+    // Check if dataset exists
+    Dataset::find_by_id_required(state.db.pool(), id).await?;
+
+    DatasetTag::add_tags(state.db.pool(), id, &req.tags).await?;
+
+    let tags = DatasetTag::get_dataset_tags(state.db.pool(), id).await?;
+
+    data!(tags)
+}
+
+/// Remove tags from a dataset
+pub async fn remove_dataset_tags(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Path(id): Path<i64>,
+    ValidatedJson(req): ValidatedJson<RemoveTagsRequest>,
+) -> JsonResult<Vec<String>> {
+    info!("User {} removing tags from dataset {}", auth.username, id);
+    // Check if dataset exists
+    Dataset::find_by_id_required(state.db.pool(), id).await?;
+
+    DatasetTag::remove_tags(state.db.pool(), id, &req.tags).await?;
+
+    let tags = DatasetTag::get_dataset_tags(state.db.pool(), id).await?;
+
+    data!(tags)
+}
+
+/// Get dataset tags
+pub async fn get_dataset_tags(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> JsonResult<Vec<String>> {
+    // Check if dataset exists
+    Dataset::find_by_id_required(state.db.pool(), id).await?;
+
+    let tags = DatasetTag::get_dataset_tags(state.db.pool(), id).await?;
+
+    data!(tags)
+}
+
+/// Get all tags with counts
+pub async fn get_all_tags(State(state): State<AppState>) -> JsonResult<Vec<TagWithCount>> {
+    let tags = DatasetTag::get_all_tags_with_count(state.db.pool()).await?;
+
+    data!(tags)
+}
+
+/// Get popular tags
+pub async fn get_popular_tags(State(state): State<AppState>) -> JsonResult<Vec<TagWithCount>> {
+    let tags = DatasetTag::get_popular_tags(state.db.pool(), 20).await?;
+
+    data!(tags)
+}
+
+/// Get dataset schema
+pub async fn get_dataset_schema(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> JsonResult<Vec<DatasetSchema>> {
+    // Check if dataset exists
+    Dataset::find_by_id_required(state.db.pool(), id).await?;
+
+    let schema = DatasetSchema::get_by_dataset_id(state.db.pool(), id).await?;
+
+    data!(schema)
+}
+
+/// Set dataset schema
+pub async fn set_dataset_schema(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Path(id): Path<i64>,
+    ValidatedJson(req): ValidatedJson<SetDatasetSchemaRequest>,
+) -> JsonResult<Vec<DatasetSchema>> {
+    info!("User {} setting schema for dataset {}", auth.username, id);
+    // Check if dataset exists
+    Dataset::find_by_id_required(state.db.pool(), id).await?;
+
+    // Validate field types
+    for field in &req.fields {
+        if !DatasetSchema::validate_field_type(&field.field_type) {
+            return Err(AppError::Validation(format!(
+                "Invalid field type: {}",
+                field.field_type
+            )));
+        }
+    }
+
+    let request = crate::models::dataset_schema::SetDatasetSchemaRequest { fields: req.fields };
+
+    let schema = DatasetSchema::set_dataset_schema(state.db.pool(), id, request).await?;
+
+    data!(schema)
+}
+
+/// Get dataset usage history
+pub async fn get_dataset_usage(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> JsonResult<Vec<serde_json::Value>> {
+    // Check if dataset exists
+    let _dataset = Dataset::find_by_id_required(state.db.pool(), id).await?;
+
+    // Get usage history (note: users table is in Core service, so we can't join here)
+    let usage_history = sqlx::query!(
+        r#"
+        SELECT
+            du.id,
+            du.dataset,
+            du.algo_name,
+            du.scientist_wallet,
+            du.used_at,
+            du.execution_status,
+            du.runtime_seconds,
+            du.records_processed,
+            du.user_id
+        FROM data_usage du
+        LEFT JOIN dataset d ON d.name = du.dataset
+        WHERE d.id = $1
+        ORDER BY du.used_at DESC
+        LIMIT 100
+        "#,
+        id
+    )
+    .fetch_all(state.db.pool())
+    .await?;
+
+    let mut results = Vec::new();
+    for row in usage_history {
+        results.push(serde_json::json!({
+            "id": row.id,
+            "algo_name": row.algo_name,
+            "user_id": row.user_id,
+            "scientist_wallet": row.scientist_wallet,
+            "used_at": row.used_at,
+            "execution_status": row.execution_status,
+            "runtime_seconds": row.runtime_seconds,
+            "records_processed": row.records_processed,
+        }));
+    }
+
+    data!(results)
+}
+
+/// Query parameters for filtering datasets by tags
+#[derive(Debug, Deserialize)]
+pub struct TagFilterQuery {
+    pub tags: Vec<String>,
+    pub tag_mode: Option<String>, // "any" or "all"
+    pub page: Option<i64>,
+    pub per_page: Option<i64>,
+}
+
+/// Get datasets by tags (replacement for category filtering)
+pub async fn get_datasets_by_tags(
+    State(state): State<AppState>,
+    Query(params): Query<TagFilterQuery>,
+) -> JsonResult<Vec<DatasetResponse>> {
+    let tag_mode = params.tag_mode.unwrap_or_else(|| "any".to_string());
+
+    // Get datasets that match the tags
+    let datasets = if tag_mode == "all" {
+        // Get datasets that have ALL specified tags
+        Dataset::find_by_all_tags(state.db.pool(), &params.tags).await?
+    } else {
+        // Get datasets that have ANY of the specified tags
+        Dataset::find_by_any_tags(state.db.pool(), &params.tags).await?
+    };
+
+    // Convert to response format with tags and user info
+    let mut responses = Vec::new();
+    for dataset in datasets {
+        let tags = DatasetTag::get_dataset_tags(state.db.pool(), dataset.id).await?;
+
+        // For now, we don't have user service, so just use author field
+        let author_avatar: Option<String> = None;
+
+        responses.push(DatasetResponse {
+            id: dataset.id as u64,
+            name: dataset.name,
+            ui_name: dataset.ui_name,
+            desc: dataset.desc,
+            file_hash: dataset.file_hash,
+            ipfs_cid: dataset.ipfs_cid,
+            file_size: dataset.file_size as u64,
+            file_format: dataset.file_format,
+            author: dataset.author,
+            author_wallet: dataset.author_wallet,
+            author_avatar,
+            sample_url: dataset.sample_url,
+            file_path: dataset.file_path,
+            author_id: dataset.author_id.map(|id| id as u64),
+            is_encrypted: dataset.is_encrypted,
+            slug: dataset.slug,
+            license: dataset.license,
+            thumbnail_url: dataset.thumbnail_url,
+            version: dataset.version,
+            detailed_desc: dataset.detailed_desc,
+            views_count: dataset.views_count as u64,
+            tags,
+            created_at: dataset.created_at,
+            updated_at: dataset.updated_at,
+        });
+    }
+
+    data!(responses)
 }

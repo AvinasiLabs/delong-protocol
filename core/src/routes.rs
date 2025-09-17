@@ -214,6 +214,8 @@ pub fn create_router(state: AppState) -> Router {
         // Public SIWE routes (no authentication required)
         .route("/auth/siwe/nonce", get(handlers::siwe::get_siwe_nonce))
         .route("/auth/siwe/verify", post(handlers::siwe::verify_signature))
+        // Public user info endpoint for dataset authors
+        .route("/users/batch", post(handlers::auth::get_users_by_ids))
         // Public API key validation
         // API Documentation routes
         .route(

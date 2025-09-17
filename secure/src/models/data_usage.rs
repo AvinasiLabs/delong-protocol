@@ -14,6 +14,12 @@ pub struct DataUsage {
     pub cid: String,
     pub dataset: String,
     pub used_at: DateTime<Utc>,
+    // New fields from migration
+    pub user_id: Option<i64>,
+    pub algo_name: Option<String>,
+    pub execution_status: Option<String>,
+    pub runtime_seconds: Option<i32>,
+    pub records_processed: Option<i64>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -25,6 +31,12 @@ pub struct NewDataUsage {
     pub cid: String,
     pub dataset: String,
     pub used_at: DateTime<Utc>,
+    // New fields from migration
+    pub user_id: Option<i64>,
+    pub algo_name: Option<String>,
+    pub execution_status: Option<String>,
+    pub runtime_seconds: Option<i32>,
+    pub records_processed: Option<i64>,
 }
 
 impl Timestamped for DataUsage {
@@ -44,6 +56,12 @@ pub struct CreateDataUsageRequest {
     pub cid: String,
     pub dataset: String,
     pub used_at: Option<DateTime<Utc>>,
+    // New fields from migration
+    pub user_id: Option<i64>,
+    pub algo_name: Option<String>,
+    pub execution_status: Option<String>,
+    pub runtime_seconds: Option<i32>,
+    pub records_processed: Option<i64>,
 }
 
 impl DataUsage {
@@ -189,24 +207,38 @@ impl DataUsage {
     }
 
     /// Create a new data usage record with transaction support
-    pub async fn create(
+    pub async fn create_with_tx(
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         scientist_wallet: String,
         cid: String,
         dataset: String,
         used_at: DateTime<Utc>,
+        user_id: Option<i64>,
+        algo_name: Option<String>,
+        execution_status: Option<String>,
+        runtime_seconds: Option<i32>,
+        records_processed: Option<i64>,
     ) -> Result<Self> {
         let usage = sqlx::query_as!(
             DataUsage,
             r#"
-            INSERT INTO data_usage (scientist_wallet, cid, dataset, used_at)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO data_usage (
+                scientist_wallet, cid, dataset, used_at,
+                user_id, algo_name, execution_status,
+                runtime_seconds, records_processed
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             RETURNING *
             "#,
             &scientist_wallet,
             &cid,
             &dataset,
-            used_at
+            used_at,
+            user_id,
+            algo_name.as_deref(),
+            execution_status.as_deref(),
+            runtime_seconds,
+            records_processed
         )
         .fetch_one(&mut **tx)
         .await?;
@@ -225,14 +257,23 @@ impl Create for DataUsage {
         let usage = sqlx::query_as!(
             DataUsage,
             r#"
-            INSERT INTO data_usage (scientist_wallet, cid, dataset, used_at)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO data_usage (
+                scientist_wallet, cid, dataset, used_at,
+                user_id, algo_name, execution_status,
+                runtime_seconds, records_processed
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             RETURNING *
             "#,
             request.scientist_wallet,
             request.cid,
             request.dataset,
-            used_at
+            used_at,
+            request.user_id,
+            request.algo_name.as_deref(),
+            request.execution_status.as_deref(),
+            request.runtime_seconds,
+            request.records_processed
         )
         .fetch_one(pool)
         .await?;

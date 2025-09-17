@@ -122,10 +122,26 @@ pub async fn create_app(
     let dataset_routes = Router::new()
         .route("/", post(handlers::create_dataset))
         .route("/", get(handlers::list_datasets))
+        .route("/search", get(handlers::dataset::search_datasets))
+        .route("/featured", get(handlers::dataset::get_featured_datasets))
+        .route("/trending", get(handlers::dataset::get_trending_datasets))
+        .route("/tags", get(handlers::dataset::get_all_tags))
+        .route("/tags/popular", get(handlers::dataset::get_popular_tags))
+        .route("/by-tags", get(handlers::dataset::get_datasets_by_tags))
+        .route("/slug/{slug}", get(handlers::dataset::get_dataset_by_slug))
         .route("/{id}", get(handlers::get_dataset))
         .route("/{id}/status", get(handlers::dataset::get_dataset_status))
         .route("/{id}", axum::routing::put(handlers::update_dataset))
-        .route("/{id}", axum::routing::delete(handlers::delete_dataset));
+        .route("/{id}", axum::routing::delete(handlers::delete_dataset))
+        .route("/{id}/tags", get(handlers::dataset::get_dataset_tags))
+        .route("/{id}/tags", post(handlers::dataset::add_dataset_tags))
+        .route(
+            "/{id}/tags",
+            axum::routing::delete(handlers::dataset::remove_dataset_tags),
+        )
+        .route("/{id}/schema", get(handlers::dataset::get_dataset_schema))
+        .route("/{id}/schema", post(handlers::dataset::set_dataset_schema))
+        .route("/{id}/usage", get(handlers::dataset::get_dataset_usage));
 
     // Committee and voting routes
     let committee_routes = Router::new()

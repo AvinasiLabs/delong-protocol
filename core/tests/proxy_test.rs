@@ -280,6 +280,8 @@ mod proxy_tests {
         AuthContext {
             user_id: user.id.to_string(),
             email: user.email.clone(),
+            username: user.username.clone(),
+            avatar_url: user.avatar_url.clone(),
             auth_method: auth_method.to_string(),
             tenant_id: None,
             scopes,

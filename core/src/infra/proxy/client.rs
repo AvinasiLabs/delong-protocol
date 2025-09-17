@@ -28,6 +28,10 @@ pub struct AuthContext {
     pub user_id: String,
     /// User email
     pub email: String,
+    /// Username
+    pub username: String,
+    /// User avatar URL
+    pub avatar_url: Option<String>,
     /// Authentication method (jwt or api_key)
     pub auth_method: String,
     /// Tenant/organization ID if applicable

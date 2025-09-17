@@ -4,18 +4,6 @@
 //! including registration, login, verification code management,
 //! and Google OAuth integration.
 
-use avinapi::prelude::{AppError, JsonResult, ValidatedJson, ValidatedQuery, data, empty};
-use axum::extract::State;
-use axum_extra::extract::CookieJar;
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
-
-use regex::Regex;
-use std::sync::LazyLock;
-use tracing::{error, info, instrument, warn};
-use utoipa::ToSchema;
-use validator::Validate;
-
 use crate::{
     infra::email::EmailService,
     middleware::AuthUser,
@@ -23,6 +11,16 @@ use crate::{
     routes::AppState,
     utils::jwt::{self},
 };
+use avinapi::prelude::{AppError, JsonResult, ValidatedJson, ValidatedQuery, data, empty};
+use axum::extract::State;
+use axum_extra::extract::CookieJar;
+use chrono::{DateTime, Utc};
+use regex::Regex;
+use serde::{Deserialize, Serialize};
+use std::sync::LazyLock;
+use tracing::{error, info, instrument, warn};
+use utoipa::ToSchema;
+use validator::Validate;
 
 // ===== Validation Regex =====
 
@@ -850,4 +848,50 @@ pub async fn refresh_token(
 
     info!("Token refreshed successfully");
     (jar, data!(auth_response))
+}
+
+/// Request for batch user query
+#[derive(Debug, Serialize, Deserialize, Validate)]
+pub struct BatchUserQuery {
+    #[validate(length(min = 1, max = 100))]
+    pub user_ids: Vec<i64>,
+}
+
+/// Basic user info response for public queries
+#[derive(Debug, Serialize)]
+pub struct BasicUserInfo {
+    pub id: i64,
+    pub username: String,
+    pub email: String,
+    pub avatar_url: Option<String>,
+}
+
+/// Get basic user information by IDs (public endpoint)
+/// This is used by frontend to fetch author information for datasets
+pub async fn get_users_by_ids(
+    State(state): State<AppState>,
+    ValidatedJson(query): ValidatedJson<BatchUserQuery>,
+) -> JsonResult<Vec<BasicUserInfo>> {
+    use crate::models::user::User;
+
+    // Remove duplicates
+    let mut unique_ids = query.user_ids.clone();
+    unique_ids.sort();
+    unique_ids.dedup();
+
+    let mut users = Vec::new();
+
+    for user_id in unique_ids {
+        if let Ok(Some(user)) = User::find_by_id(&state.db, user_id as i32).await {
+            users.push(BasicUserInfo {
+                id: user.id as i64,
+                username: user.username,
+                email: user.email,
+                avatar_url: user.avatar_url,
+            });
+        }
+        // Skip if user not found
+    }
+
+    data!(users)
 }

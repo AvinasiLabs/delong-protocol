@@ -539,11 +539,12 @@ impl AlgoExecutor {
             .await
             .map_err(|e| ExecutorError::Ipfs(format!("Failed to download from IPFS: {}", e)))?;
 
-        // Decrypt the dataset using the author's key
-        info!("Decrypting dataset for author: {}", dataset.author_wallet);
+        // Decrypt the dataset using the universal TEE key
+        info!("Decrypting dataset with universal TEE key");
+        let dataset_key_id = "UNIVERSAL_DATASET_KEY";
         let decrypted_data = self
             .tee_crypto
-            .decrypt_dataset(&encrypted_data, &dataset.author_wallet)
+            .decrypt_dataset(&encrypted_data, dataset_key_id)
             .await
             .map_err(|e| ExecutorError::Internal(format!("Failed to decrypt dataset: {}", e)))?;
 
@@ -815,12 +816,17 @@ impl AlgoExecutor {
         let mut tx = self.db.pool.begin().await?;
 
         // Create data usage record
-        let usage = DataUsage::create(
+        let usage = DataUsage::create_with_tx(
             &mut tx,
             execution.scientist_wallet.clone(),
             algo.cid.clone(),
             execution.used_dataset.clone(),
             Utc::now(),
+            None,                          // user_id
+            Some(algo.name.clone()),       // algo_name
+            Some("completed".to_string()), // execution_status
+            None,                          // runtime_seconds - will be calculated later
+            None,                          // records_processed
         )
         .await?;
 

@@ -11,8 +11,8 @@ use avinapi::prelude::AppError;
 use std::sync::Arc;
 use tracing::{debug, error, info};
 
-/// Purpose identifier for static dataset encryption
-pub const PURPOSE_ENC_STATIC_DATASET: &str = "enc_static_dataset";
+/// Purpose identifier for dataset encryption
+pub const PURPOSE_ENCRYPT_DATASET: &str = "encypt_dataset";
 
 /// TEE cryptographic service for secure operations
 #[derive(Clone)]
@@ -30,7 +30,7 @@ impl TeeCryptoService {
     /// Derive a symmetric key for dataset encryption
     ///
     /// # Arguments
-    /// * `author` - The dataset author identifier
+    /// * `key_id` - The key identifier (use "UNIVERSAL_DATASET_KEY" for all datasets)
     /// * `purpose` - The purpose of the key (defaults to PURPOSE_ENC_STATIC_DATASET)
     ///
     /// # Returns
@@ -38,17 +38,17 @@ impl TeeCryptoService {
     /// * `Err(AppError)` - If key derivation fails
     pub async fn derive_dataset_key(
         &self,
-        author: &str,
+        key_id: &str,
         purpose: Option<&str>,
     ) -> Result<Vec<u8>, AppError> {
-        let purpose = purpose.unwrap_or(PURPOSE_ENC_STATIC_DATASET);
+        let purpose = purpose.unwrap_or(PURPOSE_ENCRYPT_DATASET);
 
         // Construct the key derivation path
-        let key_path = format!("{}/{}", KEY_CTX_DATA_ENCRYPT_PREFIX, author);
+        let key_path = format!("{}/{}", KEY_CTX_DATA_ENCRYPT_PREFIX, key_id);
 
         debug!(
-            "Deriving dataset encryption key for author: {}, path: {}, purpose: {}",
-            author, key_path, purpose
+            "Deriving dataset encryption key for: {}, path: {}, purpose: {}",
+            key_id, key_path, purpose
         );
 
         // Derive the key using TEE
@@ -57,7 +57,7 @@ impl TeeCryptoService {
             .derive_key(&key_path, Some(purpose))
             .await
             .map_err(|e| {
-                error!("Failed to derive key for author {}: {}", author, e);
+                error!("Failed to derive key for {}: {}", key_id, e);
                 AppError::Internal(format!("Key derivation failed: {}", e))
             })?;
 
@@ -77,9 +77,9 @@ impl TeeCryptoService {
         }
 
         info!(
-            "Successfully derived {} byte key for author: {}",
+            "Successfully derived {} byte key for: {}",
             key_bytes.len(),
-            author
+            key_id
         );
 
         Ok(key_bytes)
@@ -89,18 +89,18 @@ impl TeeCryptoService {
     ///
     /// # Arguments
     /// * `data` - The data to encrypt
-    /// * `author` - The dataset author identifier
+    /// * `key_id` - The key identifier (use "UNIVERSAL_DATASET_KEY" for all datasets)
     ///
     /// # Returns
     /// * `Ok(Vec<u8>)` - The encrypted data
     /// * `Err(AppError)` - If encryption fails
-    pub async fn encrypt_dataset(&self, data: &[u8], author: &str) -> Result<Vec<u8>, AppError> {
+    pub async fn encrypt_dataset(&self, data: &[u8], key_id: &str) -> Result<Vec<u8>, AppError> {
         // Derive the encryption key
-        let key = self.derive_dataset_key(author, None).await?;
+        let key = self.derive_dataset_key(key_id, None).await?;
 
         // Encrypt the data
         let encrypted = encrypt(data, &key).map_err(|e| {
-            error!("Failed to encrypt data for author {}: {}", author, e);
+            error!("Failed to encrypt data with key {}: {}", key_id, e);
             match e {
                 CryptoError::InvalidKeyLength(len) => {
                     AppError::Internal(format!("Invalid key length: {}", len))
@@ -113,9 +113,9 @@ impl TeeCryptoService {
         })?;
 
         debug!(
-            "Successfully encrypted {} bytes for author: {}",
+            "Successfully encrypted {} bytes with key: {}",
             data.len(),
-            author
+            key_id
         );
 
         Ok(encrypted)
@@ -125,7 +125,7 @@ impl TeeCryptoService {
     ///
     /// # Arguments
     /// * `encrypted_data` - The encrypted data
-    /// * `author` - The dataset author identifier
+    /// * `key_id` - The key identifier (use "UNIVERSAL_DATASET_KEY" for all datasets)
     ///
     /// # Returns
     /// * `Ok(Vec<u8>)` - The decrypted data
@@ -133,14 +133,14 @@ impl TeeCryptoService {
     pub async fn decrypt_dataset(
         &self,
         encrypted_data: &[u8],
-        author: &str,
+        key_id: &str,
     ) -> Result<Vec<u8>, AppError> {
         // Derive the decryption key
-        let key = self.derive_dataset_key(author, None).await?;
+        let key = self.derive_dataset_key(key_id, None).await?;
 
         // Decrypt the data
         let decrypted = decrypt(encrypted_data, &key).map_err(|e| {
-            error!("Failed to decrypt data for author {}: {}", author, e);
+            error!("Failed to decrypt data with key {}: {}", key_id, e);
             match e {
                 CryptoError::DecryptionFailed(msg) => {
                     AppError::Internal(format!("Decryption failed: {}", msg))
@@ -150,9 +150,9 @@ impl TeeCryptoService {
         })?;
 
         debug!(
-            "Successfully decrypted {} bytes for author: {}",
+            "Successfully decrypted {} bytes with key: {}",
             encrypted_data.len(),
-            author
+            key_id
         );
 
         Ok(decrypted)

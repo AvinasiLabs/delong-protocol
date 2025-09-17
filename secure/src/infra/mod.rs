@@ -20,7 +20,7 @@ pub use crypto::{decrypt, decrypt_hex_key, encrypt, encrypt_hex_key, CryptoError
 pub use db::{Database, DatabaseError};
 pub use notifier::Notifier;
 pub use sample_generator::{SampleGenerator, DEFAULT_SAMPLE_SIZE};
-pub use tee_crypto::{TeeCryptoService, PURPOSE_ENC_STATIC_DATASET};
+pub use tee_crypto::{TeeCryptoService, PURPOSE_ENCRYPT_DATASET};
 
 // Re-export TEE components with cleaner names
 pub use tee::{

@@ -6,6 +6,8 @@ pub mod committee;
 pub mod contract;
 pub mod data_usage;
 pub mod dataset;
+pub mod dataset_schema;
+pub mod dataset_tags;
 
 pub mod vote;
 
@@ -20,6 +22,11 @@ pub use committee::{CommitteeMember, CreateCommitteeMemberRequest};
 pub use contract::{ContractMeta, CreateContractMetaRequest};
 pub use data_usage::{CreateDataUsageRequest, DataUsage};
 pub use dataset::{CreateDatasetRequest, Dataset};
+pub use dataset_schema::{
+    CreateSchemaFieldRequest, DatasetSchema, SchemaFieldDefinition, SetDatasetSchemaRequest,
+    UpdateSchemaFieldRequest,
+};
+pub use dataset_tags::{AddTagsRequest, DatasetTag, RemoveTagsRequest, TagWithCount};
 pub use vote::{CreateVoteRequest, Vote};
 
 // Common model traits

@@ -25,6 +25,10 @@ pub struct AuthContext {
     pub user_id: String,
     /// User email
     pub email: String,
+    /// Username
+    pub username: String,
+    /// User avatar URL
+    pub avatar_url: Option<String>,
     /// Authentication method (jwt or api_key)
     pub auth_method: String,
     /// Request ID for tracing
@@ -79,6 +83,8 @@ pub async fn internal_jwt_middleware(
         let mock_context = AuthContext {
             user_id: "test-user-001".to_string(),
             email: "test@example.com".to_string(),
+            username: "testuser".to_string(),
+            avatar_url: None,
             auth_method: "test".to_string(),
             request_id: "test-request-id".to_string(),
         };
@@ -87,6 +93,8 @@ pub async fn internal_jwt_middleware(
         req.extensions_mut().insert(AuthenticatedUser {
             user_id: mock_context.user_id.clone(),
             email: mock_context.email.clone(),
+            username: mock_context.username.clone(),
+            avatar_url: mock_context.avatar_url.clone(),
             auth_method: mock_context.auth_method.clone(),
         });
         req.extensions_mut().insert(mock_context);
@@ -155,6 +163,8 @@ pub async fn internal_jwt_middleware(
     req.extensions_mut().insert(AuthenticatedUser {
         user_id: claims.context.user_id.clone(),
         email: claims.context.email.clone(),
+        username: claims.context.username.clone(),
+        avatar_url: claims.context.avatar_url.clone(),
         auth_method: claims.context.auth_method.clone(),
     });
 
@@ -287,6 +297,8 @@ async fn read_body_bytes(req: &mut Request<Body>) -> Result<Option<Bytes>, Strin
 pub struct AuthenticatedUser {
     pub user_id: String,
     pub email: String,
+    pub username: String,
+    pub avatar_url: Option<String>,
     pub auth_method: String,
 }
 
@@ -345,6 +357,8 @@ mod tests {
             iss: "delong-core".to_string(),
             aud: "delong-secure".to_string(),
             context: AuthContext {
+                username: "user123".to_string(),
+                avatar_url: None,
                 user_id: "user123".to_string(),
                 email: "test@example.com".to_string(),
                 auth_method: "jwt".to_string(),

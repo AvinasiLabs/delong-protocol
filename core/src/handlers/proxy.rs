@@ -87,6 +87,8 @@ pub async fn proxy_handler(
     let auth_context = ProxyAuthContext {
         user_id: auth_user.user_id().to_string(),
         email: auth_user.email().to_string(),
+        username: auth_user.user.username.clone(),
+        avatar_url: auth_user.user.avatar_url.clone(),
         auth_method: match auth_user.auth_method {
             AuthMethod::Jwt => "jwt".to_string(),
             AuthMethod::ApiKey => "api_key".to_string(),
@@ -237,6 +239,8 @@ pub async fn websocket_proxy_handler(
     let proxy_auth_context = ProxyAuthContext {
         user_id: auth_user.user_id().to_string(),
         email: auth_user.email().to_string(),
+        username: auth_user.user.username.clone(),
+        avatar_url: auth_user.user.avatar_url.clone(),
         auth_method: match auth_user.auth_method {
             AuthMethod::Jwt => "jwt".to_string(),
             AuthMethod::ApiKey => "api_key".to_string(),
