@@ -11,9 +11,10 @@ use super::{Create, FindById, Timestamped};
 pub struct Vote {
     pub id: i64,
     pub algo_cid: String,
-    pub voter: String,
-    pub approve: bool,
-    pub voted_at: DateTime<Utc>,
+    pub wallet: String,
+    pub approved: bool,
+    pub vote_at: DateTime<Utc>,
+    pub reason: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -26,7 +27,7 @@ impl Vote {
             r#"
             SELECT * FROM vote
             WHERE algo_cid = $1
-            ORDER BY voted_at DESC
+            ORDER BY vote_at DESC
             "#,
             algo_cid
         )
@@ -57,7 +58,7 @@ impl Vote {
             r#"
             SELECT * FROM vote
             WHERE algo_cid = $1
-            ORDER BY voted_at DESC
+            ORDER BY vote_at DESC
             LIMIT $2 OFFSET $3
             "#,
             algo_cid,
@@ -75,8 +76,8 @@ impl Vote {
         let result = sqlx::query!(
             r#"
             SELECT
-                COUNT(CASE WHEN approve = true THEN 1 END) as approve_count,
-                COUNT(CASE WHEN approve = false THEN 1 END) as reject_count
+                COUNT(CASE WHEN approved = true THEN 1 END) as approve_count,
+                COUNT(CASE WHEN approved = false THEN 1 END) as reject_count
             FROM vote
             WHERE algo_cid = $1
             "#,
@@ -91,16 +92,16 @@ impl Vote {
         ))
     }
 
-    /// Find votes by voter with pagination
-    pub async fn find_by_voter_paginated(
+    /// Find votes by wallet with pagination
+    pub async fn find_by_wallet_paginated(
         pool: &PgPool,
-        voter: &str,
+        wallet: &str,
         pagination: PaginationQuery,
     ) -> Result<PaginatedData<Self>> {
         // Get total count
         let total = sqlx::query_scalar!(
-            "SELECT COUNT(*) as \"count!\" FROM vote WHERE voter = $1",
-            voter
+            "SELECT COUNT(*) as \"count!\" FROM vote WHERE wallet = $1",
+            wallet
         )
         .fetch_one(pool)
         .await?;
@@ -110,11 +111,11 @@ impl Vote {
             Vote,
             r#"
             SELECT * FROM vote
-            WHERE voter = $1
-            ORDER BY voted_at DESC
+            WHERE wallet = $1
+            ORDER BY vote_at DESC
             LIMIT $2 OFFSET $3
             "#,
-            voter,
+            wallet,
             pagination.get_limit() as i64,
             pagination.get_offset() as i64
         )
@@ -129,17 +130,17 @@ impl Vote {
         })
     }
 
-    /// Find a vote by algo_cid and voter (unique combination)
-    pub async fn find_by_algo_cid_and_voter(
+    /// Find a vote by algo_cid and wallet (unique combination)
+    pub async fn find_by_algo_cid_and_wallet(
         pool: &PgPool,
         algo_cid: &str,
-        voter: &str,
+        wallet: &str,
     ) -> Result<Option<Self>> {
         let vote = sqlx::query_as!(
             Vote,
-            "SELECT * FROM vote WHERE algo_cid = $1 AND voter = $2",
+            "SELECT * FROM vote WHERE algo_cid = $1 AND wallet = $2",
             algo_cid,
-            voter
+            wallet
         )
         .fetch_optional(pool)
         .await?;
@@ -147,12 +148,12 @@ impl Vote {
         Ok(vote)
     }
 
-    /// Check if a voter has already voted on an algorithm
-    pub async fn has_voted(pool: &PgPool, algo_cid: &str, voter: &str) -> Result<bool> {
+    /// Check if a wallet has already voted on an algorithm
+    pub async fn has_voted(pool: &PgPool, algo_cid: &str, wallet: &str) -> Result<bool> {
         let exists = sqlx::query_scalar!(
-            "SELECT EXISTS(SELECT 1 FROM vote WHERE algo_cid = $1 AND voter = $2)",
+            "SELECT EXISTS(SELECT 1 FROM vote WHERE algo_cid = $1 AND wallet = $2)",
             algo_cid,
-            voter
+            wallet
         )
         .fetch_one(pool)
         .await?;
@@ -169,7 +170,7 @@ impl Vote {
     ) -> Result<PaginatedData<Self>> {
         // Get total count
         let total = sqlx::query_scalar!(
-            "SELECT COUNT(*) as \"count!\" FROM vote WHERE voted_at BETWEEN $1 AND $2",
+            "SELECT COUNT(*) as \"count!\" FROM vote WHERE vote_at BETWEEN $1 AND $2",
             start_time,
             end_time
         )
@@ -181,8 +182,8 @@ impl Vote {
             Vote,
             r#"
             SELECT * FROM vote
-            WHERE voted_at BETWEEN $1 AND $2
-            ORDER BY voted_at DESC
+            WHERE vote_at BETWEEN $1 AND $2
+            ORDER BY vote_at DESC
             LIMIT $3 OFFSET $4
             "#,
             start_time,
@@ -212,14 +213,15 @@ impl Vote {
         let vote = sqlx::query_as!(
             Vote,
             r#"
-            INSERT INTO vote (algo_cid, voter, approve, voted_at)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO vote (algo_cid, wallet, approved, vote_at, reason)
+            VALUES ($1, $2, $3, $4, $5)
             RETURNING *
             "#,
             cid,
             member,
             approved,
-            vote_time
+            vote_time,
+            None::<String>
         )
         .fetch_one(&mut **tx)
         .await?;
@@ -242,9 +244,10 @@ impl Timestamped for Vote {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateVoteRequest {
     pub algo_cid: String,
-    pub voter: String,
-    pub approve: bool,
-    pub voted_at: DateTime<Utc>,
+    pub wallet: String,
+    pub approved: bool,
+    pub vote_at: DateTime<Utc>,
+    pub reason: Option<String>,
 }
 
 #[async_trait::async_trait]
@@ -255,14 +258,15 @@ impl Create for Vote {
         let vote = sqlx::query_as!(
             Vote,
             r#"
-            INSERT INTO vote (algo_cid, voter, approve, voted_at)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO vote (algo_cid, wallet, approved, vote_at, reason)
+            VALUES ($1, $2, $3, $4, $5)
             RETURNING *
             "#,
             &request.algo_cid,
-            &request.voter,
-            request.approve,
-            request.voted_at
+            &request.wallet,
+            request.approved,
+            request.vote_at,
+            request.reason.as_deref()
         )
         .fetch_one(pool)
         .await?;

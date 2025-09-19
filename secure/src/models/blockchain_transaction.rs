@@ -8,7 +8,7 @@ use crate::{AppError, Result};
 
 /// Entity type that the transaction is associated with
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "text", rename_all = "lowercase")]
+#[sqlx(type_name = "entity_type", rename_all = "lowercase")]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum EntityType {
     Dataset,
@@ -66,7 +66,7 @@ pub struct BlockchainTransaction {
     pub id: i64,
     pub tx_hash: String,
     pub entity_id: i64,
-    pub entity_type: String,
+    pub entity_type: EntityType,
     pub status: TransactionStatus,
     pub block_number: Option<i64>,
     pub block_timestamp: Option<DateTime<Utc>>,
@@ -86,7 +86,7 @@ impl BlockchainTransaction {
     ) -> Result<Self> {
         sqlx::query!(
             r#"
-            UPDATE blockchain_transaction
+            UPDATE transaction
             SET status = $1, block_number = $2, block_timestamp = $3, updated_at = NOW()
             WHERE tx_hash = $4
             "#,
@@ -116,10 +116,10 @@ impl BlockchainTransaction {
         let transaction = sqlx::query_as!(
             BlockchainTransaction,
             r#"
-            INSERT INTO blockchain_transaction (tx_hash, entity_id, entity_type, status, block_number, block_timestamp)
+            INSERT INTO transaction (tx_hash, entity_id, entity_type, status, block_number, block_timestamp)
             VALUES ($1, $2, $3, $4, $5, $6)
             RETURNING id, tx_hash, entity_id,
-                     entity_type,
+                     entity_type as "entity_type: _",
                      status as "status: _",
                      block_number, block_timestamp,
                      created_at, updated_at
@@ -169,7 +169,7 @@ impl BlockchainTransaction {
     ) -> Result<()> {
         let result = sqlx::query!(
             r#"
-            UPDATE blockchain_transaction
+            UPDATE transaction
             SET status = $1, block_number = $2, block_timestamp = $3, updated_at = NOW()
             WHERE entity_id = $4 AND entity_type = $5
             "#,
@@ -198,11 +198,11 @@ impl BlockchainTransaction {
             Self,
             r#"
             SELECT id, tx_hash, entity_id,
-                   entity_type,
+                   entity_type as "entity_type: _",
                    status as "status: _",
                    block_number, block_timestamp,
                    created_at, updated_at
-            FROM blockchain_transaction
+            FROM transaction
             WHERE tx_hash = $1
             "#,
             tx_hash
@@ -218,22 +218,22 @@ impl BlockchainTransaction {
     pub async fn upsert_for_dataset(pool: &PgPool, tx_hash: &str, dataset_id: i64) -> Result<bool> {
         let result = sqlx::query!(
             r#"
-            INSERT INTO blockchain_transaction (
+            INSERT INTO transaction (
                 tx_hash, entity_id, entity_type, status, created_at, updated_at
             ) VALUES (
                 $1, $2, 'dataset', 'pending', NOW(), NOW()
             )
             ON CONFLICT (tx_hash) DO UPDATE SET
                 entity_id = CASE
-                    WHEN blockchain_transaction.status = 'confirmed' THEN blockchain_transaction.entity_id
+                    WHEN transaction.status = 'confirmed' THEN transaction.entity_id
                     ELSE EXCLUDED.entity_id
                 END,
                 entity_type = CASE
-                    WHEN blockchain_transaction.status = 'confirmed' THEN blockchain_transaction.entity_type
+                    WHEN transaction.status = 'confirmed' THEN transaction.entity_type
                     ELSE EXCLUDED.entity_type
                 END,
                 updated_at = CASE
-                    WHEN blockchain_transaction.status = 'confirmed' THEN blockchain_transaction.updated_at
+                    WHEN transaction.status = 'confirmed' THEN transaction.updated_at
                     ELSE NOW()
                 END
             "#,
@@ -255,22 +255,22 @@ impl BlockchainTransaction {
     ) -> Result<bool> {
         let result = sqlx::query!(
             r#"
-            INSERT INTO blockchain_transaction (
+            INSERT INTO transaction (
                 tx_hash, entity_id, entity_type, status, created_at, updated_at
             ) VALUES (
                 $1, $2, 'execution', 'pending', NOW(), NOW()
             )
             ON CONFLICT (tx_hash) DO UPDATE SET
                 entity_id = CASE
-                    WHEN blockchain_transaction.status = 'confirmed' THEN blockchain_transaction.entity_id
+                    WHEN transaction.status = 'confirmed' THEN transaction.entity_id
                     ELSE EXCLUDED.entity_id
                 END,
                 entity_type = CASE
-                    WHEN blockchain_transaction.status = 'confirmed' THEN blockchain_transaction.entity_type
+                    WHEN transaction.status = 'confirmed' THEN transaction.entity_type
                     ELSE EXCLUDED.entity_type
                 END,
                 updated_at = CASE
-                    WHEN blockchain_transaction.status = 'confirmed' THEN blockchain_transaction.updated_at
+                    WHEN transaction.status = 'confirmed' THEN transaction.updated_at
                     ELSE NOW()
                 END
             "#,
@@ -296,26 +296,26 @@ impl BlockchainTransaction {
     ) -> Result<bool> {
         let result = sqlx::query!(
             r#"
-            INSERT INTO blockchain_transaction (
+            INSERT INTO transaction (
                 tx_hash, entity_id, entity_type, status, block_number, block_timestamp, created_at, updated_at
             ) VALUES (
-                $1, $2, $3::text, $4, $5, $6, NOW(), NOW()
+                $1, $2, $3::entity_type, $4, $5, $6, NOW(), NOW()
             )
             ON CONFLICT (tx_hash) DO UPDATE SET
                 status = CASE
-                    WHEN blockchain_transaction.status = 'confirmed' THEN blockchain_transaction.status
+                    WHEN transaction.status = 'confirmed' THEN transaction.status
                     ELSE EXCLUDED.status
                 END,
                 block_number = CASE
-                    WHEN blockchain_transaction.status = 'confirmed' THEN blockchain_transaction.block_number
+                    WHEN transaction.status = 'confirmed' THEN transaction.block_number
                     ELSE EXCLUDED.block_number
                 END,
                 block_timestamp = CASE
-                    WHEN blockchain_transaction.status = 'confirmed' THEN blockchain_transaction.block_timestamp
+                    WHEN transaction.status = 'confirmed' THEN transaction.block_timestamp
                     ELSE EXCLUDED.block_timestamp
                 END,
                 updated_at = CASE
-                    WHEN blockchain_transaction.status = 'confirmed' THEN blockchain_transaction.updated_at
+                    WHEN transaction.status = 'confirmed' THEN transaction.updated_at
                     ELSE NOW()
                 END
             "#,
@@ -342,11 +342,11 @@ impl BlockchainTransaction {
             Self,
             r#"
             SELECT id, tx_hash, entity_id,
-                   entity_type,
+                   entity_type as "entity_type: _",
                    status as "status: _",
                    block_number, block_timestamp,
                    created_at, updated_at
-            FROM blockchain_transaction
+            FROM transaction
             WHERE entity_id = $1 AND entity_type = $2 AND status = $3
             ORDER BY created_at DESC
             "#,
@@ -369,7 +369,7 @@ impl BlockchainTransaction {
         let count = sqlx::query_scalar!(
             r#"
             SELECT COUNT(*) as "count!"
-            FROM blockchain_transaction
+            FROM transaction
             WHERE entity_id = $1 AND entity_type = $2 AND status = $3
             "#,
             entity_id,
@@ -418,10 +418,10 @@ impl CreateTransaction {
         let transaction = sqlx::query_as!(
             BlockchainTransaction,
             r#"
-            INSERT INTO blockchain_transaction (tx_hash, entity_id, entity_type, status)
+            INSERT INTO transaction (tx_hash, entity_id, entity_type, status)
             VALUES ($1, $2, $3, $4)
             RETURNING id, tx_hash, entity_id,
-                     entity_type,
+                     entity_type as "entity_type: _",
                      status as "status: _",
                      block_number, block_timestamp,
                      created_at, updated_at
@@ -456,10 +456,10 @@ impl Create for BlockchainTransaction {
         let tx = sqlx::query_as!(
             BlockchainTransaction,
             r#"
-            INSERT INTO blockchain_transaction (tx_hash, entity_id, entity_type, status)
+            INSERT INTO transaction (tx_hash, entity_id, entity_type, status)
             VALUES ($1, $2, $3, $4)
             RETURNING id, tx_hash, entity_id,
-                     entity_type,
+                     entity_type as "entity_type: _",
                      status as "status: _",
                      block_number, block_timestamp,
                      created_at, updated_at
@@ -483,11 +483,11 @@ impl BlockchainTransaction {
             Self,
             r#"
             SELECT id, tx_hash, entity_id,
-                   entity_type,
+                   entity_type as "entity_type: _",
                    status as "status: _",
                    block_number, block_timestamp,
                    created_at, updated_at
-            FROM blockchain_transaction
+            FROM transaction
             WHERE status = $1
             ORDER BY created_at ASC
             "#,
@@ -512,12 +512,12 @@ impl BlockchainTransaction {
         let tx = sqlx::query_as!(
             Self,
             r#"
-            INSERT INTO blockchain_transaction (
+            INSERT INTO transaction (
                 tx_hash, entity_id, entity_type, status, created_at, updated_at
             )
-            VALUES ($1, $2, $3::text, $4, NOW(), NOW())
+            VALUES ($1, $2, $3::entity_type, $4, NOW(), NOW())
             RETURNING id, tx_hash, entity_id,
-                     entity_type,
+                     entity_type as "entity_type: _",
                      status as "status: _",
                      block_number, block_timestamp,
                      created_at, updated_at
@@ -548,7 +548,7 @@ impl Default for BlockchainTransaction {
             id: 0,
             tx_hash: String::new(),
             entity_id: 0,
-            entity_type: "execution".to_string(),
+            entity_type: EntityType::Execution,
             status: TransactionStatus::Pending,
             block_number: None,
             block_timestamp: None,
@@ -565,11 +565,11 @@ impl FindById for BlockchainTransaction {
             Self,
             r#"
             SELECT id, tx_hash, entity_id,
-                   entity_type,
+                   entity_type as "entity_type: _",
                    status as "status: _",
                    block_number, block_timestamp,
                    created_at, updated_at
-            FROM blockchain_transaction
+            FROM transaction
             WHERE id = $1
             "#,
             id

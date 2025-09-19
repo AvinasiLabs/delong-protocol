@@ -113,10 +113,10 @@ pub async fn create_app(
     let health_routes = Router::new().route("/health", get(handlers::health::health_check));
 
     // Algorithm execution routes
-    let algo_exe_routes = Router::new()
-        .route("/", post(handlers::submit_algo_exe))
-        .route("/", get(handlers::list_algo_exes))
-        .route("/{id}", get(handlers::get_algo_exe));
+    let execution_routes = Router::new()
+        .route("/", post(handlers::submit_execution))
+        .route("/", get(handlers::list_executions))
+        .route("/{id}", get(handlers::get_execution));
 
     // Dataset routes
     let dataset_routes = Router::new()
@@ -169,7 +169,7 @@ pub async fn create_app(
 
     // Protected API routes (require authentication)
     let api_routes = Router::new()
-        .nest("/algoexes", algo_exe_routes)
+        .nest("/executions", execution_routes)
         .nest("/datasets", dataset_routes)
         .nest("/committee", committee_routes)
         .nest("/votes", vote_routes)

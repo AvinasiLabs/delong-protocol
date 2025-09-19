@@ -6,8 +6,8 @@
 use avinapi::prelude::AppError;
 use axum::{
     body::Body,
-    extract::{OriginalUri, Request},
-    http::{HeaderMap, Method},
+    extract::{FromRequestParts, OriginalUri, Request},
+    http::{request::Parts, HeaderMap, Method},
     middleware::Next,
     response::Response,
 };
@@ -300,6 +300,21 @@ pub struct AuthenticatedUser {
     pub username: String,
     pub avatar_url: Option<String>,
     pub auth_method: String,
+}
+
+impl<S> FromRequestParts<S> for AuthenticatedUser
+where
+    S: Send + Sync,
+{
+    type Rejection = AppError;
+
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        parts
+            .extensions
+            .get::<AuthenticatedUser>()
+            .cloned()
+            .ok_or_else(|| AppError::Authentication("No authentication context found".into()))
+    }
 }
 
 #[cfg(test)]

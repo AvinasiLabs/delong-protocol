@@ -32,7 +32,7 @@ impl DatasetTag {
         let tag = sqlx::query_as!(
             DatasetTag,
             r#"
-            INSERT INTO dataset_tags (dataset_id, tag)
+            INSERT INTO dataset_tag (dataset_id, tag)
             VALUES ($1, $2)
             ON CONFLICT (dataset_id, tag) DO UPDATE
             SET created_at = CURRENT_TIMESTAMP
@@ -60,10 +60,10 @@ impl DatasetTag {
             let dataset_tag = sqlx::query_as!(
                 DatasetTag,
                 r#"
-                INSERT INTO dataset_tags (dataset_id, tag)
+                INSERT INTO dataset_tag (dataset_id, tag)
                 VALUES ($1, $2)
                 ON CONFLICT (dataset_id, tag) DO UPDATE
-                SET created_at = dataset_tags.created_at
+                SET created_at = dataset_tag.created_at
                 RETURNING id, dataset_id, tag, created_at as "created_at!"
                 "#,
                 dataset_id,
@@ -83,7 +83,7 @@ impl DatasetTag {
     pub async fn remove_tag(pool: &PgPool, dataset_id: i64, tag: &str) -> Result<bool> {
         let result = sqlx::query!(
             r#"
-            DELETE FROM dataset_tags
+            DELETE FROM dataset_tag
             WHERE dataset_id = $1 AND tag = $2
             "#,
             dataset_id,
@@ -103,7 +103,7 @@ impl DatasetTag {
 
         let result = sqlx::query!(
             r#"
-            DELETE FROM dataset_tags
+            DELETE FROM dataset_tag
             WHERE dataset_id = $1 AND tag = ANY($2)
             "#,
             dataset_id,
@@ -120,7 +120,7 @@ impl DatasetTag {
         let tags = sqlx::query_scalar!(
             r#"
             SELECT tag
-            FROM dataset_tags
+            FROM dataset_tag
             WHERE dataset_id = $1
             ORDER BY tag
             "#,
@@ -143,7 +143,7 @@ impl DatasetTag {
         let total = sqlx::query_scalar!(
             r#"
             SELECT COUNT(DISTINCT dataset_id) as "count!"
-            FROM dataset_tags
+            FROM dataset_tag
             WHERE tag = $1
             "#,
             tag
@@ -155,7 +155,7 @@ impl DatasetTag {
         let dataset_ids = sqlx::query_scalar!(
             r#"
             SELECT DISTINCT dataset_id
-            FROM dataset_tags
+            FROM dataset_tag
             WHERE tag = $1
             ORDER BY dataset_id DESC
             LIMIT $2 OFFSET $3
@@ -189,7 +189,7 @@ impl DatasetTag {
             SELECT COUNT(*) as "count!"
             FROM (
                 SELECT dataset_id
-                FROM dataset_tags
+                FROM dataset_tag
                 WHERE tag = ANY($1)
                 GROUP BY dataset_id
                 HAVING COUNT(DISTINCT tag) = $2
@@ -205,7 +205,7 @@ impl DatasetTag {
         let dataset_ids = sqlx::query_scalar!(
             r#"
             SELECT dataset_id
-            FROM dataset_tags
+            FROM dataset_tag
             WHERE tag = ANY($1)
             GROUP BY dataset_id
             HAVING COUNT(DISTINCT tag) = $2
@@ -238,7 +238,7 @@ impl DatasetTag {
         let total = sqlx::query_scalar!(
             r#"
             SELECT COUNT(DISTINCT dataset_id) as "count!"
-            FROM dataset_tags
+            FROM dataset_tag
             WHERE tag = ANY($1)
             "#,
             tags
@@ -250,7 +250,7 @@ impl DatasetTag {
         let dataset_ids = sqlx::query_scalar!(
             r#"
             SELECT DISTINCT dataset_id
-            FROM dataset_tags
+            FROM dataset_tag
             WHERE tag = ANY($1)
             ORDER BY dataset_id DESC
             LIMIT $2 OFFSET $3
@@ -273,7 +273,7 @@ impl DatasetTag {
             SELECT
                 tag,
                 COUNT(*) as "count!"
-            FROM dataset_tags
+            FROM dataset_tag
             GROUP BY tag
             ORDER BY COUNT(*) DESC, tag
             "#
@@ -292,7 +292,7 @@ impl DatasetTag {
             SELECT
                 tag,
                 COUNT(*) as "count!"
-            FROM dataset_tags
+            FROM dataset_tag
             GROUP BY tag
             ORDER BY COUNT(*) DESC
             LIMIT $1
@@ -309,7 +309,7 @@ impl DatasetTag {
     pub async fn clear_dataset_tags(pool: &PgPool, dataset_id: i64) -> Result<u64> {
         let result = sqlx::query!(
             r#"
-            DELETE FROM dataset_tags
+            DELETE FROM dataset_tag
             WHERE dataset_id = $1
             "#,
             dataset_id
@@ -331,7 +331,7 @@ impl DatasetTag {
         // Remove all existing tags
         sqlx::query!(
             r#"
-            DELETE FROM dataset_tags
+            DELETE FROM dataset_tag
             WHERE dataset_id = $1
             "#,
             dataset_id
@@ -343,7 +343,7 @@ impl DatasetTag {
         for tag in tags {
             sqlx::query!(
                 r#"
-                INSERT INTO dataset_tags (dataset_id, tag)
+                INSERT INTO dataset_tag (dataset_id, tag)
                 VALUES ($1, $2)
                 "#,
                 dataset_id,

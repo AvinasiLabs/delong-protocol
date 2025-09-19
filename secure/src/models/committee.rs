@@ -11,29 +11,29 @@ use crate::Result;
 
 /// Committee member entity
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
-pub struct CommitteeMember {
+pub struct Committee {
     pub id: i32,
-    pub member_wallet: String,
+    pub wallet: String,
     pub is_approved: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
-impl CommitteeMember {
+impl Committee {
     /// Upsert a committee member (create or update based on wallet)
-    pub async fn upsert(pool: &PgPool, member_wallet: &str, is_approved: bool) -> Result<Self> {
+    pub async fn upsert(pool: &PgPool, wallet: &str, is_approved: bool) -> Result<Self> {
         let member = sqlx::query_as!(
-            CommitteeMember,
+            Committee,
             r#"
-            INSERT INTO committee_member (member_wallet, is_approved)
+            INSERT INTO committee (wallet, is_approved)
             VALUES ($1, $2)
-            ON CONFLICT (member_wallet)
+            ON CONFLICT (wallet)
             DO UPDATE SET
                 is_approved = EXCLUDED.is_approved,
                 updated_at = NOW()
             RETURNING *
             "#,
-            member_wallet,
+            wallet,
             is_approved
         )
         .fetch_one(pool)
@@ -51,8 +51,8 @@ impl CommitteeMember {
         let total = sqlx::query_scalar!(
             r#"
             SELECT COUNT(*) as "count!"
-            FROM committee_member
-            JOIN blockchain_transaction bt ON bt.entity_id = committee_member.id
+            FROM committee
+            JOIN transaction bt ON bt.entity_id = committee.id
             WHERE bt.status = $1 AND bt.entity_type = $2
             "#,
             TransactionStatus::Confirmed as _,
@@ -63,13 +63,13 @@ impl CommitteeMember {
 
         // Get paginated results
         let members = sqlx::query_as!(
-            CommitteeMember,
+            Committee,
             r#"
-            SELECT committee_member.*
-            FROM committee_member
-            JOIN blockchain_transaction bt ON bt.entity_id = committee_member.id
+            SELECT committee.*
+            FROM committee
+            JOIN transaction bt ON bt.entity_id = committee.id
             WHERE bt.status = $1 AND bt.entity_type = $2
-            ORDER BY committee_member.created_at DESC
+            ORDER BY committee.created_at DESC
             LIMIT $3 OFFSET $4
             "#,
             TransactionStatus::Confirmed as _,
@@ -91,12 +91,12 @@ impl CommitteeMember {
     /// Get a confirmed committee member by ID
     pub async fn get_confirmed_by_id(pool: &PgPool, id: i32) -> Result<Option<Self>> {
         let member = sqlx::query_as!(
-            CommitteeMember,
+            Committee,
             r#"
-            SELECT committee_member.*
-            FROM committee_member
-            JOIN blockchain_transaction bt ON bt.entity_id = committee_member.id
-            WHERE bt.status = $1 AND bt.entity_type = $2 AND committee_member.id = $3
+            SELECT committee.*
+            FROM committee
+            JOIN transaction bt ON bt.entity_id = committee.id
+            WHERE bt.status = $1 AND bt.entity_type = $2 AND committee.id = $3
             "#,
             TransactionStatus::Confirmed as _,
             EntityType::Committee as _,
@@ -111,12 +111,12 @@ impl CommitteeMember {
     /// Get a committee member by wallet address
     pub async fn get_by_wallet(pool: &PgPool, wallet: &str) -> Result<Option<Self>> {
         let member = sqlx::query_as!(
-            CommitteeMember,
+            Committee,
             r#"
-            SELECT committee_member.*
-            FROM committee_member
-            JOIN blockchain_transaction bt ON bt.entity_id = committee_member.id
-            WHERE bt.status = $1 AND bt.entity_type = $2 AND committee_member.member_wallet = $3
+            SELECT committee.*
+            FROM committee
+            JOIN transaction bt ON bt.entity_id = committee.id
+            WHERE bt.status = $1 AND bt.entity_type = $2 AND committee.wallet = $3
             "#,
             TransactionStatus::Confirmed as _,
             EntityType::Committee as _,
@@ -129,14 +129,14 @@ impl CommitteeMember {
     }
 
     /// Check if a wallet is a committee member
-    pub async fn is_committee_member(pool: &PgPool, wallet: &str) -> Result<bool> {
+    pub async fn is_committee(pool: &PgPool, wallet: &str) -> Result<bool> {
         let exists = sqlx::query_scalar!(
             r#"
             SELECT EXISTS(
                 SELECT 1
-                FROM committee_member
-                JOIN blockchain_transaction bt ON bt.entity_id = committee_member.id
-                WHERE bt.status = $1 AND bt.entity_type = $2 AND committee_member.member_wallet = $3
+                FROM committee
+                JOIN transaction bt ON bt.entity_id = committee.id
+                WHERE bt.status = $1 AND bt.entity_type = $2 AND committee.wallet = $3
             )
             "#,
             TransactionStatus::Confirmed as _,
@@ -152,9 +152,9 @@ impl CommitteeMember {
     /// Get all approved committee members (regardless of blockchain confirmation)
     pub async fn get_all_approved(pool: &PgPool) -> Result<Vec<Self>> {
         let members = sqlx::query_as!(
-            CommitteeMember,
+            Committee,
             r#"
-            SELECT * FROM committee_member
+            SELECT * FROM committee
             WHERE is_approved = true
             ORDER BY created_at DESC
             "#
@@ -166,7 +166,7 @@ impl CommitteeMember {
     }
 }
 
-impl Timestamped for CommitteeMember {
+impl Timestamped for Committee {
     fn created_at(&self) -> &DateTime<Utc> {
         &self.created_at
     }
@@ -179,23 +179,23 @@ impl Timestamped for CommitteeMember {
 /// Request to create a new committee member
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateCommitteeMemberRequest {
-    pub member_wallet: String,
+    pub wallet: String,
     pub is_approved: bool,
 }
 
 #[async_trait::async_trait]
-impl Create for CommitteeMember {
+impl Create for Committee {
     type Request = CreateCommitteeMemberRequest;
 
     async fn create(pool: &PgPool, request: Self::Request) -> Result<Self> {
         let member = sqlx::query_as!(
-            CommitteeMember,
+            Committee,
             r#"
-            INSERT INTO committee_member (member_wallet, is_approved)
+            INSERT INTO committee (wallet, is_approved)
             VALUES ($1, $2)
             RETURNING *
             "#,
-            &request.member_wallet,
+            &request.wallet,
             request.is_approved
         )
         .fetch_one(pool)
@@ -206,18 +206,14 @@ impl Create for CommitteeMember {
 }
 
 #[async_trait::async_trait]
-impl FindById for CommitteeMember {
+impl FindById for Committee {
     async fn find_by_id(pool: &PgPool, id: i64) -> Result<Option<Self>> {
         // Convert i64 to i32 for committee member IDs
         let id = id as i32;
 
-        let member = sqlx::query_as!(
-            CommitteeMember,
-            "SELECT * FROM committee_member WHERE id = $1",
-            id
-        )
-        .fetch_optional(pool)
-        .await?;
+        let member = sqlx::query_as!(Committee, "SELECT * FROM committee WHERE id = $1", id)
+            .fetch_optional(pool)
+            .await?;
 
         Ok(member)
     }

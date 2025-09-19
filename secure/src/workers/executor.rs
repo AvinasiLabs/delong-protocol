@@ -8,11 +8,8 @@ use crate::{
     config::ExecutorConfig,
     infra::{contracts::ContractCaller, db::Database, TeeCryptoService},
     models::{
-        algo::Algo,
-        algo_exe::{AlgoExe, ExecutionStatus},
+        algorithm_execution::{AlgorithmExecution, ContainerResult, ExecutionContext},
         blockchain_transaction::{BlockchainTransaction, EntityType},
-        data_usage::DataUsage,
-        FindById,
     },
 };
 use alloy::primitives::{Address, U256};
@@ -88,7 +85,7 @@ pub enum ExecutionEvent {
 }
 
 /// Main algorithm executor
-pub struct AlgoExecutor {
+pub struct Executor {
     db: Arc<Database>,
     docker: Docker,
     ipfs_client: Arc<ipfs_api_backend_hyper::IpfsClient>,
@@ -100,7 +97,7 @@ pub struct AlgoExecutor {
     active_executions: Arc<RwLock<HashMap<i64, String>>>, // exe_id -> container_id
 }
 
-impl AlgoExecutor {
+impl Executor {
     /// Create a new algorithm executor
     pub fn new(
         db: Arc<Database>,
@@ -183,7 +180,9 @@ impl AlgoExecutor {
                 self.handle_resolve(exe_id, algo_cid, resolved_at).await;
             }
             ExecutionEvent::Execute { exe_id } => {
-                self.handle_execute(exe_id).await;
+                if let Err(e) = self.execute_task(exe_id).await {
+                    error!("Task execution failed for {}: {:?}", exe_id, e);
+                }
             }
         }
     }
@@ -221,50 +220,80 @@ impl AlgoExecutor {
         }
     }
 
-    /// Handle algorithm execution
-    async fn handle_execute(&self, exe_id: i64) {
-        info!("Starting execution {}", exe_id);
+    /// Execute a task using the new unified model
+    pub async fn execute_task(&self, exe_id: i64) -> Result<()> {
+        info!("Starting execution task {}", exe_id);
+
+        // Load execution context from new model
+        let context = AlgorithmExecution::load_context(&self.db.pool, exe_id).await?;
 
         // Update status to running
-        if let Err(e) =
-            AlgoExe::update_status(&self.db.pool, exe_id, ExecutionStatus::Running).await
-        {
-            error!("Failed to update status to running: {:?}", e);
-            return;
-        }
+        AlgorithmExecution::update_status(&self.db.pool, exe_id, "running").await?;
 
-        // Execute the algorithm
-        match self.execute_algorithm(exe_id).await {
-            Ok((output, error, success)) => {
-                self.handle_completion(exe_id, success, output, error).await;
-            }
+        // Execute the algorithm and record results
+        let result = match self.run_algorithm_execution(&context).await {
+            Ok(container_result) => container_result,
             Err(e) => {
                 error!("Execution {} failed: {:?}", exe_id, e);
-                // Try to get more details about the error
-                if let ExecutorError::Docker(ref docker_err) = e {
-                    error!("Docker error details: {}", docker_err);
+                // Convert error to ContainerResult
+                match e {
+                    ExecutorError::Timeout => ContainerResult::Timeout,
+                    _ => ContainerResult::Failed {
+                        error: format!("{:?}", e),
+                        exit_code: -1,
+                    },
                 }
-                self.handle_error(exe_id, e).await;
+            }
+        };
+
+        // Start database transaction to record results and blockchain interaction
+        let mut tx = self.db.pool.begin().await?;
+
+        // Record execution result to database
+        AlgorithmExecution::record_result(&mut tx, exe_id, result.clone()).await?;
+
+        // Record execution on blockchain for ALL executions (not just successful ones)
+        let blockchain_result = self.record_execution(&context, &result).await;
+
+        // Handle blockchain recording result
+        match blockchain_result {
+            Ok(tx_hash) => {
+                // Create blockchain transaction record
+                BlockchainTransaction::create(
+                    &mut tx,
+                    tx_hash,
+                    exe_id,
+                    EntityType::Execution, // Use 'execution' as entity type
+                    crate::models::blockchain_transaction::TransactionStatus::Pending,
+                )
+                .await?;
+
+                info!("Execution {} completed and recorded on blockchain", exe_id);
+            }
+            Err(e) => {
+                error!(
+                    "Failed to record execution {} on blockchain: {:?}",
+                    exe_id, e
+                );
+                // Still commit the database changes even if blockchain recording fails
             }
         }
+
+        // Commit database transaction
+        tx.commit().await?;
+
+        Ok(())
     }
 
-    /// Execute an algorithm
-    async fn execute_algorithm(&self, exe_id: i64) -> Result<(Vec<u8>, Vec<u8>, bool)> {
-        // Get execution details
-        let execution = AlgoExe::find_by_id(&self.db.pool, exe_id)
-            .await?
-            .ok_or_else(|| ExecutorError::NotFound(format!("Execution {} not found", exe_id)))?;
+/// Execute algorithm using new unified model with parallel downloads
+    async fn run_algorithm_execution(&self, context: &ExecutionContext) -> Result<ContainerResult> {
+        info!("Running algorithm execution for context: {:?}", context.id);
 
-        // Get algorithm details
-        let algo = Algo::find_by_id(&self.db.pool, execution.algo_id)
-            .await?
-            .ok_or_else(|| {
-                ExecutorError::NotFound(format!("Algorithm {} not found", execution.algo_id))
-            })?;
-
-        // Download and extract algorithm from IPFS
-        let work_dir = self.download_and_extract(&algo.cid).await?;
+        // Perform parallel downloads of algorithm and dataset
+        let (work_dir, dataset_path) = tokio::try_join!(
+            self.download_and_extract(&context.algo_cid),
+            self.prepare_dataset_parallel(&context.dataset_name)
+        )?;
 
         // Verify Dockerfile exists
         let dockerfile_path = work_dir.join("Dockerfile");
@@ -290,19 +319,15 @@ impl AlgoExecutor {
         info!("Found Dockerfile, proceeding with build");
 
         // Build Docker image
-        let image_name = format!("delong-algo-{}", exe_id);
+        let image_name = format!("delong-algo-{}", context.id);
         self.build_docker_image(&work_dir, &image_name).await?;
 
-        // Prepare dataset path
-        let dataset_path = self.prepare_dataset(&execution.used_dataset).await?;
-
-        // Run container
+        // Run container and convert result to ContainerResult
         let (output, error, success) = self
-            .run_container(&image_name, exe_id, dataset_path)
+            .run_container(&image_name, context.id, dataset_path)
             .await?;
 
-        // Cleanup work directory - need to clean the entire temp structure
-        // work_dir points to the extracted content, but we need to clean the parent temp directory
+        // Cleanup work directory
         if let Some(parent) = work_dir.parent() {
             if parent.to_string_lossy().contains("delong-algo-") {
                 if let Err(e) = fs::remove_dir_all(parent).await {
@@ -310,13 +335,23 @@ impl AlgoExecutor {
                 }
             }
         } else {
-            // Fallback to cleaning just the work_dir
             if let Err(e) = fs::remove_dir_all(&work_dir).await {
                 warn!("Failed to cleanup work directory: {:?}", e);
             }
         }
 
-        Ok((output, error, success))
+        // Convert to ContainerResult
+        if success {
+            Ok(ContainerResult::Success {
+                output: String::from_utf8_lossy(&output).to_string(),
+                exit_code: 0,
+            })
+        } else {
+            Ok(ContainerResult::Failed {
+                error: String::from_utf8_lossy(&error).to_string(),
+                exit_code: 1,
+            })
+        }
     }
 
     /// Download and extract algorithm from IPFS
@@ -477,6 +512,11 @@ impl AlgoExecutor {
         Ok(tar_data)
     }
 
+    /// Prepare dataset for parallel execution by downloading from IPFS to local directory
+    async fn prepare_dataset_parallel(&self, dataset_name: &str) -> Result<PathBuf> {
+        self.prepare_dataset(dataset_name).await
+    }
+
     /// Prepare dataset for execution by downloading from IPFS to local directory
     async fn prepare_dataset(&self, dataset_name: &str) -> Result<PathBuf> {
         // Find dataset in database
@@ -494,21 +534,6 @@ impl AlgoExecutor {
         let safe_dirname = dataset_name.replace('/', "-");
         let dataset_folder = dataset_dir.join(&safe_dirname);
 
-        // Check if the path exists as a file (from old code version)
-        // If it's a file, we need to remove it and create a directory instead
-        if dataset_folder.exists() && dataset_folder.is_file() {
-            warn!(
-                "Found dataset as file instead of directory (legacy format), removing: {:?}",
-                dataset_folder
-            );
-            fs::remove_file(&dataset_folder).await.map_err(|e| {
-                error!(
-                    "Failed to remove legacy dataset file: {:?}, error: {}",
-                    dataset_folder, e
-                );
-                e
-            })?;
-        }
 
         // Define the CSV file path within the directory
         let dataset_file = dataset_folder.join(format!("{}.csv", safe_dirname));
@@ -540,7 +565,7 @@ impl AlgoExecutor {
             .map_err(|e| ExecutorError::Ipfs(format!("Failed to download from IPFS: {}", e)))?;
 
         // Decrypt the dataset using the universal TEE key
-        info!("Decrypting dataset with universal TEE key");
+        info!("Decrypting dataset with UNIVERSAL_DATASET_KEY");
         let dataset_key_id = "UNIVERSAL_DATASET_KEY";
         let decrypted_data = self
             .tee_crypto
@@ -733,147 +758,63 @@ impl AlgoExecutor {
         }
     }
 
-    /// Handle successful completion
-    async fn handle_completion(&self, exe_id: i64, success: bool, output: Vec<u8>, error: Vec<u8>) {
-        info!(
-            "Execution {} completed: success={}, output_len={}, error_len={}",
-            exe_id,
-            success,
-            output.len(),
-            error.len()
-        );
+    /// Record execution on blockchain using unified model
+    async fn record_execution(
+        &self,
+        context: &ExecutionContext,
+        result: &ContainerResult,
+    ) -> Result<String> {
+        // Determine if execution was successful
+        let execution_success = matches!(result, ContainerResult::Success { .. });
 
-        let status = if success {
-            ExecutionStatus::Completed
-        } else {
-            ExecutionStatus::Failed
-        };
-
-        // Update execution status
-        if let Err(e) = AlgoExe::update_status(&self.db.pool, exe_id, status).await {
-            error!("Failed to update execution status: {:?}", e);
-            return;
-        }
-
-        // Update execution result
-        let output_str = String::from_utf8_lossy(&output);
-        let error_str = if !error.is_empty() {
-            Some(String::from_utf8_lossy(&error).to_string())
-        } else {
-            None
-        };
-
-        if let Err(e) =
-            AlgoExe::update_completed(&self.db.pool, exe_id, output_str.to_string(), error_str)
-                .await
-        {
-            error!("Failed to update execution result: {:?}", e);
-            return;
-        }
-
-        // Record data usage if successful
-        if success {
-            if let Err(e) = self.record_data_usage(exe_id).await {
-                error!("Failed to record data usage: {:?}", e);
-            }
-        }
-    }
-
-    /// Handle execution error
-    async fn handle_error(&self, exe_id: i64, error: ExecutorError) {
-        error!("Execution {} failed with error: {:?}", exe_id, error);
-
-        // Update status to failed
-        if let Err(e) = AlgoExe::update_status(&self.db.pool, exe_id, ExecutionStatus::Failed).await
-        {
-            error!("Failed to update execution status: {:?}", e);
-        }
-
-        // Store error message
-        let error_msg = format!("Execution failed: {:?}", error);
-        if let Err(e) =
-            AlgoExe::update_completed(&self.db.pool, exe_id, String::new(), Some(error_msg)).await
-        {
-            error!("Failed to update execution error: {:?}", e);
-        }
-    }
-
-    /// Record data usage on blockchain
-    async fn record_data_usage(&self, exe_id: i64) -> Result<()> {
-        // Get execution details
-        let execution = AlgoExe::find_by_id(&self.db.pool, exe_id)
-            .await?
-            .ok_or_else(|| ExecutorError::NotFound(format!("Execution {} not found", exe_id)))?;
-
-        // Get algorithm details
-        let algo = Algo::find_by_id(&self.db.pool, execution.algo_id)
-            .await?
-            .ok_or_else(|| {
-                ExecutorError::NotFound(format!("Algorithm {} not found", execution.algo_id))
-            })?;
-
-        // Start database transaction
-        let mut tx = self.db.pool.begin().await?;
-
-        // Create data usage record
-        let usage = DataUsage::create_with_tx(
-            &mut tx,
-            execution.scientist_wallet.clone(),
-            algo.cid.clone(),
-            execution.used_dataset.clone(),
-            Utc::now(),
-            None,                          // user_id
-            Some(algo.name.clone()),       // algo_name
-            Some("completed".to_string()), // execution_status
-            None,                          // runtime_seconds - will be calculated later
-            None,                          // records_processed
-        )
-        .await?;
-
-        // Record on blockchain
-        let scientist_address = execution
-            .scientist_wallet
+        // Get scientist wallet address
+        let scientist_address = context
+            .wallet
             .parse::<Address>()
             .map_err(|e| ExecutorError::ContainerFailed(format!("Invalid address: {}", e)))?;
 
-        // Look up the dataset to get its ID
-        let dataset =
-            crate::models::dataset::Dataset::find_by_name(&self.db.pool, &execution.used_dataset)
-                .await?
-                .ok_or_else(|| {
-                    ExecutorError::NotFound(format!("Dataset {} not found", execution.used_dataset))
-                })?;
+        // Get dataset ID - if we have it in context, use it; otherwise look it up
+        let dataset_id = if let Some(id) = context.dataset_id {
+            U256::from(id as u64)
+        } else {
+            // Look up dataset to get its ID
+            let dataset =
+                crate::models::dataset::Dataset::find_by_name(&self.db.pool, &context.dataset_name)
+                    .await?
+                    .ok_or_else(|| {
+                        ExecutorError::NotFound(format!(
+                            "Dataset {} not found",
+                            context.dataset_name
+                        ))
+                    })?;
+            U256::from(dataset.id as u64)
+        };
 
+        // Record execution on blockchain
+        let execution_id = U256::from(context.id as u64);
+        let dataset_cid = context.dataset_cid.clone().unwrap_or_else(|| {
+            // Fallback to empty string if dataset CID is not available
+            String::new()
+        });
         let tx_hash = self
             .contract_caller
-            .record_data_usage(
+            .record_execution(
+                execution_id,
                 scientist_address,
-                algo.cid.clone(),
-                U256::from(dataset.id as u64),
-                execution.used_dataset.clone(),
+                context.algo_cid.clone(),
+                dataset_id,
+                dataset_cid,
+                execution_success,
             )
             .await
             .map_err(|e| ExecutorError::ContainerFailed(format!("Contract call failed: {}", e)))?;
 
-        // Create transaction record
-        BlockchainTransaction::create(
-            &mut tx,
-            tx_hash.clone(),
-            usage.id,
-            EntityType::DataUsage,
-            crate::models::blockchain_transaction::TransactionStatus::Pending,
-        )
-        .await?;
-
-        // Commit transaction
-        tx.commit().await.map_err(|e| ExecutorError::Database(e))?;
-
         info!(
-            "Recorded data usage for execution {}, tx: {}",
-            exe_id, tx_hash
+            "Recorded execution for context {}: algo_cid={}, success={}, tx={}",
+            context.id, context.algo_cid, execution_success, tx_hash
         );
 
-        Ok(())
+        Ok(tx_hash)
     }
 
     /// Get active execution count
@@ -889,8 +830,8 @@ pub async fn create_executor_service(
     contract_caller: Arc<ContractCaller>,
     tee_crypto: Arc<TeeCryptoService>,
     config: ExecutorConfig,
-) -> Result<Arc<AlgoExecutor>> {
-    let executor = Arc::new(AlgoExecutor::new(
+) -> Result<Arc<Executor>> {
+    let executor = Arc::new(Executor::new(
         db,
         ipfs_client,
         contract_caller,

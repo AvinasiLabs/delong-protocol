@@ -1,4 +1,4 @@
-pub mod algo_exe;
+pub mod algorithm_execution;
 pub mod committee;
 pub mod contract;
 pub mod dataset;
@@ -8,7 +8,7 @@ pub mod vote;
 pub mod websocket;
 
 // Re-export handler functions for convenience
-pub use algo_exe::{get_algo_exe, list_algo_exes, submit_algo_exe};
+pub use algorithm_execution::{get_execution, list_executions, submit_execution};
 pub use committee::{
     get_committee_member, is_committee_member, list_committee_members, set_committee_member,
 };

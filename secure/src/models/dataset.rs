@@ -20,7 +20,7 @@ pub struct Dataset {
     pub file_size: i64,
     pub file_format: String,
     pub author: Option<String>,
-    pub author_wallet: String,
+    pub wallet: String,
     pub sample_url: Option<String>,
     pub file_path: Option<String>,
     // New fields from migration
@@ -57,7 +57,7 @@ pub struct CreateDatasetRequest {
     pub file_size: i64,
     pub file_format: String,
     pub author: Option<String>,
-    pub author_wallet: String,
+    pub wallet: String,
     pub sample_url: Option<String>,
     pub file_path: Option<String>,
     // New fields from migration
@@ -82,7 +82,7 @@ impl Dataset {
             r#"
             SELECT COUNT(*) as "count!"
             FROM dataset
-            JOIN blockchain_transaction bt
+            JOIN transaction bt
             ON bt.entity_id = dataset.id
                AND bt.status = $1
                AND bt.entity_type = $2
@@ -99,7 +99,7 @@ impl Dataset {
             r#"
             SELECT dataset.id, dataset.name, dataset.ui_name, dataset."desc",
                    dataset.file_hash, dataset.ipfs_cid, dataset.file_size,
-                   dataset.file_format, dataset.author, dataset.author_wallet,
+                   dataset.file_format, dataset.author, dataset.wallet,
                    dataset.sample_url, dataset.file_path,
                    dataset.author_id, dataset.is_encrypted, dataset.slug,
                    dataset.license, dataset.thumbnail_url,
@@ -107,7 +107,7 @@ impl Dataset {
                    COALESCE(dataset.views_count, 0) as "views_count!",
                    dataset.created_at, dataset.updated_at
             FROM dataset
-            JOIN blockchain_transaction bt
+            JOIN transaction bt
             ON bt.entity_id = dataset.id
                AND bt.status = $1
                AND bt.entity_type = $2
@@ -131,7 +131,7 @@ impl Dataset {
             Dataset,
             r#"
             SELECT id, name, ui_name, "desc", file_hash, ipfs_cid, file_size,
-                   file_format, author, author_wallet, sample_url, file_path,
+                   file_format, author, wallet, sample_url, file_path,
                    author_id, is_encrypted, slug, license,
                    thumbnail_url, version, detailed_desc,
                    COALESCE(views_count, 0) as "views_count!",
@@ -153,7 +153,7 @@ impl Dataset {
             Dataset,
             r#"
             SELECT id, name, ui_name, "desc", file_hash, ipfs_cid, file_size,
-                   file_format, author, author_wallet, sample_url, file_path,
+                   file_format, author, wallet, sample_url, file_path,
                    author_id, is_encrypted, slug, license,
                    thumbnail_url, version, detailed_desc,
                    COALESCE(views_count, 0) as "views_count!",
@@ -176,7 +176,7 @@ impl Dataset {
             r#"
             SELECT dataset.id, dataset.name, dataset.ui_name, dataset."desc",
                    dataset.file_hash, dataset.ipfs_cid, dataset.file_size,
-                   dataset.file_format, dataset.author, dataset.author_wallet,
+                   dataset.file_format, dataset.author, dataset.wallet,
                    dataset.sample_url, dataset.file_path,
                    dataset.author_id, dataset.is_encrypted, dataset.slug,
                    dataset.license, dataset.thumbnail_url,
@@ -184,7 +184,7 @@ impl Dataset {
                    COALESCE(dataset.views_count, 0) as "views_count!",
                    dataset.created_at, dataset.updated_at
             FROM dataset
-            JOIN blockchain_transaction bt
+            JOIN transaction bt
             ON bt.entity_id = dataset.id
                AND bt.status = $1
                AND bt.entity_type = $2
@@ -215,7 +215,7 @@ impl Dataset {
             SET ui_name = $1, name = $2, "desc" = $3, updated_at = NOW()
             WHERE id = $4
             RETURNING id, name, ui_name, "desc", file_hash, ipfs_cid, file_size,
-                      file_format, author, author_wallet, sample_url, file_path,
+                      file_format, author, wallet, sample_url, file_path,
                       author_id, is_encrypted, slug, license,
                       thumbnail_url, version, detailed_desc,
                       COALESCE(views_count, 0) as "views_count!",
@@ -267,7 +267,7 @@ impl Dataset {
             file_size: self.file_size as u64,
             file_format: self.file_format.clone(),
             author: self.author.clone(),
-            author_wallet: self.author_wallet.clone(),
+            wallet: self.wallet.clone(),
             sample_url: self.sample_url.clone(),
             file_path: self.file_path.clone(),
             author_id: self.author_id.map(|id| id as u64),
@@ -294,7 +294,7 @@ impl Dataset {
             r#"
             SELECT
                 d.id, d.name, d.ui_name, d."desc", d.file_hash, d.ipfs_cid,
-                d.file_size, d.file_format, d.author, d.author_wallet,
+                d.file_size, d.file_format, d.author, d.wallet,
                 d.sample_url, d.file_path, d.author_id, d.is_encrypted,
                 d.slug, d.license, d.thumbnail_url,
                 d.version, d.detailed_desc, COALESCE(d.views_count, 0) as "views_count!",
@@ -304,7 +304,7 @@ impl Dataset {
                 bt.block_number as "block_number?",
                 bt.created_at as "tx_created_at?"
             FROM dataset d
-            LEFT JOIN blockchain_transaction bt
+            LEFT JOIN transaction bt
                 ON bt.entity_id = d.id AND bt.entity_type = 'dataset'
             WHERE d.file_hash = $1
             ORDER BY bt.created_at DESC
@@ -326,7 +326,7 @@ impl Dataset {
                 file_size: r.file_size,
                 file_format: r.file_format,
                 author: r.author,
-                author_wallet: r.author_wallet,
+                wallet: r.wallet,
                 sample_url: r.sample_url,
                 file_path: r.file_path,
                 author_id: r.author_id,
@@ -370,7 +370,7 @@ impl Dataset {
             WHERE id IN (
                 SELECT d.id
                 FROM dataset d
-                LEFT JOIN blockchain_transaction bt
+                LEFT JOIN transaction bt
                     ON bt.entity_id = d.id AND bt.entity_type = 'dataset'
                 WHERE (bt.status = 'pending' OR bt.status IS NULL)
                     AND d.created_at < NOW() - make_interval(hours => $1)
@@ -395,13 +395,13 @@ impl Create for Dataset {
             r#"
             INSERT INTO dataset (
                 name, ui_name, "desc", file_hash, ipfs_cid, file_size,
-                file_format, author, author_wallet, sample_url, file_path,
+                file_format, author, wallet, sample_url, file_path,
                 author_id, is_encrypted, slug, license,
                 thumbnail_url, version, detailed_desc
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
             RETURNING id, name, ui_name, "desc", file_hash, ipfs_cid, file_size,
-                      file_format, author, author_wallet, sample_url, file_path,
+                      file_format, author, wallet, sample_url, file_path,
                       author_id, is_encrypted, slug, license,
                       thumbnail_url, version, detailed_desc,
                       COALESCE(views_count, 0) as "views_count!",
@@ -415,7 +415,7 @@ impl Create for Dataset {
             request.file_size,
             &request.file_format,
             request.author.as_deref(),
-            &request.author_wallet,
+            &request.wallet,
             request.sample_url.as_deref(),
             request.file_path.as_deref(),
             request.author_id,
@@ -471,7 +471,7 @@ impl FindById for Dataset {
             Dataset,
             r#"
             SELECT id, name, ui_name, "desc", file_hash, ipfs_cid, file_size,
-                   file_format, author, author_wallet, sample_url, file_path,
+                   file_format, author, wallet, sample_url, file_path,
                    author_id, is_encrypted, slug, license,
                    thumbnail_url, version, detailed_desc,
                    COALESCE(views_count, 0) as "views_count!",
@@ -495,7 +495,7 @@ impl Dataset {
             Dataset,
             r#"
             SELECT id, name, ui_name, "desc", file_hash, ipfs_cid, file_size,
-                   file_format, author, author_wallet, sample_url, file_path,
+                   file_format, author, wallet, sample_url, file_path,
                    author_id, is_encrypted, slug, license,
                    thumbnail_url, version, detailed_desc,
                    COALESCE(views_count, 0) as "views_count!",
@@ -519,15 +519,15 @@ impl Dataset {
             WITH usage_stats AS (
                 SELECT
                     d.id,
-                    COUNT(DISTINCT du.id) as usage_count
+                    COUNT(DISTINCT ae.id) as usage_count
                 FROM dataset d
-                LEFT JOIN data_usage du ON du.dataset = d.name
-                WHERE du.execution_status = 'completed'
-                    AND du.used_at > NOW() - INTERVAL '30 days'
+                LEFT JOIN algorithm_execution ae ON ae.dataset_name = d.name
+                WHERE ae.execution_status = 'completed'
+                    AND ae.used_at > NOW() - INTERVAL '30 days'
                 GROUP BY d.id
             )
             SELECT d.id, d.name, d.ui_name, d."desc", d.file_hash, d.ipfs_cid,
-                   d.file_size, d.file_format, d.author, d.author_wallet,
+                   d.file_size, d.file_format, d.author, d.wallet,
                    d.sample_url, d.file_path, d.author_id, d.is_encrypted,
                    d.slug, d.license, d.thumbnail_url,
                    d.version, d.detailed_desc, COALESCE(d.views_count, 0) as "views_count!",
@@ -551,7 +551,7 @@ impl Dataset {
             Dataset,
             r#"
             SELECT id, name, ui_name, "desc", file_hash, ipfs_cid, file_size,
-                   file_format, author, author_wallet, sample_url, file_path,
+                   file_format, author, wallet, sample_url, file_path,
                    author_id, is_encrypted, slug, license,
                    thumbnail_url, version, detailed_desc,
                    COALESCE(views_count, 0) as "views_count!",
@@ -615,7 +615,7 @@ impl Dataset {
             Dataset,
             r#"
             SELECT id, name, ui_name, "desc", file_hash, ipfs_cid, file_size,
-                   file_format, author, author_wallet, sample_url, file_path,
+                   file_format, author, wallet, sample_url, file_path,
                    author_id, is_encrypted, slug, license,
                    thumbnail_url, version, detailed_desc,
                    COALESCE(views_count, 0) as "views_count!",
@@ -668,13 +668,13 @@ impl Dataset {
             Dataset,
             r#"
             SELECT DISTINCT ON (d.id) d.id, d.name, d.ui_name, d."desc", d.file_hash, d.ipfs_cid,
-                   d.file_size, d.file_format, d.author, d.author_wallet, d.sample_url,
+                   d.file_size, d.file_format, d.author, d.wallet, d.sample_url,
                    d.file_path, d.author_id, d.is_encrypted, d.slug, d.license,
                    d.thumbnail_url, d.version, d.detailed_desc,
                    COALESCE(d.views_count, 0) as "views_count!",
                    d.created_at, d.updated_at
             FROM dataset d
-            JOIN dataset_tags dt ON d.id = dt.dataset_id
+            JOIN dataset_tag dt ON d.id = dt.dataset_id
             WHERE dt.tag = ANY($1)
             ORDER BY d.id, d.views_count DESC, d.created_at DESC
             "#,
@@ -697,7 +697,7 @@ impl Dataset {
             Dataset,
             r#"
             SELECT d.id, d.name, d.ui_name, d."desc", d.file_hash, d.ipfs_cid,
-                   d.file_size, d.file_format, d.author, d.author_wallet, d.sample_url,
+                   d.file_size, d.file_format, d.author, d.wallet, d.sample_url,
                    d.file_path, d.author_id, d.is_encrypted, d.slug, d.license,
                    d.thumbnail_url, d.version, d.detailed_desc,
                    COALESCE(d.views_count, 0) as "views_count!",
@@ -705,7 +705,7 @@ impl Dataset {
             FROM dataset d
             WHERE d.id IN (
                 SELECT dataset_id
-                FROM dataset_tags
+                FROM dataset_tag
                 WHERE tag = ANY($1)
                 GROUP BY dataset_id
                 HAVING COUNT(DISTINCT tag) = $2

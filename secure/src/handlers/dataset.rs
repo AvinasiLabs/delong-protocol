@@ -15,9 +15,9 @@ use validator::Validate;
 use crate::{
     middleware::AuthenticatedUser,
     models::{
-        blockchain_transaction::{BlockchainTransaction, TransactionStatus},
+        blockchain_transaction::{BlockchainTransaction, EntityType, TransactionStatus},
         dataset::{CreateDatasetRequest, Dataset},
-        dataset_tags::DatasetTag,
+        dataset_tag::DatasetTag,
         Create, FindById,
     },
     routes::AppState,
@@ -36,7 +36,7 @@ pub struct DatasetResponse {
     pub file_size: u64,
     pub file_format: String,
     pub author: Option<String>,
-    pub author_wallet: String,
+    pub wallet: String,
     pub author_avatar: Option<String>, // ADD avatar URL
     pub sample_url: Option<String>,
     pub file_path: Option<String>,
@@ -84,9 +84,8 @@ pub struct UpdateDatasetRequest {
 pub struct SearchDatasetQuery {
     pub q: Option<String>,
     pub category: Option<String>,
-    pub tags: Option<Vec<String>>,
-    #[serde(flatten)]
-    pub pagination: PaginationQuery,
+    pub tag: Option<String>,        // Single tag parameter
+    pub tags: Option<Vec<String>>,  // Multiple tags parameter
 }
 
 /// Form data for creating dataset with file handling
@@ -103,7 +102,7 @@ pub struct CreateDatasetForm {
         path = "crate::ETHEREUM_ADDRESS_REGEX",
         message = "Invalid Ethereum address format. Expected: '0x' followed by 40 hexadecimal characters (e.g., 0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb9)"
     ))]
-    pub author_wallet: String,
+    pub wallet: String,
     pub ui_name: String,
     pub desc: Option<String>,
     pub file_format: String,
@@ -253,13 +252,13 @@ pub async fn create_dataset(
                 );
 
                 // Parse author wallet address
-                let author_address = Address::from_str(&existing_dataset.dataset.author_wallet)
+                let author_address = Address::from_str(&existing_dataset.dataset.wallet)
                     .map_err(|e| AppError::Validation(format!("Invalid wallet address: {}", e)))?;
 
                 // Retry submission to blockchain
                 let tx_hash = match state
                     .contract_caller
-                    .register_data(
+                    .register_dataset(
                         author_address,
                         existing_dataset.dataset.ipfs_cid.clone(),
                         U256::from(existing_dataset.dataset.id as u64),
@@ -294,7 +293,7 @@ pub async fn create_dataset(
                     existing_dataset.dataset.id, tx_hash
                 );
 
-                // Create/update blockchain_transaction record
+                // Create/update transaction record
                 BlockchainTransaction::upsert_for_dataset(
                     state.db.pool(),
                     &tx_hash,
@@ -306,7 +305,7 @@ pub async fn create_dataset(
                 let pending_tx = PendingTransaction {
                     tx_hash: tx_hash.clone(),
                     entity_id: existing_dataset.dataset.id,
-                    entity_type: "dataset".to_string(),
+                    entity_type: EntityType::Dataset,
                     nonce: 0, // TODO: Get actual nonce from transaction
                     created_at: Utc::now(),
                 };
@@ -333,7 +332,7 @@ pub async fn create_dataset(
                     file_size: existing_data.file_size as u64,
                     file_format: existing_data.file_format,
                     author: existing_data.author,
-                    author_wallet: existing_data.author_wallet,
+                    wallet: existing_data.wallet,
                     sample_url: existing_data.sample_url,
                     file_path: existing_data.file_path,
                     author_id: existing_data.author_id.map(|id| id as u64),
@@ -363,12 +362,12 @@ pub async fn create_dataset(
         ipfs_cid: ipfs_cid.clone(),
         file_size: file_bytes.len() as i64,
         file_format: form_data.file_format,
-        author: Some(auth.username.clone()),  // Use username from auth context
-        author_wallet: form_data.author_wallet.clone(),
+        author: Some(auth.username.clone()), // Use username from auth context
+        wallet: form_data.wallet.clone(),
         sample_url,
         file_path,
         // New fields from migration
-        author_id: auth.user_id.parse::<i64>().ok(),  // Parse user_id from auth context
+        author_id: auth.user_id.parse::<i64>().ok(), // Parse user_id from auth context
         is_encrypted: form_data.is_encrypted,
         slug: form_data.slug,
         license: form_data.license,
@@ -392,13 +391,13 @@ pub async fn create_dataset(
     }
 
     // Parse author wallet address
-    let author_address = Address::from_str(&dataset.author_wallet)
+    let author_address = Address::from_str(&dataset.wallet)
         .map_err(|e| AppError::Validation(format!("Invalid wallet address: {}", e)))?;
 
     // Submit to blockchain
     let tx_hash = match state
         .contract_caller
-        .register_data(
+        .register_dataset(
             author_address,
             dataset.ipfs_cid.clone(),
             U256::from(dataset.id as u64),
@@ -450,7 +449,7 @@ pub async fn create_dataset(
     let pending_tx = PendingTransaction {
         tx_hash: tx_hash.clone(),
         entity_id: dataset.id,
-        entity_type: "dataset".to_string(),
+        entity_type: EntityType::Dataset,
         nonce: 0, // TODO: Get actual nonce from transaction
         created_at: Utc::now(),
     };
@@ -479,7 +478,7 @@ pub async fn create_dataset(
         file_size: dataset.file_size as u64,
         file_format: dataset.file_format,
         author: dataset.author,
-        author_wallet: dataset.author_wallet,
+        wallet: dataset.wallet,
         author_avatar: auth.avatar_url.clone(),
         sample_url: dataset.sample_url,
         file_path: dataset.file_path,
@@ -596,7 +595,7 @@ pub async fn get_dataset_status(
     let tx_status = sqlx::query!(
         r#"
         SELECT status as "status: TransactionStatus", tx_hash, block_number, created_at, updated_at
-        FROM blockchain_transaction
+        FROM transaction
         WHERE entity_id = $1 AND entity_type = 'dataset'
         ORDER BY created_at DESC
         LIMIT 1
@@ -670,25 +669,45 @@ pub async fn get_trending_datasets(
 pub async fn search_datasets(
     State(state): State<AppState>,
     ValidatedQuery(query): ValidatedQuery<SearchDatasetQuery>,
+    ValidatedQuery(pagination): ValidatedQuery<PaginationQuery>,
 ) -> PaginatedResult<DatasetResponse> {
+    // Combine tag and tags parameters
+    let all_tags = match (&query.tag, &query.tags) {
+        (Some(single_tag), Some(multi_tags)) => {
+            // If both are provided, combine them
+            let mut combined = vec![single_tag.clone()];
+            combined.extend(multi_tags.clone());
+            Some(combined)
+        }
+        (Some(single_tag), None) => {
+            // Only single tag provided
+            Some(vec![single_tag.clone()])
+        }
+        (None, Some(multi_tags)) => {
+            // Only multiple tags provided
+            Some(multi_tags.clone())
+        }
+        (None, None) => None,
+    };
+
     let (datasets, total) = if let Some(keyword) = &query.q {
         Dataset::search(
             state.db.pool(),
             keyword,
-            query.pagination.page,
-            query.pagination.per_page,
+            pagination.page,
+            pagination.per_page,
         )
         .await?
     } else if let Some(_category) = &query.category {
         // Category field is deprecated, return empty result
         (vec![], 0)
-    } else if let Some(tags) = &query.tags {
+    } else if let Some(tags) = all_tags {
         // Find datasets by tags
         let (dataset_ids, count) = DatasetTag::find_datasets_by_tags_all(
             state.db.pool(),
-            tags,
-            query.pagination.page,
-            query.pagination.per_page,
+            &tags,
+            pagination.page,
+            pagination.per_page,
         )
         .await?;
 
@@ -702,8 +721,8 @@ pub async fn search_datasets(
     } else {
         Dataset::find_all_confirmed(
             state.db.pool(),
-            query.pagination.page,
-            query.pagination.per_page,
+            pagination.page,
+            pagination.per_page,
         )
         .await?
     };
@@ -716,8 +735,8 @@ pub async fn search_datasets(
     avinapi::paginated!(
         items,
         total,
-        query.pagination.page,
-        query.pagination.per_page
+        pagination.page,
+        pagination.per_page
     )
 }
 
@@ -849,19 +868,19 @@ pub async fn get_dataset_usage(
     let usage_history = sqlx::query!(
         r#"
         SELECT
-            du.id,
-            du.dataset,
-            du.algo_name,
-            du.scientist_wallet,
-            du.used_at,
-            du.execution_status,
-            du.runtime_seconds,
-            du.records_processed,
-            du.user_id
-        FROM data_usage du
-        LEFT JOIN dataset d ON d.name = du.dataset
+            ae.id,
+            ae.dataset_name as dataset,
+            ae.algo_name,
+            ae.wallet as scientist_wallet,
+            ae.used_at,
+            ae.execution_status,
+            ae.runtime_seconds,
+            ae.records_processed,
+            ae.user_id
+        FROM algorithm_execution ae
+        LEFT JOIN dataset d ON d.name = ae.dataset_name
         WHERE d.id = $1
-        ORDER BY du.used_at DESC
+        ORDER BY ae.used_at DESC
         LIMIT 100
         "#,
         id
@@ -929,7 +948,7 @@ pub async fn get_datasets_by_tags(
             file_size: dataset.file_size as u64,
             file_format: dataset.file_format,
             author: dataset.author,
-            author_wallet: dataset.author_wallet,
+            wallet: dataset.wallet,
             author_avatar,
             sample_url: dataset.sample_url,
             file_path: dataset.file_path,

@@ -1,32 +1,29 @@
-pub mod algo;
-pub mod algo_exe;
-
+pub mod algorithm;
+pub mod algorithm_execution;
 pub mod blockchain_transaction;
 pub mod committee;
 pub mod contract;
-pub mod data_usage;
 pub mod dataset;
 pub mod dataset_schema;
-pub mod dataset_tags;
-
+pub mod dataset_tag;
 pub mod vote;
 
 // Re-export all model types
-pub use algo::{Algo, CreateAlgo};
-pub use algo_exe::{AlgoExe, AlgoExeWithAlgo, CreateAlgoExeRequest};
-
-pub use algo_exe::{ExecutionStatus, ReviewStatus};
+pub use algorithm::{Algo, CreateAlgo};
+pub use algorithm_execution::{
+    AlgorithmExecution, ContainerResult, CreateAlgorithmExecutionRequest, ExecutionContext,
+    ExecutionStats, ExecutionStatus, ReviewStatus,
+};
 pub use blockchain_transaction::TransactionStatus;
 pub use blockchain_transaction::{BlockchainTransaction, EntityType};
-pub use committee::{CommitteeMember, CreateCommitteeMemberRequest};
-pub use contract::{ContractMeta, CreateContractMetaRequest};
-pub use data_usage::{CreateDataUsageRequest, DataUsage};
+pub use committee::{Committee, CreateCommitteeMemberRequest};
+pub use contract::{Contract, CreateContractMetaRequest};
 pub use dataset::{CreateDatasetRequest, Dataset};
 pub use dataset_schema::{
     CreateSchemaFieldRequest, DatasetSchema, SchemaFieldDefinition, SetDatasetSchemaRequest,
     UpdateSchemaFieldRequest,
 };
-pub use dataset_tags::{AddTagsRequest, DatasetTag, RemoveTagsRequest, TagWithCount};
+pub use dataset_tag::{AddTagsRequest, DatasetTag, RemoveTagsRequest, TagWithCount};
 pub use vote::{CreateVoteRequest, Vote};
 
 // Common model traits

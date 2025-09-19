@@ -2,6 +2,26 @@
 //!
 //! This worker monitors pending blockchain transactions via Redis queue
 //! and replaces stuck transactions to prevent nonce blocking.
+//!
+//! ## Why this exists:
+//! When blockchain transactions get stuck (due to low gas price or network congestion),
+//! they block all subsequent transactions from the same wallet because of nonce ordering.
+//! This worker detects stuck transactions and replaces them with empty high-gas transactions
+//! to unblock the nonce sequence.
+//!
+//! ## How it works:
+//! 1. Handlers add pending transactions to a Redis queue when submitting to blockchain
+//! 2. This worker continuously monitors the queue (FIFO processing)
+//! 3. For each transaction, it checks:
+//!    - If timeout exceeded: Replace with empty transaction and mark as failed
+//!    - If confirmed on chain: Update database status
+//!    - If failed on chain: Mark as failed in database
+//!    - If still pending: Re-queue for later checking
+//!
+//! ## Configuration:
+//! - `timeout_seconds`: How long to wait before considering a transaction stuck (default: 120s)
+//! - `gas_multiplier`: Gas price increase percentage for replacement tx (default: 120 = 20% increase)
+//! - `idle_sleep_seconds`: How long to sleep when queue is empty (default: 5s)
 
 use alloy::consensus::Transaction;
 use alloy::network::TransactionBuilder;
@@ -16,7 +36,7 @@ use std::sync::Arc;
 use tracing::{error, info, warn};
 
 use crate::infra::{ContractCaller, Database};
-use crate::models::blockchain_transaction::{BlockchainTransaction, TransactionStatus};
+use crate::models::blockchain_transaction::{BlockchainTransaction, EntityType, TransactionStatus};
 use crate::{AppError, Result as AppResult};
 
 /// Pending transaction information stored in Redis queue
@@ -24,7 +44,7 @@ use crate::{AppError, Result as AppResult};
 pub struct PendingTransaction {
     pub tx_hash: String,
     pub entity_id: i64,
-    pub entity_type: String,
+    pub entity_type: EntityType,
     pub nonce: u64,
     pub created_at: DateTime<Utc>,
 }
@@ -89,7 +109,16 @@ impl TransactionMonitor {
         }
     }
 
-    /// Start the monitoring loop
+    /// Start the transaction monitoring loop
+    ///
+    /// This is the main loop that continuously:
+    /// 1. Pops pending transactions from Redis queue (FIFO - oldest first)
+    /// 2. Processes each transaction to check status or handle timeouts
+    /// 3. Re-queues transactions that are still pending
+    /// 4. Sleeps when the queue is empty
+    ///
+    /// The loop runs indefinitely and is designed to be run as a background worker.
+    /// It prevents blockchain nonce blocking by detecting and replacing stuck transactions.
     pub async fn monitor_loop(&self) -> AppResult<()> {
         info!(
             "Starting transaction monitor with {}s timeout",
@@ -136,7 +165,20 @@ impl TransactionMonitor {
         }
     }
 
-    /// Process a single pending transaction
+    /// Process a single pending transaction from the monitoring queue
+    ///
+    /// This function performs the following tasks:
+    /// 1. Checks if the transaction has exceeded the timeout threshold
+    ///    - If yes: Replaces it with an empty transaction to unblock the nonce
+    ///    - Marks the transaction as failed in the database
+    ///
+    /// 2. If not timed out, checks the transaction status on the blockchain:
+    ///    - Confirmed: Updates database with block number and timestamp
+    ///    - Failed: Marks as failed in the database
+    ///    - Still Pending: Re-queues the transaction for later checking
+    ///
+    /// The main purpose is to prevent nonce blocking by detecting stuck transactions
+    /// and replacing them with empty transactions that use the same nonce but higher gas.
     async fn process_pending_transaction(&self, pending_tx: &PendingTransaction) -> AppResult<()> {
         let age = Utc::now().signed_duration_since(pending_tx.created_at);
 
@@ -388,7 +430,7 @@ mod tests {
         let tx = PendingTransaction {
             tx_hash: "0x123".to_string(),
             entity_id: 1,
-            entity_type: "dataset".to_string(),
+            entity_type: EntityType::Dataset,
             nonce: 42,
             created_at: Utc::now(),
         };
@@ -418,7 +460,7 @@ mod tests {
         let tx = PendingTransaction {
             tx_hash: format!("0xtest_{}", Utc::now().timestamp()),
             entity_id: 999,
-            entity_type: "test".to_string(),
+            entity_type: EntityType::Dataset,  // Using a valid EntityType
             nonce: 1,
             created_at: Utc::now(),
         };
@@ -446,7 +488,7 @@ mod tests {
         let old_tx = PendingTransaction {
             tx_hash: "0xold123".to_string(),
             entity_id: 1,
-            entity_type: "dataset".to_string(),
+            entity_type: EntityType::Dataset,
             nonce: 1,
             created_at: Utc::now() - Duration::seconds(150), // 2.5 minutes old
         };

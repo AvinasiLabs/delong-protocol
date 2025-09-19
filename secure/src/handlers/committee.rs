@@ -12,7 +12,7 @@ use tracing::{info, instrument};
 use crate::{
     models::{
         blockchain_transaction::{CreateTransaction, EntityType},
-        committee::CommitteeMember,
+        committee::Committee,
     },
     routes::AppState,
 };
@@ -30,7 +30,7 @@ pub struct SetCommitteeMemberRequest {
         path = "crate::ETHEREUM_ADDRESS_REGEX",
         message = "Invalid Ethereum address format"
     ))]
-    pub member_wallet: String,
+    pub wallet: String,
     /// Approval status
     pub is_approved: bool,
 }
@@ -50,12 +50,11 @@ pub struct IsMemberQuery {
         path = "crate::ETHEREUM_ADDRESS_REGEX",
         message = "Invalid Ethereum address format"
     ))]
-    pub member_wallet: String,
+    pub wallet: String,
 }
 
 /// Set committee member status (requires admin)
 #[instrument(skip(state))]
-#[axum::debug_handler]
 pub async fn set_committee_member(
     State(state): State<AppState>,
     ValidatedJson(req): ValidatedJson<SetCommitteeMemberRequest>,
@@ -64,7 +63,7 @@ pub async fn set_committee_member(
     // For now, we'll skip this check in development
 
     // Validate wallet address
-    let member_address = Address::from_str(&req.member_wallet)
+    let member_address = Address::from_str(&req.wallet)
         .map_err(|_| AppError::Validation("Invalid wallet address".into()))?;
 
     // Start database transaction
@@ -73,9 +72,9 @@ pub async fn set_committee_member(
     // Upsert committee member in database within transaction
     // First check if member exists
     let existing = sqlx::query_as!(
-        CommitteeMember,
-        "SELECT * FROM committee_member WHERE member_wallet = $1",
-        req.member_wallet.to_lowercase()
+        Committee,
+        "SELECT * FROM committee WHERE wallet = $1",
+        req.wallet.to_lowercase()
     )
     .fetch_optional(&mut *tx)
     .await?;
@@ -83,16 +82,16 @@ pub async fn set_committee_member(
     let member = if let Some(existing) = existing {
         // Update existing member
         sqlx::query!(
-            "UPDATE committee_member SET is_approved = $1, updated_at = NOW() WHERE id = $2",
+            "UPDATE committee SET is_approved = $1, updated_at = NOW() WHERE id = $2",
             req.is_approved,
             existing.id
         )
         .execute(&mut *tx)
         .await?;
 
-        CommitteeMember {
+        Committee {
             id: existing.id,
-            member_wallet: existing.member_wallet,
+            wallet: existing.wallet,
             is_approved: req.is_approved,
             created_at: existing.created_at,
             updated_at: chrono::Utc::now(),
@@ -100,13 +99,13 @@ pub async fn set_committee_member(
     } else {
         // Create new member
         sqlx::query_as!(
-            CommitteeMember,
+            Committee,
             r#"
-            INSERT INTO committee_member (member_wallet, is_approved)
+            INSERT INTO committee (wallet, is_approved)
             VALUES ($1, $2)
             RETURNING *
             "#,
-            req.member_wallet.to_lowercase(),
+            req.wallet.to_lowercase(),
             req.is_approved
         )
         .fetch_one(&mut *tx)
@@ -156,20 +155,19 @@ pub async fn set_committee_member(
 pub async fn list_committee_members(
     State(state): State<AppState>,
     ValidatedQuery(params): ValidatedQuery<PaginationQuery>,
-) -> PaginatedResult<CommitteeMember> {
-    let result = CommitteeMember::get_confirmed_members(state.db.pool(), params).await?;
+) -> PaginatedResult<Committee> {
+    let result = Committee::get_confirmed_members(state.db.pool(), params).await?;
 
     paginated!(result.items, result.total, result.n_page, result.per_page)
 }
 
 /// Get committee member by ID
 #[instrument(skip(state))]
-#[axum::debug_handler]
 pub async fn get_committee_member(
     State(state): State<AppState>,
     Path(id): Path<i32>,
-) -> JsonResult<CommitteeMember> {
-    let member = CommitteeMember::get_confirmed_by_id(state.db.pool(), id)
+) -> JsonResult<Committee> {
+    let member = Committee::get_confirmed_by_id(state.db.pool(), id)
         .await?
         .ok_or_else(|| AppError::NotFound("Committee member not found".into()))?;
 
@@ -178,12 +176,11 @@ pub async fn get_committee_member(
 
 /// Check if wallet is a committee member
 #[instrument(skip(state))]
-#[axum::debug_handler]
 pub async fn is_committee_member(
     State(state): State<AppState>,
     ValidatedQuery(query): ValidatedQuery<IsMemberQuery>,
 ) -> JsonResult<bool> {
-    let member = CommitteeMember::get_by_wallet(state.db.pool(), &query.member_wallet).await?;
+    let member = Committee::get_by_wallet(state.db.pool(), &query.wallet).await?;
 
     let is_member = member.map(|m| m.is_approved).unwrap_or(false);
 

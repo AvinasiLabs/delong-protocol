@@ -5,11 +5,11 @@
 //! These services typically run in separate tasks/threads and operate
 //! continuously throughout the application lifecycle.
 
-pub mod algo_executor;
 pub mod chainsync;
+pub mod executor;
 
 // Re-export commonly used items
 pub use crate::config::ExecutorConfig;
-pub use algo_executor::{AlgoExecutor, ExecutorError};
 pub use chainsync::transaction_monitor::{TransactionMonitor, TransactionMonitorConfig};
 pub use chainsync::ChainSyncWorker;
+pub use executor::{Executor, ExecutorError};

@@ -151,6 +151,13 @@ pub fn create_router(state: AppState) -> Router {
             )
             // HTTP proxy routes (supports both JWT and API Key authentication)
             .nest(
+                "/executions",
+                handlers::proxy::proxy_routes().layer(axum::middleware::from_fn_with_state(
+                    state.clone(),
+                    flexible_auth_middleware,
+                )),
+            )
+            .nest(
                 "/algoexes",
                 handlers::proxy::proxy_routes().layer(axum::middleware::from_fn_with_state(
                     state.clone(),

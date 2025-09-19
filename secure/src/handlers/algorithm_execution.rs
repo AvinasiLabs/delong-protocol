@@ -5,9 +5,10 @@
 
 use crate::{
     infra::ai_audit::AiAuditService,
+    middleware::AuthenticatedUser,
     models::{
-        algo::{Algo, CreateAlgo},
-        algo_exe::{AlgoExe, AlgoExeWithAlgo, CreateAlgoExe, ExecutionStatus, ReviewStatus},
+        algorithm::{Algo, CreateAlgo},
+        algorithm_execution::AlgorithmExecution,
         blockchain_transaction::BlockchainTransaction,
         Create, FindById,
     },
@@ -33,7 +34,7 @@ pub struct SubmitAlgoExeRequest {
         path = "crate::ETHEREUM_ADDRESS_REGEX",
         message = "Invalid Ethereum address format"
     ))]
-    pub scientist_wallet: String,
+    pub wallet: String,
     /// Dataset name to use for execution
     #[validate(length(
         min = 1,
@@ -65,12 +66,13 @@ pub struct SubmitAlgoExeResponse {
 
 /// Submit a new algorithm execution
 #[instrument(skip(state))]
-pub async fn submit_algo_exe(
+pub async fn submit_execution(
     State(state): State<AppState>,
+    auth_user: AuthenticatedUser,
     ValidatedJson(req): ValidatedJson<SubmitAlgoExeRequest>,
 ) -> JsonResult<SubmitAlgoExeResponse> {
     // Validate scientist wallet address
-    let scientist_address = Address::from_str(&req.scientist_wallet)
+    let scientist_address = Address::from_str(&req.wallet)
         .map_err(|_| AppError::Validation("Invalid scientist wallet address".into()))?;
 
     // Build GitHub download URL
@@ -147,15 +149,30 @@ pub async fn submit_algo_exe(
 
     // Create an algorithm execution record
     // Since AI audit already passed, we can set status directly to approved
-    let create_exe = CreateAlgoExe {
-        algo_id: algo.id,
-        status: ExecutionStatus::Queued,
-        used_dataset: req.dataset.clone(),
-        scientist_wallet: req.scientist_wallet.clone(),
-        review_status: ReviewStatus::Approved, // AI audit already approved
-    };
-
-    let algo_exe = AlgoExe::create_with_tx(&mut tx, create_exe).await?;
+    let algo_exe = sqlx::query!(
+        r#"
+        INSERT INTO algorithm_execution (
+            algo_id, algo_name, algo_cid, algo_link,
+            dataset_id, dataset_name, dataset_cid,
+            wallet, user_id,
+            review_status, execution_status,
+            submitted_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'approved', 'queued', NOW())
+        RETURNING id
+        "#,
+        algo.id,
+        Some(algo.name.clone()),
+        algo.cid.clone(),
+        Some(algo.algo_link.clone()),
+        None::<i64>, // dataset_id will be resolved later
+        req.dataset.clone(),
+        None::<String>, // dataset_cid will be resolved later
+        req.wallet.clone(),
+        auth_user.user_id.parse().unwrap_or(0) // None::<i64> // user_id
+    )
+    .fetch_one(&mut *tx)
+    .await?;
 
     // Submit to blockchain with execution_id
     let tx_hash = state
@@ -198,24 +215,52 @@ pub async fn submit_algo_exe(
 
 /// List all algorithm executions with pagination
 #[instrument(skip(state))]
-pub async fn list_algo_exes(
+pub async fn list_executions(
     State(state): State<AppState>,
     ValidatedQuery(params): ValidatedQuery<PaginationQuery>,
-) -> PaginatedResult<AlgoExeWithAlgo> {
-    // Use AlgoExeWithAlgo to get algorithm info along with execution data
-    let (items, total) =
-        AlgoExeWithAlgo::list(state.db.pool(), None, params.page, params.per_page).await?;
+) -> PaginatedResult<AlgorithmExecution> {
+    // Get executions from the new algorithm_execution table
+    let executions = sqlx::query_as!(
+        AlgorithmExecution,
+        r#"
+        SELECT
+            id, algo_id, algo_name, algo_cid, algo_link,
+            dataset_id, dataset_name, dataset_cid,
+            wallet, user_id,
+            review_status, execution_status,
+            vote_start_time, vote_end_time,
+            submitted_at, started_at, completed_at,
+            success, output, error_message, error_type, container_exit_code,
+            runtime_seconds, created_at, updated_at
+        FROM algorithm_execution
+        ORDER BY submitted_at DESC
+        LIMIT $1 OFFSET $2
+        "#,
+        params.get_limit() as i64,
+        params.get_offset() as i64
+    )
+    .fetch_all(state.db.pool())
+    .await?;
 
-    paginated!(items, total, params.page, params.per_page)
+    let total = sqlx::query_scalar!("SELECT COUNT(*) as \"count!\" FROM algorithm_execution")
+        .fetch_one(state.db.pool())
+        .await?;
+
+    paginated!(
+        executions,
+        total as u64,
+        params.get_page(),
+        params.get_per_page()
+    )
 }
 
 /// Get a specific algorithm execution by ID
 #[instrument(skip(state))]
-pub async fn get_algo_exe(
+pub async fn get_execution(
     State(state): State<AppState>,
     Path(id): Path<i32>,
-) -> JsonResult<AlgoExe> {
-    let algo_exe = AlgoExe::find_by_id(state.db.pool(), id as i64)
+) -> JsonResult<AlgorithmExecution> {
+    let algo_exe = AlgorithmExecution::find_by_id(state.db.pool(), id as i64)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Algorithm execution {} not found", id)))?;
 

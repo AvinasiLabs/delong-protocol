@@ -6,12 +6,12 @@ use axum::extract::State;
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
-use crate::{models::contract::ContractMeta, routes::AppState};
+use crate::{models::contract::Contract, routes::AppState};
 use avinapi::prelude::JsonResult;
 
 /// Response for contract metadata
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ContractMetaResponse {
+pub struct ContractResponse {
     pub id: i64,
     pub name: String,
     pub address: String,
@@ -20,16 +20,14 @@ pub struct ContractMetaResponse {
 
 /// List all contract metadata
 #[instrument(skip(state))]
-pub async fn list_contracts(
-    State(state): State<AppState>,
-) -> JsonResult<Vec<ContractMetaResponse>> {
+pub async fn list_contracts(State(state): State<AppState>) -> JsonResult<Vec<ContractResponse>> {
     // Get all contracts from database
-    let contracts = ContractMeta::get_all(state.db.pool()).await?;
+    let contracts = Contract::get_all(state.db.pool()).await?;
 
     // Convert to response format
-    let response: Vec<ContractMetaResponse> = contracts
+    let response: Vec<ContractResponse> = contracts
         .into_iter()
-        .map(|contract| ContractMetaResponse {
+        .map(|contract| ContractResponse {
             id: contract.id,
             name: contract.name,
             address: contract.address,

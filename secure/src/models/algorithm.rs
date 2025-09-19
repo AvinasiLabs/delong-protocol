@@ -37,20 +37,26 @@ pub struct CreateAlgo {
 impl Algo {
     /// Find algorithm by link
     pub async fn find_by_link(pool: &PgPool, algo_link: &str) -> Result<Option<Self>> {
-        let algo = sqlx::query_as::<_, Self>("SELECT * FROM algo WHERE algo_link = $1")
-            .bind(algo_link)
-            .fetch_optional(pool)
-            .await?;
+        let algo = sqlx::query_as!(
+            Self,
+            "SELECT * FROM algorithm WHERE algo_link = $1",
+            algo_link
+        )
+        .fetch_optional(pool)
+        .await?;
 
         Ok(algo)
     }
 
     /// Find algorithm by CID
     pub async fn find_by_cid(pool: &PgPool, cid: &str) -> Result<Option<Self>> {
-        let algo = sqlx::query_as::<_, Self>("SELECT * FROM algo WHERE cid = $1")
-            .bind(cid)
-            .fetch_optional(pool)
-            .await?;
+        let algo = sqlx::query_as!(
+            Self,
+            "SELECT * FROM algorithm WHERE cid = $1",
+            cid
+        )
+        .fetch_optional(pool)
+        .await?;
 
         Ok(algo)
     }
@@ -64,7 +70,7 @@ impl Create for Algo {
         let algo = sqlx::query_as!(
             Algo,
             r#"
-            INSERT INTO algo (name, algo_link, cid)
+            INSERT INTO algorithm (name, algo_link, cid)
             VALUES ($1, $2, $3)
             RETURNING *
             "#,
@@ -82,7 +88,7 @@ impl Create for Algo {
 #[async_trait::async_trait]
 impl FindById for Algo {
     async fn find_by_id(pool: &PgPool, id: i64) -> Result<Option<Self>> {
-        let algo = sqlx::query_as!(Algo, "SELECT * FROM algo WHERE id = $1", id)
+        let algo = sqlx::query_as!(Algo, "SELECT * FROM algorithm WHERE id = $1", id)
             .fetch_optional(pool)
             .await?;
 

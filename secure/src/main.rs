@@ -5,19 +5,17 @@
 //! data management, and blockchain synchronization.
 
 use ipfs_api_backend_hyper::TryFromUri;
+use secure::infra::contracts::ContractCaller;
+use secure::infra::db::Database;
+use secure::infra::Notifier;
+use secure::infra::{TeeClientBuilder, TeeEthereum};
+use secure::workers::executor::Executor;
+use secure::workers::ChainSyncWorker;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::signal;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
-
-use secure::config::Config;
-use secure::infra::contracts::ContractCaller;
-use secure::infra::db::Database;
-use secure::infra::Notifier;
-use secure::infra::{TeeClientBuilder, TeeEthereum};
-use secure::workers::algo_executor::AlgoExecutor;
-use secure::workers::ChainSyncWorker;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -102,7 +100,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize TEE crypto service for dataset encryption/decryption
     let tee_crypto = Arc::new(secure::infra::TeeCryptoService::new(tee_client.clone()));
 
-    let algo_executor = secure::workers::algo_executor::create_executor_service(
+    let algo_executor = secure::workers::executor::create_executor_service(
         Arc::new(db.clone()),
         ipfs_client.clone(),
         contract_caller.clone(),
@@ -124,7 +122,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         contract_caller.clone(),
         notifier.clone(),
         algo_executor.clone(),
-        Arc::new(config.clone()),
         redis_pool.clone(),
         shutdown_token.clone(),
     );
@@ -169,8 +166,7 @@ fn spawn_chainsync_task(
     db: Database,
     contract_caller: Arc<ContractCaller>,
     notifier: Arc<Notifier>,
-    algo_executor: Arc<AlgoExecutor>,
-    config: Arc<Config>,
+    algo_executor: Arc<Executor>,
     redis_pool: deadpool_redis::Pool,
     shutdown_token: CancellationToken,
 ) -> tokio::task::JoinHandle<()> {
@@ -184,7 +180,6 @@ fn spawn_chainsync_task(
             contract_caller,
             notifier,
             algo_executor,
-            config,
         ));
 
         tokio::select! {
